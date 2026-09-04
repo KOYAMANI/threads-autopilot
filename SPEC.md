@@ -175,7 +175,7 @@ REPLY_TWO_STEP = "0"   # 1 にすると §8.3 のコメント投稿を3ステッ
 | 名前 | 内容 |
 |---|---|
 | `ENC_KEY` | 32バイトをbase64。トークン・AIキーの暗号化鍵 |
-| `SESSION_SECRET` | 32バイト以上。セッション署名、および §5.4 / §7.9 のワンタイムトークンのHMAC鍵 |
+| `SESSION_SECRET` | 32バイト以上。セッション署名、および §5.3 / §7.9 のワンタイムトークンのHMAC鍵 |
 | `ADMIN_SECRET` | 管理API（ライセンス発行）の鍵 |
 | `RESEND_API_KEY` | メール送信 |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Web Push（M6） |
@@ -452,7 +452,7 @@ async function call(token, method: "GET"|"POST"|"DELETE", path, params, budget):
 |---|---|
 | `GET /accounts` | 一覧 `{id,username,name,avatar_url,color,status,tokenExpiresInDays,longLived,lastFullSyncAt,autopilotEnabled}` |
 | `POST /accounts` `{token, app_secret?}` | §6.3の接続確認→長期化→保存。同一ユーザーで3件まで（`ACCOUNT_LIMIT`）。作成後に `full_sync` ジョブを投入。応答に `{account, longLived, secretIgnored}` |
-| `DELETE /accounts/:id` | 関連データを全削除（posts, post_metrics_history, queue, learning, links, autopilot, jobs, daily_views, follower_snapshots, click_weeks, demographics, ap_log） |
+| `DELETE /accounts/:id` | 関連データを全削除（posts, post_metrics_history, queue, learning, links, autopilot, jobs, daily_views, follower_snapshots, click_weeks, click_weeks_done, demographics, ap_log） |
 | `POST /accounts/:id/refresh-token` | 手動延長 |
 | `GET /accounts/:id/diagnose` | 6段の点検（トークン→/me→投稿→投稿の数字→アカウントの表示→クリック）を順に実行し `[{name, ok, detail}]` |
 | `POST /accounts/:id/sync` | `full_sync` ジョブ投入（既に走っていれば何もしない）。`GET /accounts/:id/sync` で進捗 `{running, progress, total}` |
@@ -518,7 +518,7 @@ type PostSummary = { id, text, permalink, postedAt, mediaType, hasImage, views, 
 | `GET /accounts/:id/autopilot` / `PUT` | 設定。`enabled=true` にする条件: AIキーがサーバー保存、参考情報1件以上、`status='ok'`、ライセンスが `active` |
 | `GET /accounts/:id/autopilot/learning` | 集計結果。`[{dim, value, n, avgScore, avgViews, likeRate}]`（§9.2）。`dim ∈ {hook, slot, length, source}`、`value` の形式は §9.1。`n < 10` の行は `avgScore`・`avgViews`・`likeRate` を `null` で返し、画面は数値を出さない（§12.3） |
 
-`likeRate` = `like_rate_sum / n`。投稿ごとの「いいね ÷ 表示回数」を出してから平均した値であって、いいね合計 ÷ 表示回数合計ではない（表示回数の多い1本に引っ張られないようにするため）。`avgViews` = `views_sum / n`、`avgScore` = `score_sum / n`。いずれも 48h 時点の数字で集計する（§9.2）。
+`likeRate` = `like_rate_sum / n`。投稿ごとの「いいね ÷ 表示回数」を出してから平均した値であって、いいね合計 ÷ 表示回数合計ではない（表示回数の多い1本に引っ張られないようにするため）。`avgViews` = `views_sum / n`、`avgScore` = `score_sum / n`。`avgViews` と `likeRate` は 48h 時点の数字。`avgScore` は views・likes が 48h、`carry`・`ctr` のみ現在値（§9.2）。
 | `GET /accounts/:id/autopilot/log?limit=50` | |
 | `GET /accounts/:id/autopilot/next` | 次の自動投稿（queue の source=autopilot で status in pending_approval/scheduled の最初） |
 
@@ -561,7 +561,7 @@ token   = base64url(payload) + "." + base64url(sig)
   1. 署名検証・期限確認。失敗 → 「リンクの有効期限が切れています」
   2. `queue` を `id` で引く。無い → 「見つかりませんでした」
   3. `status` が既に `publishing|done` → 遷移も消費もせず「もう投稿されています」を返す（HTTP 200）。トークンは残るが、この状態から戻ることはないので実害はない
-  4. `status` が `cancelled|failed` → 「この下書きはすでに取り消されています」（HTTP 200）
+  4. `status` が `cancelled|failed` → 「この下書きはすでに取り消されたか、投稿に失敗しています」（HTTP 200）
   5. `action_token_used_at IS NOT NULL` → 「この操作はすでに完了しています」（エラーにしない）
   6. `UPDATE queue SET action_token_used_at=now WHERE id=? AND action_token_used_at IS NULL` を実行し、`changes=0` なら5と同じ扱い（同時押し対策）
   7. 状態遷移。`approve`: `pending_approval` → `scheduled`（`approve_deadline=NULL`）。`cancel`: `pending_approval|scheduled` → `cancelled`
@@ -745,7 +745,7 @@ score = Σ w_i * v_i / Σ w_i（null の項は分母からも外す）
 - `tags_json.scored=true` にする
 - **採点は48時間の1回だけ**。7日後の再採点・差し替えはしない（`scored7` は廃止）。`post_metrics_history` の `7d` / `30d` は画面で伸び方を見せるための記録であって、採点には使わない
 
-画面に返す値（§7.7）は集計そのもの。すべて 48h 時点の数字でできている:
+画面に返す値（§7.7）は集計そのもの。`avgViews`・`likeRate` は 48h 時点の数字、`avgScore` は `carry`・`ctr` の項だけ現在値を含む（上記）:
 ```
 avgScore  = score_sum / n
 avgViews  = views_sum / n          // 48h時点の表示回数の平均
