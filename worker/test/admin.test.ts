@@ -38,6 +38,38 @@ describe("管理API（SPEC §5.4）", () => {
     ).toBe(403);
   });
 
+  it("count=200 でも 500 にならない（D1 のバインド上限100を跨ぐ）", async () => {
+    const res = await api("POST", "/api/admin/licenses", {
+      body: { count: 200, note: "bulk" },
+      headers: admin,
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.data.keys).toHaveLength(200);
+
+    // 発行されたキーがすべて DB に入っている（1文25行 × 8文の batch）
+    const db = testDb();
+    const row = await db.first<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM licenses WHERE note='bulk'",
+    );
+    expect(row?.n).toBe(200);
+
+    // すべて一意で、最後の1本でも登録できる
+    const keys = (res.body.data.keys as Array<{ key: string }>).map((k) => k.key);
+    expect(new Set(keys).size).toBe(200);
+    const reg = await api("POST", "/api/auth/register", {
+      body: { email: uniqueEmail(), password: "password1234", license_key: keys[199] },
+    });
+    expect(reg.status).toBe(201);
+  });
+
+  it("バインド上限の境界（25 / 26 件）", async () => {
+    for (const count of [25, 26]) {
+      const res = await api("POST", "/api/admin/licenses", { body: { count }, headers: admin });
+      expect(res.status).toBe(201);
+      expect(res.body.data.keys).toHaveLength(count);
+    }
+  });
+
   it("count のバリデーション", async () => {
     expect((await api("POST", "/api/admin/licenses", { body: { count: 0 }, headers: admin })).status).toBe(400);
     expect((await api("POST", "/api/admin/licenses", { body: { count: 999 }, headers: admin })).status).toBe(400);

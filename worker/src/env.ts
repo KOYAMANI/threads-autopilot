@@ -26,12 +26,13 @@ export type Env = {
 export const APP_VERSION = "0.1.0";
 
 /**
- * ビルド時定数。wrangler.toml の [define] で false（本番安全側）、
- * `wrangler dev --define __DEV__:true` で true にする。
- * false のとき mock/ への動的 import が esbuild のデッドコード除去で消える（SPEC §11）。
- * vitest（workerd）では define されないので、undefined = 開発扱いにする。
+ * `__DEV__`（ビルド時定数、`worker/src/globals.d.ts` 参照）の**実行時**の読み出し。
+ * `/api/health` の `mock` フラグや診断表示に使う。
+ *
+ * デッドコード除去を当てにする分岐（`lib/threads.ts` のモック分岐）では、この定数ではなく
+ * `__DEV__` を直接書くこと。クロスモジュールの定数を挟むと esbuild が枝を落とさない。
+ * define が無い環境（素の node など）でも落ちないよう typeof で受ける。
  */
-declare const __DEV__: boolean | undefined;
 export const DEV: boolean = typeof __DEV__ === "undefined" ? true : __DEV__;
 
 export function envInt(value: string | undefined, fallback: number): number {

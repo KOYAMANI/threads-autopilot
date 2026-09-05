@@ -4,8 +4,8 @@
  */
 
 const PATTERNS: Array<[RegExp, string]> = [
-  // クエリに載る access_token / key / client_secret
-  [/([?&](?:access_token|key|client_secret|token)=)[^&\s"']+/gi, "$1***"],
+  // クエリに載る access_token / key / client_secret / reset（パスワード再設定トークン）
+  [/([?&](?:access_token|key|client_secret|token|reset)=)[^&\s"']+/gi, "$1***"],
   // Authorization: Bearer xxx
   [/(Bearer\s+)[A-Za-z0-9._\-]+/g, "$1***"],
   // Cookie の sid

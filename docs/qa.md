@@ -35,7 +35,18 @@ npm run db:migrate                 # ローカル D1 にスキーマを流す
 | 2-1 | `npm run dev:worker` → 別端末で `curl -s http://127.0.0.1:8787/api/health` | `{"ok":true,"version":"0.1.0","mock":false}` |
 | 2-2 | `npx wrangler dev --define __DEV__:true --var THREADS_MOCK:1` で同じ curl | `mock` が `true` |
 | 2-3 | `npx wrangler dev --var THREADS_MOCK:1`（`__DEV__` は wrangler.toml の false） | `mock` が `false`（本番ビルドでモックに落ちないことの確認。SPEC §11） |
-| 2-4 | `npx wrangler deploy --dry-run --outdir /tmp/out` → `grep -r "Unsupported mock path" /tmp/out` | ヒット0（本番バンドルに `mock/` が入らない） |
+| 2-4 | `npm run check:bundle`（= `./scripts/check-bundle.sh`） | `✓ OK: モックは本番バンドルに含まれていません`（終了コード0） |
+
+**2-4 の中身**: `lib/threads.ts` の `call()` は M1 時点でどこからも呼ばれていないので、素の
+`wrangler deploy --dry-run` では「未使用だから消えている」だけで DEV ガードの効きを判定できない。
+`check-bundle.sh` は `call()` を到達可能にした一時エントリ（`worker/src/__bundle_probe.ts`、実行後に削除）
+でビルドし、それでも `SEED_TEXTS` / `Unsupported mock path` / `MockThreadsError` / `mockCall` /
+`callMock` / `seedStore` / `storeFor` / `metricsFor` / `resetMock` / `mock/threads` が
+すべて0件であることを見る。`call()` がバンドルに入っていない（＝検査が無意味な）状態も検出して止まる。
+
+ガードが崩れたときに落ちることの確認（負の対照）: `lib/threads.ts` の分岐を
+`if (shouldUseMock(env, token))` に戻すと、バンドルが 7KB → 22KB になり上記の識別子が27件出て NG になる。
+**分岐には `__DEV__` を識別子のまま直接書くこと**（クロスモジュール定数や関数を挟むと esbuild が枝を落とさない）。
 
 ### 3. 登録 → ログイン → me（SPEC §13 M1 完了条件1）
 

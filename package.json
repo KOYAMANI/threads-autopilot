@@ -11,6 +11,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p shared/tsconfig.json && tsc --noEmit -p worker/tsconfig.json && tsc --noEmit -p web/tsconfig.json && tsc --noEmit -p scripts/tsconfig.json",
     "test": "npm run test --workspaces --if-present",
+    "check:bundle": "./scripts/check-bundle.sh",
     "dev": "npm-run-all -p dev:worker dev:web",
     "dev:worker": "wrangler dev --define __DEV__:true",
     "dev:web": "npm -w web run dev",

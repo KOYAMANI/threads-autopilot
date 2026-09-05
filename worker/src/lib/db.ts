@@ -63,15 +63,31 @@ export function createDb(d1: D1Database, budget: Budget): Db {
       return queryCount;
     },
 
+    /**
+     * 生の D1Database。**予算を通らない**（budget.dbQueries.use() が呼ばれない）ので、
+     * ジョブやルートからは使わない。テストの下準備など、予算の外で叩く用途に限る。
+     */
     get raw() {
       return d1;
     },
   };
 }
 
+/** D1（SQLite）の1文あたりのバインド変数の上限。超えると `too many SQL variables`。 */
+export const D1_MAX_BIND_PARAMS = 100;
+
+/**
+ * 1文にまとめられる行数。SPEC §8.1 は「1クエリ50行まで」と書いているが、
+ * D1 の実制約はバインド変数100個なので、3列以上では50行に届かない。
+ * 列数から実際に通る行数を出す（2列=50行 / 3列=33行 / 5列=20行）。
+ */
+export function maxRowsPerStatement(columnCount: number, cap = 50): number {
+  return Math.max(1, Math.min(cap, Math.floor(D1_MAX_BIND_PARAMS / Math.max(1, columnCount))));
+}
+
 /**
  * マルチVALUES の upsert を組み立てる（SPEC §8.1「ループ内で1行ずつ書かない」）。
- * 1クエリ 50 行までにまとめ、chunk ごとの {sql, params} を返す。
+ * 1文の行数は列数から決める（既定 50 行、ただしバインド上限 100 を超えない）。
  */
 export function buildUpsertChunks(
   table: string,
@@ -79,12 +95,13 @@ export function buildUpsertChunks(
   rows: unknown[][],
   conflictColumns: string[],
   updateColumns: string[],
-  chunkSize = 50,
+  chunkSize = maxRowsPerStatement(columns.length),
 ): Array<{ sql: string; params: unknown[] }> {
   const out: Array<{ sql: string; params: unknown[] }> = [];
   const placeholders = `(${columns.map(() => "?").join(",")})`;
-  for (let i = 0; i < rows.length; i += chunkSize) {
-    const chunk = rows.slice(i, i + chunkSize);
+  const size = Math.max(1, Math.min(chunkSize, maxRowsPerStatement(columns.length)));
+  for (let i = 0; i < rows.length; i += size) {
+    const chunk = rows.slice(i, i + size);
     const sql =
       `INSERT INTO ${table} (${columns.join(",")}) VALUES ` +
       chunk.map(() => placeholders).join(",") +

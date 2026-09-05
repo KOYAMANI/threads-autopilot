@@ -33,6 +33,8 @@ export default defineConfig(async () => {
         },
       }),
     ],
+    // wrangler.toml の [define] と同じ役割。テストではモックを有効にする（SPEC §11）
+    define: { __DEV__: "true" },
     resolve: {
       alias: {
         "@tap/shared": path.join(dir, "../shared/src/index.ts"),

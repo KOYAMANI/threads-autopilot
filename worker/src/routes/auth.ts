@@ -39,6 +39,16 @@ import { redactEmail } from "../lib/redact";
 const PASSWORD_MIN = 8;
 const RESET_TTL_MIN = 30;
 
+/**
+ * ユーザーが存在しないときにも同じだけ PBKDF2 を回すためのダミー。
+ * これが無いと、応答時間（1回 100,000 ラウンドぶん）でメールアドレスの有無が分かる。
+ * どのパスワードにも一致しない固定値（32バイトのゼロ）。
+ */
+const DUMMY_PASSWORD = {
+  hash: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+  salt: "AAECAwQFBgcICQoLDA0ODw==",
+} as const;
+
 const emailSchema = z.string().trim().toLowerCase().email().max(254);
 const passwordSchema = z.string().min(PASSWORD_MIN).max(200);
 
@@ -216,16 +226,24 @@ export function authRoutes() {
     const userId = crypto.randomUUID();
     const nowIso = now.toISOString();
 
-    await db.run(
-      "INSERT INTO users (id, email, pass_hash, pass_salt, license_id, created_at, last_login_at) VALUES (?,?,?,?,?,?,?)",
-      userId,
-      email,
-      hash,
-      salt,
-      license.id,
-      nowIso,
-      nowIso,
-    );
+    try {
+      await db.run(
+        "INSERT INTO users (id, email, pass_hash, pass_salt, license_id, created_at, last_login_at) VALUES (?,?,?,?,?,?,?)",
+        userId,
+        email,
+        hash,
+        salt,
+        license.id,
+        nowIso,
+        nowIso,
+      );
+    } catch (e) {
+      // 上の SELECT と INSERT の間に同じメールで登録が入った場合（users.email の UNIQUE）
+      if (/UNIQUE/i.test(String(e))) {
+        return fail("EMAIL_TAKEN", "このメールアドレスは登録済みです", 409);
+      }
+      throw e;
+    }
     // ライセンスを押さえる。他の登録と競合したら 0 行になるので、その場合は取り消す
     const claim = await db.run(
       "UPDATE licenses SET status='active', activated_at=?, user_id=? WHERE id=? AND status='unused'",
@@ -283,9 +301,11 @@ export function authRoutes() {
       "SELECT id, email, pass_hash, pass_salt, license_id, created_at, last_login_at FROM users WHERE email=?",
       email,
     );
-    const good = user
-      ? await verifyPassword(password, { hash: user.pass_hash, salt: user.pass_salt })
-      : false;
+    // ユーザーが居なくても同じだけ PBKDF2 を回す（応答時間で存在を漏らさない）
+    const good = await verifyPassword(
+      password,
+      user ? { hash: user.pass_hash, salt: user.pass_salt } : DUMMY_PASSWORD,
+    );
 
     if (!user || !good) {
       await rateRecord(db, key, now);
@@ -360,7 +380,18 @@ export function authRoutes() {
       "SELECT id, email FROM users WHERE email=?",
       email,
     );
-    if (!user) return c.json(ok({ requested: true }));
+    if (!user) {
+      // 存在しないメールでも、トークン生成と同じだけの計算を空回しして時間を揃える
+      // （応答時間で登録済みかどうかを漏らさない）
+      const dummy = await signToken(c.env.SESSION_SECRET, {
+        purpose: "pwreset",
+        sub: crypto.randomUUID(),
+        extra: "",
+        expires: Math.floor(now.getTime() / 1000) + RESET_TTL_MIN * 60,
+      });
+      await sha256Hex(dummy);
+      return c.json(ok({ requested: true }));
+    }
 
     const id = crypto.randomUUID();
     const expiresAt = new Date(now.getTime() + RESET_TTL_MIN * 60_000);

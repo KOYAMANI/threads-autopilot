@@ -1,3 +1,5 @@
+import { ThreadsApiError } from "../lib/threads-error";
+
 /**
  * Threads API のモック（SPEC §11）。トークンが `THAAdemo` で始まるときだけ使う。
  *
@@ -169,15 +171,39 @@ export type MockRequest = {
   now?: number;
 };
 
-export class MockThreadsError extends Error {
-  constructor(
-    readonly code: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "MockThreadsError";
-  }
+/** モック側のエラーも本物と同じ ThreadsApiError で投げる（呼び出し側を分岐させない）。 */
+function mockError(code: number, message: string): ThreadsApiError {
+  return new ThreadsApiError({ code, message, raw: `#${code} ${message}` });
 }
+
+/**
+ * `lib/threads.ts` の `call()` が使う唯一の入口。**デフォルトエクスポート**にしてあるのは、
+ * 呼び出し側を `(await import("../mock/threads")).default(...)` と書けるようにするため。
+ * 名前付きだと `__DEV__=false` のビルドで、消えた枝の中にその名前だけが文字列として残る。
+ * 引数は call() のものをそのまま受け、正規化とエラー整形までここで済ませる。
+ */
+export function callMock(args: {
+  token: string;
+  method: "GET" | "POST" | "DELETE";
+  path: string;
+  params: Record<string, string | number | boolean | undefined | null>;
+  now?: number;
+}): unknown {
+  const flat: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(args.params)) {
+    if (v !== undefined && v !== null) flat[k] = String(v);
+  }
+  const req: MockRequest = {
+    token: args.token,
+    method: args.method,
+    path: args.path,
+    params: flat,
+  };
+  if (args.now !== undefined) req.now = args.now;
+  return mockCall(req);
+}
+
+export default callMock;
 
 /**
  * lib/threads.ts の call() と同じ引数を受け、Threads API と同じ形の JSON を返す。
@@ -219,11 +245,11 @@ export function mockCall(req: MockRequest): unknown {
   if (path === "/me/threads" && req.method === "POST") {
     const text = p.text ?? "";
     if ((text.match(/https?:\/\/\S+/g) ?? []).length > 5) {
-      throw new MockThreadsError(100, "THREADS_API__LINK_LIMIT_EXCEEDED: too many links");
+      throw mockError(100, "THREADS_API__LINK_LIMIT_EXCEEDED: too many links");
     }
     const replyToId = p.reply_to_id ?? null;
     if (replyToId && !store.posts.some((x) => x.id === replyToId)) {
-      throw new MockThreadsError(100, "Invalid parameter: reply_to_id not found");
+      throw mockError(100, "Invalid parameter: reply_to_id not found");
     }
     const id = `${store.user.id}${String(9000 + store.seq++)}`;
     if (p.auto_publish_text === "true" && (p.media_type ?? "TEXT") === "TEXT") {
@@ -237,7 +263,7 @@ export function mockCall(req: MockRequest): unknown {
   if (path === "/me/threads_publish" && req.method === "POST") {
     const creationId = p.creation_id ?? "";
     const container = store.containers.get(creationId);
-    if (!container) throw new MockThreadsError(100, "Invalid parameter: creation_id not found");
+    if (!container) throw mockError(100, "Invalid parameter: creation_id not found");
     store.containers.delete(creationId);
     const id = `${store.user.id}${String(9000 + store.seq++)}`;
     publish(store, id, container.text, container.replyToId, now);
@@ -329,14 +355,14 @@ export function mockCall(req: MockRequest): unknown {
 
     if (sub === "insights" && req.method === "GET") {
       const post = store.posts.find((x) => x.id === id);
-      if (!post) throw new MockThreadsError(100, "Object with ID does not exist");
+      if (!post) throw mockError(100, "Object with ID does not exist");
       const metrics = (p.metric ?? "views,likes,replies,reposts,quotes,shares").split(",");
       return insightsData(post, now, metrics);
     }
 
     if (sub === "repost" && req.method === "POST") {
       const post = store.posts.find((x) => x.id === id);
-      if (!post) throw new MockThreadsError(100, "Object with ID does not exist");
+      if (!post) throw mockError(100, "Object with ID does not exist");
       const newId = `${store.user.id}${String(9000 + store.seq++)}`;
       return { id: newId };
     }
@@ -358,11 +384,11 @@ export function mockCall(req: MockRequest): unknown {
       }
       const post = store.posts.find((x) => x.id === id);
       if (post) return { ...post, status: "PUBLISHED" };
-      throw new MockThreadsError(100, "Object with ID does not exist");
+      throw mockError(100, "Object with ID does not exist");
     }
   }
 
-  throw new MockThreadsError(100, `Unsupported mock path: ${req.method} ${path}`);
+  throw mockError(100, `Unsupported mock path: ${req.method} ${path}`);
 }
 
 function publish(

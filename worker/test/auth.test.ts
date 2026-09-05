@@ -71,6 +71,31 @@ describe("register → login → me（SPEC §13 M1 完了条件1）", () => {
     expect(res.body.error.code).toBe("LOGIN_FAILED");
   });
 
+  it("存在しないメールでも PBKDF2 を回すので応答時間で存在が分からない", async () => {
+    const u = await registerUser();
+
+    const time = async (email: string) => {
+      const t = Date.now();
+      const res = await api("POST", "/api/auth/login", { body: { email, password: "wrongpassword" } });
+      expect(res.body.error.code).toBe("LOGIN_FAILED");
+      return Date.now() - t;
+    };
+
+    // 存在するメール / 存在しないメールを交互に計り、中央値を比べる
+    const known: number[] = [];
+    const unknown: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      known.push(await time(u.email));
+      unknown.push(await time(`nobody${i}@example.com`));
+    }
+    const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
+    const a = median(known);
+    const b = median(unknown);
+    // PBKDF2 100,000回ぶんの差（実測で 4ms 対 18ms 級）が出ていないこと。
+    // 片方が 0ms になり得るので比ではなく差の絶対値で見る
+    expect(Math.abs(a - b)).toBeLessThan(Math.max(a, b) * 0.6 + 5);
+  });
+
   it("変更系は X-Requested-With が無いと 403（CSRF）", async () => {
     const res = await api("POST", "/api/auth/login", {
       body: { email: "a@example.com", password: "password1234" },

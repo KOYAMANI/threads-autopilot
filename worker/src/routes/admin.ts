@@ -11,6 +11,13 @@ import { generateLicenseKey, timingSafeEqual } from "../lib/crypto";
 
 const MAX_BATCH = 200;
 
+/**
+ * 1文にまとめる行数。D1（SQLite）の1文あたりのバインド変数は100個までで、
+ * licenses の INSERT は1行4個（id, key, note, issued_at）なので 25 行が上限。
+ * これを超えると `D1_ERROR: too many SQL variables` になる。
+ */
+const LICENSE_ROWS_PER_STATEMENT = 25;
+
 const issueSchema = z.object({
   count: z.number().int().min(1).max(MAX_BATCH),
   note: z.string().max(200).optional(),
@@ -57,12 +64,18 @@ export function adminRoutes() {
       keys.push({ id: crypto.randomUUID(), key });
     }
 
-    // マルチVALUES で1クエリにまとめる（SPEC §8.1）
-    await db.run(
-      "INSERT INTO licenses (id, key, status, note, issued_at, activated_at, user_id, revoked_at) VALUES " +
-        keys.map(() => "(?,?,'unused',?,?,NULL,NULL,NULL)").join(","),
-      ...keys.flatMap((k) => [k.id, k.key, note ?? null, nowIso]),
-    );
+    // マルチVALUES でクエリ数を圧縮しつつ（SPEC §8.1）、1文 25 行でバインド上限 100 を守る
+    const statements: Array<{ sql: string; params: unknown[] }> = [];
+    for (let i = 0; i < keys.length; i += LICENSE_ROWS_PER_STATEMENT) {
+      const chunk = keys.slice(i, i + LICENSE_ROWS_PER_STATEMENT);
+      statements.push({
+        sql:
+          "INSERT INTO licenses (id, key, status, note, issued_at, activated_at, user_id, revoked_at) VALUES " +
+          chunk.map(() => "(?,?,'unused',?,?,NULL,NULL,NULL)").join(","),
+        params: chunk.flatMap((k) => [k.id, k.key, note ?? null, nowIso]),
+      });
+    }
+    await db.batch(statements);
 
     return c.json(ok({ keys }), 201);
   });

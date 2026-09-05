@@ -6,3 +6,6 @@ dist/
 .DS_Store
 web/dist/
 coverage/
+
+# scripts/check-bundle.sh が一時生成する（実行後に削除される）
+worker/src/__bundle_probe.ts

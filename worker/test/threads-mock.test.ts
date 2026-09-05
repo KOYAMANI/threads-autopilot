@@ -169,6 +169,12 @@ describe("redact（SPEC §2.4）", () => {
     expect(redact("key sk-abcdefghijklmn")).toBe("key sk-***");
     expect(redact("key AIzaAbCdEfGhIjKlMn")).toBe("key AIza***");
   });
+  it("パスワード再設定トークン（?reset=）を伏せる", () => {
+    expect(redact("https://app.example/login?reset=eyJhbGciOi.c2ln")).toBe(
+      "https://app.example/login?reset=***",
+    );
+    expect(redact("/a/qaction?token=abc&x=1")).toContain("token=***");
+  });
   it("オブジェクトは秘密のキーごと伏せる", () => {
     expect(redactObject({ token: "abc", nested: { password: "x", ok: 1 } })).toEqual({
       token: "***",

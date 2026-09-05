@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { BudgetExceeded, budgetFromEnv, createBudget, isBudgetExceeded } from "../src/lib/budget";
-import { buildUpsertChunks, createDb } from "../src/lib/db";
+import { buildUpsertChunks, createDb, maxRowsPerStatement } from "../src/lib/db";
 
 describe("budget（SPEC §13 M1 完了条件5 / §6.1）", () => {
   it("D1 クエリ 800 を超えると BudgetExceeded", () => {
@@ -81,7 +81,7 @@ describe("budget（SPEC §13 M1 完了条件5 / §6.1）", () => {
 });
 
 describe("buildUpsertChunks（SPEC §8.1 のクエリ圧縮）", () => {
-  it("50行ごとに1クエリにまとめる", () => {
+  it("2列なら50行ごと（バインド100の内側）", () => {
     const rows = Array.from({ length: 120 }, (_, i) => [`a${i}`, i]);
     const chunks = buildUpsertChunks("daily_views", ["date", "views"], rows, ["date"], ["views"]);
     expect(chunks).toHaveLength(3);
@@ -90,8 +90,106 @@ describe("buildUpsertChunks（SPEC §8.1 のクエリ圧縮）", () => {
     expect(chunks[0]!.sql).toContain("ON CONFLICT(date) DO UPDATE SET views=excluded.views");
   });
 
+  it("列数からバインド上限100に収まる行数を決める", () => {
+    expect(maxRowsPerStatement(2)).toBe(50);
+    expect(maxRowsPerStatement(3)).toBe(33);
+    expect(maxRowsPerStatement(5)).toBe(20);
+    expect(maxRowsPerStatement(21)).toBe(4);
+    expect(maxRowsPerStatement(200)).toBe(1);
+
+    // どのチャンクもバインド変数が100を超えない
+    for (const cols of [2, 3, 5, 9, 21]) {
+      const columns = Array.from({ length: cols }, (_, i) => `c${i}`);
+      const rows = Array.from({ length: 137 }, () => columns.map(() => 1));
+      const chunks = buildUpsertChunks("t", columns, rows, ["c0"], ["c1"]);
+      for (const chunk of chunks) expect(chunk.params.length).toBeLessThanOrEqual(100);
+      expect(chunks.reduce((n, c) => n + c.params.length, 0)).toBe(137 * cols);
+    }
+  });
+
+  it("大きすぎる chunkSize を渡しても上限で切り詰める", () => {
+    const columns = ["a", "b", "c", "d", "e"];
+    const rows = Array.from({ length: 60 }, () => [1, 2, 3, 4, 5]);
+    const chunks = buildUpsertChunks("t", columns, rows, ["a"], ["b"], 50);
+    for (const chunk of chunks) expect(chunk.params.length).toBeLessThanOrEqual(100);
+  });
+
   it("更新列が無ければ DO NOTHING", () => {
     const chunks = buildUpsertChunks("t", ["a"], [["x"]], ["a"], []);
     expect(chunks[0]!.sql).toContain("DO NOTHING");
+  });
+
+  it("組み立てた SQL が実際の D1 で通る（3列 = 33行/文）", async () => {
+    const b = createBudget({ dbQueries: 100 });
+    const db = createDb(env.DB, b);
+    const accountId = `chunk-${crypto.randomUUID()}`;
+
+    // post_metrics_history は5列 → 20行/文
+    const columns = ["account_id", "post_id", "checkpoint", "at", "views"];
+    const rows = Array.from({ length: 45 }, (_, i) => [
+      accountId,
+      `p${i}`,
+      "48h",
+      "2026-09-04T00:00:00.000Z",
+      i,
+    ]);
+    const chunks = buildUpsertChunks(
+      "post_metrics_history",
+      columns,
+      rows,
+      ["account_id", "post_id", "checkpoint"],
+      ["views"],
+    );
+    expect(chunks).toHaveLength(3); // 20 + 20 + 5
+    await db.batch(chunks);
+
+    const count = await db.first<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM post_metrics_history WHERE account_id=?",
+      accountId,
+    );
+    expect(count?.n).toBe(45);
+
+    // 同じ主キーで再実行すると UPDATE 側に入る（行は増えない）
+    const again = buildUpsertChunks(
+      "post_metrics_history",
+      columns,
+      rows.map((r) => [...r.slice(0, 4), 999]),
+      ["account_id", "post_id", "checkpoint"],
+      ["views"],
+    );
+    await db.batch(again);
+    const after = await db.first<{ n: number; v: number }>(
+      "SELECT COUNT(*) AS n, MAX(views) AS v FROM post_metrics_history WHERE account_id=?",
+      accountId,
+    );
+    expect(after?.n).toBe(45);
+    expect(after?.v).toBe(999);
+  });
+
+  it("3列でも daily_views に実際に流せる", async () => {
+    const b = createBudget({ dbQueries: 100 });
+    const db = createDb(env.DB, b);
+    const accountId = `chunk3-${crypto.randomUUID()}`;
+    const rows = Array.from({ length: 70 }, (_, i) => [
+      accountId,
+      `2026-01-${String((i % 28) + 1).padStart(2, "0")}`,
+      i,
+    ]);
+    // 日付が重複するので upsert される。列数3 → 33行/文
+    const chunks = buildUpsertChunks(
+      "daily_views",
+      ["account_id", "date", "views"],
+      rows,
+      ["account_id", "date"],
+      ["views"],
+    );
+    expect(chunks).toHaveLength(3);
+    expect(chunks[0]!.params).toHaveLength(99);
+    await db.batch(chunks);
+    const count = await db.first<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM daily_views WHERE account_id=?",
+      accountId,
+    );
+    expect(count?.n).toBe(28);
   });
 });

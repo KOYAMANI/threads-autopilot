@@ -6,70 +6,28 @@
 import { DEV, type Env } from "../env";
 import type { Budget } from "./budget";
 import { redact } from "./redact";
+import {
+  isRateLimit,
+  parseThreadsError,
+  ThreadsApiError,
+  type ThreadsError,
+} from "./threads-error";
 
 export const BASE = "https://graph.threads.net/v1.0";
 
-export type ThreadsError = {
-  code: number;
-  subcode?: number;
-  message: string;
-  userMsg?: string;
-  raw: string;
-};
+// エラーまわりは lib/threads-error.ts に置いてある（mock からも使うため）。
+// 呼び出し側は従来どおり lib/threads.ts から import できる。
+export {
+  isRateLimit,
+  isTokenInvalid,
+  parseThreadsError,
+  RATE_LIMIT_CODES,
+  ThreadsApiError,
+  threadsReason,
+  type ThreadsError,
+} from "./threads-error";
 
-export class ThreadsApiError extends Error {
-  readonly code: number;
-  readonly subcode?: number;
-  readonly raw: string;
-
-  constructor(e: ThreadsError) {
-    super(e.message);
-    this.name = "ThreadsApiError";
-    this.code = e.code;
-    if (e.subcode !== undefined) this.subcode = e.subcode;
-    this.raw = e.raw;
-  }
-
-  toThreadsError(): ThreadsError {
-    const out: ThreadsError = { code: this.code, message: this.message, raw: this.raw };
-    if (this.subcode !== undefined) out.subcode = this.subcode;
-    out.userMsg = threadsReason(out);
-    return out;
-  }
-}
-
-/** レート制限扱いのコード。1.5s → 3s → 6s で最大3回リトライする。 */
-const RATE_LIMIT_CODES = new Set([4, 17, 32, 613]);
 const RETRY_DELAYS_MS = [1500, 3000, 6000];
-
-export function isRateLimit(e: ThreadsError): boolean {
-  return RATE_LIMIT_CODES.has(e.code);
-}
-
-/** code 190 はトークン失効。アカウントを needs_reauth にする合図（SPEC §6.1）。 */
-export function isTokenInvalid(e: ThreadsError): boolean {
-  return e.code === 190;
-}
-
-/** SPEC §6.2 の対応表。末尾に必ず原文を付ける。 */
-export function threadsReason(e: ThreadsError): string {
-  const head = (() => {
-    if (e.code === 10 || e.code === 200 || /permission/i.test(e.message)) {
-      return "権限が足りません。Metaのアプリで threads_manage_insights と threads_content_publish にチェックを入れ、トークンを作り直してください";
-    }
-    if (e.code === 190) {
-      return "トークンが期限切れか無効です。設定からつなぎ直してください";
-    }
-    if (RATE_LIMIT_CODES.has(e.code)) {
-      return "Threads側が混み合っています。しばらく待つと自動で再試行します";
-    }
-    if (/LINK_LIMIT/i.test(e.message)) {
-      return "1投稿に入れられるリンクは5つまでです";
-    }
-    return "Threadsがこの操作を受け付けませんでした";
-  })();
-  return `${head}（Threadsからの返答: #${e.code} ${e.message}）`;
-}
 
 export type ThreadsParams = Record<string, string | number | boolean | undefined | null>;
 
@@ -90,28 +48,11 @@ function toQuery(params: ThreadsParams): URLSearchParams {
   return q;
 }
 
-function parseError(status: number, bodyText: string): ThreadsError {
-  let code = status;
-  let message = bodyText.slice(0, 300);
-  let subcode: number | undefined;
-  try {
-    const json = JSON.parse(bodyText) as {
-      error?: { code?: number; error_subcode?: number; message?: string; type?: string };
-    };
-    if (json.error) {
-      code = json.error.code ?? status;
-      message = json.error.message ?? message;
-      subcode = json.error.error_subcode;
-    }
-  } catch {
-    // JSON でないときは本文をそのまま原文にする
-  }
-  const e: ThreadsError = { code, message, raw: redact(bodyText.slice(0, 1000)) };
-  if (subcode !== undefined) e.subcode = subcode;
-  return e;
-}
-
-/** THREADS_MOCK=1 かつ DEV ビルドかつ `THAAdemo` トークンならモックに入る（SPEC §11）。 */
+/**
+ * THREADS_MOCK=1 かつ DEV ビルドかつ `THAAdemo` トークンならモックに入る（SPEC §11）。
+ * **表示・診断用**。`call()` の分岐にこの関数を使ってはいけない。関数を挟むと
+ * esbuild のデッドコード除去が効かず、mock/ が本番バンドルに残る。
+ */
 export function shouldUseMock(env: Env, token: string): boolean {
   return DEV && env.THREADS_MOCK === "1" && token.startsWith("THAAdemo");
 }
@@ -140,24 +81,16 @@ export async function call(
   const { budget, env } = options;
   const p = path.startsWith("/") ? path : `/${path}`;
 
-  if (shouldUseMock(env, token)) {
+  // `__DEV__` は esbuild の define で置き換わるビルド時定数（worker/src/globals.d.ts）。
+  // ここは **識別子を直接** 書く。別モジュールの定数（env.ts の DEV）や shouldUseMock()
+  // を挟むとデッドコード除去が効かない。枝の中でもモック側の名前を使わない
+  // （default エクスポート経由。エラー整形もモック側で済ませる）。名前で呼ぶと
+  // `__DEV__=false` のビルドで、消えた枝の中にその名前だけが文字列として残る。
+  // 回帰確認は scripts/check-bundle.sh。
+  if (__DEV__ && env.THREADS_MOCK === "1" && token.startsWith("THAAdemo")) {
     budget.subrequests.use();
-    // DEV ガードの内側なので、本番バンドルではこの分岐ごと消える。
-    const { mockCall, MockThreadsError } = await import("../mock/threads");
-    try {
-      const flat: Record<string, string | undefined> = {};
-      for (const [k, v] of Object.entries(params)) {
-        if (v !== undefined && v !== null) flat[k] = String(v);
-      }
-      const args: Parameters<typeof mockCall>[0] = { token, method, path: p, params: flat };
-      if (options.now !== undefined) args.now = options.now;
-      return mockCall(args);
-    } catch (e) {
-      if (e instanceof MockThreadsError) {
-        throw new ThreadsApiError({ code: e.code, message: e.message, raw: `#${e.code} ${e.message}` });
-      }
-      throw e;
-    }
+    const mod = await import("../mock/threads");
+    return mod.default({ token, method, path: p, params, now: options.now });
   }
 
   const sleep = options.sleep ?? defaultSleep;
@@ -183,7 +116,7 @@ export async function call(
       }
     }
 
-    lastError = parseError(res.status, bodyText);
+    lastError = parseThreadsError(res.status, bodyText);
     if (!isRateLimit(lastError) || attempt === RETRY_DELAYS_MS.length) break;
     await sleep(RETRY_DELAYS_MS[attempt]!);
   }
