@@ -77,6 +77,18 @@ function toUserSummary(u: UserRow): UserSummary {
   };
 }
 
+/**
+ * 署名トークンを使う経路の前提。`.dev.vars` / `wrangler secret put` の入れ忘れを
+ * 「なぜか 500」ではなく、原因の分かるログにする。
+ */
+function sessionSecretMissing(secret: string | undefined): boolean {
+  if (secret && secret.length > 0) return false;
+  console.error(
+    "[auth] SESSION_SECRET が設定されていません。.dev.vars（開発）か wrangler secret put（本番）で入れてください",
+  );
+  return true;
+}
+
 async function readJson<T>(c: { req: { json: () => Promise<unknown> } }): Promise<T | null> {
   try {
     return (await c.req.json()) as T;
@@ -327,6 +339,9 @@ export function authRoutes() {
     const parsed = forgotSchema.safeParse(await readJson(c));
     // メールの存在も、形式の誤りも漏らさない。常に ok:true
     if (!parsed.success) return c.json(ok({ requested: true }));
+    if (sessionSecretMissing(c.env.SESSION_SECRET)) {
+      return fail("INTERNAL", "サーバーの設定が終わっていません。管理者にお問い合わせください", 500);
+    }
 
     const { email } = parsed.data;
     const db = c.get("db");
@@ -379,6 +394,9 @@ export function authRoutes() {
       return isPassword
         ? fail("WEAK_PASSWORD", `パスワードは${PASSWORD_MIN}文字以上にしてください`, 400)
         : fail("RESET_INVALID", "リンクの有効期限が切れています。もう一度お試しください", 400);
+    }
+    if (sessionSecretMissing(c.env.SESSION_SECRET)) {
+      return fail("INTERNAL", "サーバーの設定が終わっていません。管理者にお問い合わせください", 500);
     }
     const { token, password } = parsed.data;
     const db = c.get("db");

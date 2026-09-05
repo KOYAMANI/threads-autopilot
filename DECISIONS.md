@@ -125,3 +125,23 @@ v1.1 の独立検証で、要求項目は全件反映されていたが、v1.1 �
 
 以後の追記ルール: 1決定1行、日付つき。
 - 2026-09-04 再検証の指摘3件を反映: §3.2 の署名トークン参照を §5.3 に / §7.1 の削除対象に `click_weeks_done` を追加 / §7.7・§9.2 の「すべて48h時点」を `avgScore` の `carry`・`ctr` 例外つきに限定。§7.9 の `cancelled|failed` 文言も訂正
+
+## M1 実装で決めたこと
+
+- 2026-09-04 wrangler は SPEC §2.2 の 3.x ではなく **4.129.0** を使う — npm の最新安定版が 4.x で、3.x は保守終了。`d1 migrations apply` / `dev` / `deploy --dry-run` の使い方は変わらない
+- 2026-09-04 テストランナーは `@cloudflare/vitest-pool-workers` 0.22 + vitest 4.1 — D1 を workerd 上で本物として動かせるので `better-sqlite3` のアダプタは書かない。0.22 で API が変わっており、`defineWorkersConfig` ではなく `cloudflareTest()` プラグインを `defineConfig` の `plugins` に入れる
+- 2026-09-04 モックの DEV ガードは `import.meta.env.DEV` ではなく esbuild の `define`（`__DEV__`）で行う — wrangler は `import.meta.env` を注入しないため。`wrangler.toml` の `[define] __DEV__ = "false"`（本番安全側）を既定にし、`npm run dev:worker` が `--define __DEV__:true` で上書きする。`lib/threads.ts` は `if (DEV && ...)` の内側で `await import("../mock/threads")` する動的 import にしてあり、`__DEV__=false` のビルドでは分岐ごと消える（`wrangler deploy --dry-run` の出力に mock の識別子が1つも残らないことを確認済み）
+- 2026-09-04 `rateLimit()` の置き場は SPEC §5.1 が言う `lib/session.ts` ではなく **`lib/rate.ts`** に分けた — セッションと回数制限は依存関係が無く、`/a/*`（§7.9）からセッションを読まずに使うため。関数は `rateAllow`（数えるだけ。ログイン失敗のように「失敗時だけ記録する」用途）と `rateHit`（記録してから判定。forgot / action のように全件を数える用途）の2本に分けた
+- 2026-09-04 `similarity()` は SPEC §8.3 が言う `shared/src/tags.ts` 本体ではなく `shared/src/similarity.ts` に置き、`tags.ts` から再エクスポートする — `tags.ts`（分類）と重複判定は用途が別。§8.3 の import パスはそのまま使える
+- 2026-09-04 `validatePost()` は `shared/src/validate.ts` に置く（SPEC は置き場を明記していない）— web と worker の両方から呼ぶため shared に置く必要がある
+- 2026-09-04 本文長は「コードポイント数と UTF-8 バイト数の厳しい方」（SPEC §6.3 のとおり）。`scripts/smoke.ts` の項目4で実測してから確定する
+- 2026-09-04 `/api/health` は `{ok, version, mock}` を素の形で返す（`{ok:true,data}` で包まない）— SPEC §7.8 の記載どおり。web の `api/client.ts` は `data` の有無で両方を受ける
+- 2026-09-04 `/api/*` の認証ミドルウェアはルーティングより先に走るので、未認証の未知パスは 404 ではなく 401 を返す — パスの存在有無を未認証者に漏らさないため
+- 2026-09-04 `wrangler.toml` の `database_id` はローカル開発用のダミー UUID（`00000000-…`）を置く — `--local` は Miniflare のファイルを使うため参照されない。本番は `wrangler d1 create` で得た ID に差し替える
+- 2026-09-04 `scripts/seed-demo.ts` はスクリプト内で SQL を組み立て、`wrangler d1 execute --file` に渡す方式にする — Worker を起動せずに投入でき、`--local` / `--remote` を同じコードで切り替えられる。冒頭で対象行を DELETE してから INSERT するので何度実行しても同じ状態になる
+- 2026-09-04 seed のデモユーザーのパスワードは `password1234` 固定（PBKDF2 の salt も 0x00..0x0f 固定）— 決定的にするため。デモ専用の値で本番では使わない
+- 2026-09-04 seed の `accounts.token_enc` は、`ENC_KEY` が env か `.dev.vars` にあるときだけ実際に暗号化して入れる（無ければ `SEED_NO_ENC_KEY`）。決定的な SQL にするため IV は固定にした — 平文は `THAAdemo_seed` というモック用の文字列1つだけで、実トークンではない
+- 2026-09-04 `web/src/styles/tokens.css` は暫定版（SPEC §12.2）。プロトタイプ冒頭の CSS 変数（`--bg` 〜 `--r`）と font-family・max-width 430px だけを写し、Login が読める最小限の部品クラスを足した。M3 の最初にプロトタイプの `CSS` 定数で丸ごと置き換える
+- 2026-09-04 Login のボタンは `:active` の `transform: scale(0.97)`（90ms）で pointer-down に反応させ、`prefers-reduced-motion: reduce` では transform を止めて opacity だけにする（apple-design SKILL.md の「Respond on pointer-down」「reduced-motion はクロスフェード」）。spring（`motion`）の導入は M3
+- 2026-09-04 `/reset` ルートは `/login?reset=<token>` と同じ画面を出し、`?reset=` と `?token=` の両方を受ける — メールのリンク（SPEC §5.1）は `/login?reset=` のままにする
+- 2026-09-04 `POST /api/auth/register` はライセンスを `UPDATE ... WHERE status='unused'` で押さえ、`changes=0` なら作った `users` 行を消して `LICENSE_INVALID` にする — 同じキーでの同時登録を1本に絞るため（D1 にトランザクションが無い前提の書き方）

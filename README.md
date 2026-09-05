@@ -21,9 +21,36 @@ Threads アカウントを「見る → 作る → 出す → 学ぶ」まで1�
 
 ```bash
 npm install
-npm run dev        # wrangler dev + vite
+cp .dev.vars.example .dev.vars   # ENC_KEY / SESSION_SECRET / ADMIN_SECRET を入れる
+npm run db:migrate               # ローカル D1 にスキーマを流す
+npm run seed:demo                # デモデータ（demo@example.com / password1234）
+
+npm run dev                      # wrangler dev（8787）+ vite（5173）
 npm test
 npm run typecheck
 ```
 
-デプロイ手順・買い手向けセットアップ手順は M7 で追記。
+`.dev.vars` の値の作り方:
+
+```bash
+openssl rand -base64 32   # ENC_KEY（32バイト）
+openssl rand -base64 48   # SESSION_SECRET
+openssl rand -hex 32      # ADMIN_SECRET
+```
+
+`RESEND_API_KEY` を空にしておくと、メールは送らず `wrangler dev` のコンソールに本文が出る。
+
+| コマンド | 内容 |
+|---|---|
+| `npm run dev:worker` | Worker だけ（`--define __DEV__:true` でモックを有効化） |
+| `npm run db:migrate` | ローカル D1 にマイグレーション |
+| `npm run seed:demo` | デモデータ投入（何度実行しても同じ状態） |
+| `npm run licenses -- --count 10` | ライセンスキー発行（管理API を叩く） |
+| `npm run smoke` | 実トークンでの Threads API 疎通確認（`THREADS_TOKEN` 必須） |
+
+手動確認のチェックリストは [docs/qa.md](./docs/qa.md)。
+
+Threads API はモック（`THREADS_MOCK=1` ＋ トークン `THAAdemo...`）で開発する。
+モックは `__DEV__=false` の本番ビルドからは消えるので、env の設定ミスで本番がモックに落ちることはない。
+
+デプロイ手順・買い手向けセットアップ手順・D1 Time Travel の復旧方針は M7 で追記。

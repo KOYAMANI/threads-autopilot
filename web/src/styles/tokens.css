@@ -1,0 +1,184 @@
+/*
+ * 暫定版・prototype 到着後に差し替え（M3）。SPEC §12.2 / §13 M1。
+ *
+ * docs/prototype.jsx が未着のため、Login 画面が読める最小限の CSS 変数だけを置いている。
+ * 色・数値はプロトタイプ冒頭の CSS 定数から写した値で、確定ではない。
+ * M3 の最初にプロトタイプの CSS 定数で丸ごと置き換える（変数名もプロトタイプ側に合わせ、
+ * 暫定側は残さない）。ここに独自のデザイン判断を足さないこと。
+ */
+
+:root {
+  --bg: #f2f3f0;
+  --paper: #ffffff;
+  --paper2: #f7f8f6;
+  --ink: #16191d;
+  --ink2: #5b626a;
+  --ink3: #8b9199;
+  --line: #e2e4e0;
+  --ap: #2748e8;
+  --ap-soft: #e9edfd;
+  --ap-ink: #1b33b8;
+  --amber: #d98e1f;
+  --amber-soft: #fbf0da;
+  --bad: #cf4640;
+  --bad-soft: #fbe5e3;
+  --ok: #1e8757;
+  --ok-soft: #dff3e8;
+  --r: 14px;
+
+  /* 余白の基本単位（暫定） */
+  --sp: 8px;
+  --maxw: 430px;
+
+  --font: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI",
+    sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  min-height: 100dvh;
+  background: var(--bg);
+}
+
+/* 大見出しだけ字間を詰める（SPEC §12.5 タイポグラフィ） */
+h1,
+h2 {
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin: 0;
+}
+
+p {
+  margin: 0;
+}
+
+/* ── 最小限の部品（Login のみ） ───────────────────── */
+
+.card {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: calc(var(--sp) * 3);
+}
+
+.field {
+  display: block;
+  margin-top: calc(var(--sp) * 2);
+}
+
+.field > span {
+  display: block;
+  font-size: 13px;
+  color: var(--ink2);
+  margin-bottom: calc(var(--sp) * 0.5);
+}
+
+.input {
+  width: 100%;
+  padding: 12px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--ap);
+  outline-offset: 1px;
+}
+
+/* 押した瞬間に返す（SPEC §12.5 pointer-down で反応） */
+.btn {
+  width: 100%;
+  padding: 13px 16px;
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: var(--ap);
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  transform: scale(1);
+  transition: transform 90ms cubic-bezier(0.2, 0, 0, 1), opacity 90ms linear;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn:active {
+  transform: scale(0.97);
+  opacity: 0.92;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+  transform: scale(1);
+}
+
+.btn-quiet {
+  background: transparent;
+  color: var(--ap-ink);
+  font-weight: 500;
+  font-size: 13px;
+  width: auto;
+  padding: 8px 4px;
+  white-space: nowrap;
+}
+
+.msg {
+  margin-top: calc(var(--sp) * 2);
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.msg-bad {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+.msg-ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.muted {
+  color: var(--ink3);
+  font-size: 13px;
+}
+
+/* SPEC §12.5: reduced-motion では transform を動かさない */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .btn:active {
+    transform: none;
+    opacity: 0.8;
+  }
+}
