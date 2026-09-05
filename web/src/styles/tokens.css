@@ -489,6 +489,9 @@ textarea.input {
   flex-direction: column;
   padding: calc(var(--sp) * 2);
   overflow-y: auto;
+  /* 動きが来る直前だけ付ける（SPEC §12.5）。開いている間しか DOM に無い要素なので、
+     ここに置くことが「直前だけ」と同じ意味になる */
+  will-change: transform;
   touch-action: pan-y;
 }
 
@@ -504,6 +507,8 @@ textarea.input {
   box-shadow: var(--shadow-3);
   padding: var(--sp) calc(var(--sp) * 2) calc(var(--sp) * 3 + env(safe-area-inset-bottom, 0px));
   touch-action: none;
+  /* 開いている間しか DOM に無いので、ここが「動きが来る直前」と同じ（SPEC §12.5） */
+  will-change: transform;
 }
 
 .sheet-grip {
@@ -750,6 +755,7 @@ a.menu-item {
 }
 
 .row-panel {
+  will-change: transform, opacity;
   border-top: 1px solid var(--line);
   padding: var(--sp) calc(var(--sp) * 1.5) calc(var(--sp) * 1.5);
   background: var(--paper2);

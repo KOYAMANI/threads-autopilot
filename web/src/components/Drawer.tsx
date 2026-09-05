@@ -32,8 +32,12 @@ export default function Drawer({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const widthRef = useRef(320);
 
-  // 覆いの濃さはドロワーの現在位置に連動させる（ドラッグ中も連続してフィードバックする）
-  const scrimOpacity = useTransform(x, [-widthRef.current, 0], [0, 1]);
+  // 覆いの濃さはドロワーの現在位置に連動させる（ドラッグ中も連続してフィードバックする）。
+  // 幅は CSS が `min(20rem, 82vw)` なので端末で変わる。固定値で割らず、そのつど実測する
+  const scrimOpacity = useTransform(x, (v) => {
+    const width = panelRef.current?.offsetWidth || widthRef.current;
+    return Math.max(0, Math.min(1, 1 + v / width));
+  });
 
   useEffect(() => {
     if (!open) return;
