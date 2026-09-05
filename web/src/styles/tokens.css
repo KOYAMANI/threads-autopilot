@@ -877,6 +877,223 @@ a.menu-item {
   font-weight: 700;
 }
 
+/* ── キュー（SPEC §12.3 / design-v0.2 §3-5） ────────── */
+
+/* 入力の見出し行（ラベル＋文字数カウンタ） */
+.field-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp);
+}
+
+.counter {
+  font-size: 0.6875rem;
+  color: var(--ink3);
+}
+
+.counter-over {
+  color: var(--bad);
+  font-weight: 700;
+}
+
+/* 週表示。7日分を等幅で並べる（入りきらないときだけ横に流す） */
+.week {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: calc(var(--sp) * 0.5);
+  margin-top: calc(var(--sp) * 2);
+}
+
+.week-day {
+  display: grid;
+  gap: 0.125rem;
+  justify-items: center;
+  padding: calc(var(--sp) * 0.75) 0;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transform: scale(1);
+  transition:
+    transform 100ms cubic-bezier(0.2, 0, 0, 1),
+    background-color 120ms linear,
+    color 120ms linear;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.week-day:active {
+  transform: scale(0.95);
+}
+
+.week-day > .w {
+  font-size: 0.625rem;
+  color: var(--ink3);
+}
+
+.week-day > .d {
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+.week-day > .n {
+  font-size: 0.625rem;
+  font-weight: 700;
+  color: var(--ap-ink);
+}
+
+.week-day > .n-zero {
+  color: var(--ink3);
+  font-weight: 400;
+}
+
+.week-day[aria-pressed="true"] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
+
+.week-day[aria-pressed="true"] > .w,
+.week-day[aria-pressed="true"] > .n {
+  color: #fff;
+}
+
+/* 行の中の状態タグ */
+.tag-scheduled {
+  background: var(--ap-soft);
+  border-color: transparent;
+  color: var(--ap-ink);
+}
+
+.tag-pending_approval,
+.tag-publishing {
+  background: var(--amber-soft);
+  border-color: transparent;
+  color: var(--amber);
+}
+
+.tag-done {
+  background: var(--ok-soft);
+  border-color: transparent;
+  color: var(--ok);
+}
+
+.tag-failed {
+  background: var(--bad-soft);
+  border-color: transparent;
+  color: var(--bad);
+}
+
+.row-error {
+  margin-top: calc(var(--sp) * 0.75);
+  font-size: 0.75rem;
+  color: var(--bad);
+}
+
+.row-note {
+  margin-top: calc(var(--sp) * 0.75);
+  font-size: 0.75rem;
+  color: var(--amber);
+}
+
+/* 失敗の詳細。日本語の理由と Threads の返答そのままを分けて出す（SPEC §8.3） */
+.err-box {
+  margin-top: var(--sp);
+  padding: calc(var(--sp) * 1.25);
+  background: var(--bad-soft);
+  border-radius: var(--r-sm);
+}
+
+.err-msg {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--bad);
+  line-height: 1.5;
+}
+
+.err-raw {
+  margin-top: calc(var(--sp) * 0.5);
+  font-size: 0.6875rem;
+  color: var(--ink2);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+/* シートの中の操作一覧 */
+.menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--sp) * 0.25);
+}
+
+.menu-item-bad {
+  color: var(--bad);
+}
+
+.menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+  transform: scale(1);
+}
+
+/* 日時の決め方（今すぐ / 日時指定 / おすすめ枠） */
+.choices {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--sp) * 0.75);
+}
+
+.choice {
+  display: grid;
+  gap: 0.125rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.75rem;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transform: scale(1);
+  transition:
+    transform 100ms cubic-bezier(0.2, 0, 0, 1),
+    background-color 120ms linear,
+    border-color 120ms linear;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.choice:active {
+  transform: scale(0.98);
+}
+
+.choice[aria-checked="true"] {
+  background: var(--ap-soft);
+  border-color: var(--ap);
+}
+
+.choice-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.choice-note {
+  font-size: 0.75rem;
+  color: var(--ink2);
+  line-height: 1.5;
+}
+
+.choice[aria-checked="true"] .choice-note {
+  color: var(--ap-ink);
+}
+
+/* シートは touch-action: none なので、中の入力は自前でスクロールできるようにする */
+.sheet textarea.input {
+  touch-action: auto;
+}
+
 /* ── 環境設定の尊重（SPEC §12.5 / apple-design §14） ─── */
 
 @media (prefers-reduced-motion: reduce) {
@@ -896,7 +1113,9 @@ a.menu-item {
   .tab:active,
   .row-main:active,
   .menu-item:active,
-  .account-chip:active {
+  .account-chip:active,
+  .week-day:active,
+  .choice:active {
     transform: none;
     opacity: 0.8;
   }

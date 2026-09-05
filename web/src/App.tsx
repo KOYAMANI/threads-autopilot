@@ -8,9 +8,11 @@ import type { ReactElement } from "react";
 import Shell from "./components/Shell";
 import { ToastProvider } from "./components/Toast";
 import Connect from "./screens/Connect";
+import Create from "./screens/Create";
 import Home from "./screens/Home";
 import Login from "./screens/Login";
-import { Autopilot, Create, Queue, Settings } from "./screens/Placeholder";
+import Queue from "./screens/Queue";
+import { Autopilot, Settings } from "./screens/Placeholder";
 import { useMe } from "./api/auth";
 
 function Loading() {

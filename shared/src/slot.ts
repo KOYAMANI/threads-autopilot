@@ -89,18 +89,19 @@ function tzFields(ms: number, tz: string): { y: number; mo: number; d: number; h
 }
 
 /**
- * 「tz でこの年月日時の0分ちょうど」を UTC の ms に直す。
+ * 「tz でこの年月日時分」を UTC の ms に直す。
  * オフセットは Intl から逆算する（Asia/Tokyo は固定だが、DST のある tz でもずれないよう
- * 1回だけ収束させる）。
+ * 1回だけ収束させる）。画面の日時入力（`datetime-local`）の変換にも使う。
  */
-export function zonedHourToUtcMs(
+export function zonedTimeToUtcMs(
   y: number,
   mo: number,
   d: number,
   h: number,
+  mi: number,
   tz: string,
 ): number {
-  const target = Date.UTC(y, mo - 1, d, h, 0, 0);
+  const target = Date.UTC(y, mo - 1, d, h, mi, 0);
   let ms = target;
   for (let i = 0; i < 2; i++) {
     const f = tzFields(ms, tz);
@@ -111,6 +112,17 @@ export function zonedHourToUtcMs(
     ms = next;
   }
   return ms;
+}
+
+/** 「tz でこの年月日時の0分ちょうど」を UTC の ms に直す（枠は3時間刻みなので分は持たない）。 */
+export function zonedHourToUtcMs(
+  y: number,
+  mo: number,
+  d: number,
+  h: number,
+  tz: string,
+): number {
+  return zonedTimeToUtcMs(y, mo, d, h, 0, tz);
 }
 
 /** tz での「今日」の 00:00 を UTC ms で返す。 */
