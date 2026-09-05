@@ -86,6 +86,18 @@ export function maxRowsPerStatement(columnCount: number, cap = 50): number {
 }
 
 /**
+ * ON CONFLICT の更新指定。
+ * - `"views"` … `views=excluded.views`（既定の書き換え）
+ * - `{column:"tags_json", expr:"CASE WHEN posts.tags_json='{}' THEN excluded.tags_json ELSE posts.tags_json END"}`
+ *   … 既存値を条件付きで残したいとき（full_sync が採点済みタグを潰さないため。SPEC §8.4 / §9.2）
+ */
+export type UpsertUpdate = string | { column: string; expr: string };
+
+function updateClause(u: UpsertUpdate): string {
+  return typeof u === "string" ? `${u}=excluded.${u}` : `${u.column}=${u.expr}`;
+}
+
+/**
  * マルチVALUES の upsert を組み立てる（SPEC §8.1「ループ内で1行ずつ書かない」）。
  * 1文の行数は列数から決める（既定 50 行、ただしバインド上限 100 を超えない）。
  */
@@ -94,7 +106,7 @@ export function buildUpsertChunks(
   columns: string[],
   rows: unknown[][],
   conflictColumns: string[],
-  updateColumns: string[],
+  updateColumns: UpsertUpdate[],
   chunkSize = maxRowsPerStatement(columns.length),
 ): Array<{ sql: string; params: unknown[] }> {
   const out: Array<{ sql: string; params: unknown[] }> = [];
@@ -107,7 +119,7 @@ export function buildUpsertChunks(
       chunk.map(() => placeholders).join(",") +
       ` ON CONFLICT(${conflictColumns.join(",")}) DO ` +
       (updateColumns.length
-        ? `UPDATE SET ${updateColumns.map((c) => `${c}=excluded.${c}`).join(",")}`
+        ? `UPDATE SET ${updateColumns.map(updateClause).join(",")}`
         : "NOTHING");
     out.push({ sql, params: chunk.flat() });
   }

@@ -7,17 +7,23 @@
 import { Hono } from "hono";
 import type { ApiErr } from "@tap/shared";
 import { APP_VERSION, type Env } from "./env";
-import { budgetFromEnv } from "./lib/budget";
+import { budgetFromEnv, type Budget } from "./lib/budget";
 import { BudgetExceeded } from "./lib/budget";
 import { createDb, type Db } from "./lib/db";
 import { getSession, hasRequestedWith, readCookie, SESSION_COOKIE } from "./lib/session";
 import { redact } from "./lib/redact";
+import { ThreadsApiError, threadsReason } from "./lib/threads-error";
 import { authRoutes } from "./routes/auth";
 import { adminRoutes } from "./routes/admin";
+import { accountRoutes } from "./routes/accounts";
+import { dashboardRoutes } from "./routes/dashboard";
+import { postRoutes } from "./routes/posts";
+import { linkRoutes } from "./routes/links";
 import { healthRoutes } from "./routes/health";
 
 export type Vars = {
   db: Db;
+  budget: Budget;
   userId: string | null;
   sessionId: string | null;
 };
@@ -48,6 +54,7 @@ export function createApp() {
   // 1リクエスト＝1予算。D1 クエリ数は lib/db.ts が自動で数える（SPEC §8.1）
   app.use("*", async (c, next) => {
     const budget = budgetFromEnv(c.env);
+    c.set("budget", budget);
     c.set("db", createDb(c.env.DB, budget));
     c.set("userId", null);
     c.set("sessionId", null);
@@ -82,10 +89,19 @@ export function createApp() {
   app.route("/health", healthRoutes());
   app.route("/auth", authRoutes());
   app.route("/admin", adminRoutes());
+  // /accounts 配下は関心ごとにファイルを分け、同じベースに複数マウントする（SPEC §7.1〜§7.5）
+  app.route("/accounts", accountRoutes());
+  app.route("/accounts", dashboardRoutes());
+  app.route("/accounts", postRoutes());
+  app.route("/accounts", linkRoutes());
 
   app.notFound(() => fail("NOT_FOUND", "見つかりませんでした", 404));
 
   app.onError((err) => {
+    if (err instanceof ThreadsApiError) {
+      // Threads の失敗は、日本語＋原文をそのままユーザーに見せる（SPEC §2.4 / §6.2）
+      return fail("THREADS_ERROR", threadsReason(err.toThreadsError()), 502);
+    }
     if (err instanceof BudgetExceeded) {
       console.error(`[api] budget exceeded: ${err.kind} ${err.used}/${err.limit}`);
       return fail("BUDGET_EXCEEDED", "処理が混み合っています。少し待ってからもう一度お試しください", 503);

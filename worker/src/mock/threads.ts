@@ -210,6 +210,13 @@ export default callMock;
  */
 export function mockCall(req: MockRequest): unknown {
   const now = req.now ?? Date.now();
+
+  // トークン失効（code 190）を再現する。`THAAdemo_expired…` を使うと needs_reauth の
+  // 経路（SPEC §6.1 / §8.6）をテストできる
+  if (req.token.includes("expired")) {
+    throw mockError(190, "Error validating access token: Session has expired");
+  }
+
   const store = storeFor(req.token);
   const path = req.path.startsWith("/") ? req.path : `/${req.path}`;
   const p = req.params;

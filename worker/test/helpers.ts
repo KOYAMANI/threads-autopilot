@@ -87,3 +87,59 @@ export async function registerUser(
     userId: res.body.data.user.id as string,
   };
 }
+
+/* ── M2: アカウントとジョブ ─────────────────────────── */
+
+import { encrypt } from "../src/lib/crypto";
+
+/** モックに入るトークン（SPEC §11）。テストごとに別の store になるよう接尾辞を変える。 */
+export function mockToken(suffix = "t"): string {
+  return `THAAdemo_${suffix}`;
+}
+
+/** accounts 行を直接作る（POST /accounts を通さずにジョブだけ試したいとき）。 */
+export async function insertAccount(options: {
+  userId: string;
+  token?: string;
+  threadsUserId?: string;
+  timezone?: string;
+  status?: string;
+  createdAt?: string;
+  longLived?: boolean;
+  tokenObtainedAt?: string;
+}): Promise<string> {
+  const db = testDb();
+  const id = crypto.randomUUID();
+  const nowIso = options.createdAt ?? new Date().toISOString();
+  await db.run(
+    `INSERT INTO accounts (id, user_id, threads_user_id, username, name, avatar_url, color,
+        token_enc, token_obtained_at, token_long_lived, token_last_refresh_at, status,
+        timezone, settings_json, last_full_sync_at, created_at)
+      VALUES (?,?,?,?,?,NULL,'#4f7cff',?,?,?,NULL,?,?, '{}', NULL, ?)`,
+    id,
+    options.userId,
+    options.threadsUserId ?? `1780000000000${Math.floor(Math.random() * 900 + 100)}`,
+    "demo_test",
+    "デモアカウント",
+    await encrypt(options.token ?? mockToken(), env.ENC_KEY),
+    options.tokenObtainedAt ?? nowIso,
+    options.longLived ? 1 : 0,
+    options.status ?? "ok",
+    options.timezone ?? "Asia/Tokyo",
+    nowIso,
+  );
+  await db.run(
+    "INSERT INTO autopilot (account_id, updated_at) VALUES (?,?) ON CONFLICT(account_id) DO NOTHING",
+    id,
+    nowIso,
+  );
+  return id;
+}
+
+export async function countRows(table: string, where: string, ...params: unknown[]): Promise<number> {
+  const row = await testDb().first<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM ${table} WHERE ${where}`,
+    ...params,
+  );
+  return row?.n ?? 0;
+}

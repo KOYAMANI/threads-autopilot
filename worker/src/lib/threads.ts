@@ -1,7 +1,7 @@
 /**
  * Threads API 呼び出し（SPEC §6）。
- * M1 では call() の骨格・threadsReason()・モック分岐までを置く。
- * 各エンドポイントのラッパ（full_sync / insights / publish）は M2 以降。
+ * call() の骨格・threadsReason()・モック分岐と、§6.3 の各エンドポイントのラッパ。
+ * publish 系（`POST /me/threads` のツリー投稿）は M4。
  */
 import { DEV, type Env } from "../env";
 import type { Budget } from "./budget";
@@ -122,4 +122,276 @@ export async function call(
   }
 
   throw new ThreadsApiError(lastError ?? { code: 0, message: "unknown", raw: "" });
+}
+
+/* ── §6.3 の各呼び出しのラッパ ───────────────────────
+ * どれも call() を通すので、モック分岐・リトライ・予算はここでは書かない。
+ * 応答の形は docs/threads-api.md §3〜§6 に合わせる。
+ */
+
+/** 投稿一覧・返信一覧で取るフィールド（SPEC §6.3）。 */
+export const POST_FIELDS =
+  "id,text,permalink,timestamp,is_reply,replied_to,root_post,has_replies,media_type,media_url,link_attachment_url,is_quote_post";
+
+/** 投稿ごとのインサイトのメトリクス（SPEC §6.3）。 */
+export const POST_METRICS = "views,likes,replies,reposts,quotes,shares";
+
+export type ThreadsProfile = {
+  id: string;
+  username: string;
+  name?: string | null;
+  threads_profile_picture_url?: string | null;
+};
+
+export type ThreadsMedia = {
+  id: string;
+  text?: string;
+  permalink?: string;
+  timestamp?: string;
+  is_reply?: boolean;
+  replied_to?: { id?: string } | null;
+  root_post?: { id?: string } | null;
+  has_replies?: boolean;
+  media_type?: string;
+  media_url?: string | null;
+  link_attachment_url?: string | null;
+  is_quote_post?: boolean;
+};
+
+export type ThreadsPage = {
+  data: ThreadsMedia[];
+  paging?: { cursors?: { after?: string; before?: string }; next?: string };
+};
+
+/** 接続確認（SPEC §6.3）。 */
+export async function getProfile(token: string, options: CallOptions): Promise<ThreadsProfile> {
+  return (await call(
+    token,
+    "GET",
+    "/me",
+    { fields: "id,username,name,threads_profile_picture_url" },
+    options,
+  )) as ThreadsProfile;
+}
+
+/** 短期 → 長期トークン（60日）。App Secret は保存しない（SPEC §6.3）。 */
+export async function exchangeToken(
+  token: string,
+  appSecret: string,
+  options: CallOptions,
+): Promise<{ access_token: string; expires_in?: number }> {
+  return (await call(
+    token,
+    "GET",
+    "/access_token",
+    { grant_type: "th_exchange_token", client_secret: appSecret },
+    options,
+  )) as { access_token: string; expires_in?: number };
+}
+
+/** 長期トークンの延長（発行24h後から。SPEC §6.3 / §8.6）。 */
+export async function refreshLongLivedToken(
+  token: string,
+  options: CallOptions,
+): Promise<{ access_token: string; expires_in?: number }> {
+  return (await call(
+    token,
+    "GET",
+    "/refresh_access_token",
+    { grant_type: "th_refresh_token" },
+    options,
+  )) as { access_token: string; expires_in?: number };
+}
+
+/** 自分の投稿一覧（root）。1ページ最大100件。 */
+export async function listThreads(
+  token: string,
+  params: { limit?: number; after?: string },
+  options: CallOptions,
+): Promise<ThreadsPage> {
+  return (await call(
+    token,
+    "GET",
+    "/me/threads",
+    { fields: POST_FIELDS, limit: params.limit ?? 100, after: params.after },
+    options,
+  )) as ThreadsPage;
+}
+
+/** 自分が書いた返信（ツリーの2投稿目以降）。 */
+export async function listReplies(
+  token: string,
+  params: { limit?: number; after?: string },
+  options: CallOptions,
+): Promise<ThreadsPage> {
+  return (await call(
+    token,
+    "GET",
+    "/me/replies",
+    { fields: POST_FIELDS, limit: params.limit ?? 100, after: params.after },
+    options,
+  )) as ThreadsPage;
+}
+
+export type PostMetrics = {
+  views: number;
+  likes: number;
+  replies: number;
+  reposts: number;
+  quotes: number;
+  shares: number;
+};
+
+type InsightEntry = {
+  name?: string;
+  values?: Array<{ value?: number; end_time?: string }>;
+  total_value?: { value?: number; breakdowns?: unknown };
+  link_total_values?: Array<{ value?: number; link_url?: string }>;
+};
+
+/** `data[].values[0].value ?? total_value.value`（SPEC §6.3）。 */
+function insightValue(entry: InsightEntry): number {
+  const v = entry.values?.[0]?.value;
+  if (typeof v === "number") return v;
+  const t = entry.total_value?.value;
+  return typeof t === "number" ? t : 0;
+}
+
+/** 投稿1件の数字。取れなかったメトリクスは null にして、呼び出し側が前回値を残せるようにする。 */
+export async function getPostInsights(
+  token: string,
+  mediaId: string,
+  options: CallOptions,
+): Promise<Partial<PostMetrics>> {
+  const res = (await call(
+    token,
+    "GET",
+    `/${mediaId}/insights`,
+    { metric: POST_METRICS },
+    options,
+  )) as { data?: InsightEntry[] };
+  const out: Partial<PostMetrics> = {};
+  for (const entry of res.data ?? []) {
+    const name = entry.name;
+    if (!name) continue;
+    if (
+      name === "views" ||
+      name === "likes" ||
+      name === "replies" ||
+      name === "reposts" ||
+      name === "quotes" ||
+      name === "shares"
+    ) {
+      out[name] = insightValue(entry);
+    }
+  }
+  return out;
+}
+
+/** 日別の表示回数（`/me/threads_insights?metric=views`）。7日ずつ区切って呼ぶ（SPEC §8.4）。 */
+export async function getDailyViews(
+  token: string,
+  params: { sinceSec: number; untilSec: number },
+  options: CallOptions,
+): Promise<Array<{ date: string; views: number }>> {
+  const res = (await call(
+    token,
+    "GET",
+    "/me/threads_insights",
+    { metric: "views", since: params.sinceSec, until: params.untilSec },
+    options,
+  )) as { data?: InsightEntry[] };
+  const entry = res.data?.[0];
+  const out: Array<{ date: string; views: number }> = [];
+  for (const v of entry?.values ?? []) {
+    if (!v.end_time) continue;
+    const date = v.end_time.slice(0, 10);
+    out.push({ date, views: typeof v.value === "number" ? v.value : 0 });
+  }
+  return out;
+}
+
+/** URL別クリック（`link_total_values`）。SPEC §8.5 の週グリッドから1週ずつ呼ぶ。 */
+export async function getLinkClicks(
+  token: string,
+  params: { sinceSec: number; untilSec: number },
+  options: CallOptions,
+): Promise<Array<{ url: string; clicks: number }>> {
+  const res = (await call(
+    token,
+    "GET",
+    "/me/threads_insights",
+    { metric: "clicks", since: params.sinceSec, until: params.untilSec },
+    options,
+  )) as { data?: InsightEntry[] };
+  const entry = res.data?.find((d) => d.link_total_values) ?? res.data?.[0];
+  const out: Array<{ url: string; clicks: number }> = [];
+  for (const v of entry?.link_total_values ?? []) {
+    if (!v.link_url) continue;
+    out.push({ url: v.link_url, clicks: typeof v.value === "number" ? v.value : 0 });
+  }
+  return out;
+}
+
+/** 現在のフォロワー数（since/until 不可）。 */
+export async function getFollowersCount(
+  token: string,
+  options: CallOptions,
+): Promise<number | null> {
+  const res = (await call(
+    token,
+    "GET",
+    "/me/threads_insights",
+    { metric: "followers_count" },
+    options,
+  )) as { data?: InsightEntry[] };
+  const entry = res.data?.[0];
+  if (!entry) return null;
+  const v = entry.total_value?.value ?? entry.values?.[0]?.value;
+  return typeof v === "number" ? v : null;
+}
+
+/** フォロワー属性。フォロワー100人未満は失敗してよい（SPEC §6.3）。 */
+export async function getDemographics(
+  token: string,
+  breakdown: string,
+  options: CallOptions,
+): Promise<unknown> {
+  const res = (await call(
+    token,
+    "GET",
+    "/me/threads_insights",
+    { metric: "follower_demographics", breakdown },
+    options,
+  )) as { data?: unknown[] };
+  return res.data?.[0] ?? null;
+}
+
+/** 残り枠（診断で表示。SPEC §6.3）。 */
+export async function getPublishingLimit(
+  token: string,
+  options: CallOptions,
+): Promise<{
+  quota_usage?: number;
+  config?: { quota_total?: number };
+  reply_quota_usage?: number;
+  reply_config?: { quota_total?: number };
+} | null> {
+  const res = (await call(
+    token,
+    "GET",
+    "/me/threads_publishing_limit",
+    { fields: "quota_usage,config,reply_quota_usage,reply_config" },
+    options,
+  )) as { data?: Array<Record<string, never>> };
+  return (res.data?.[0] as never) ?? null;
+}
+
+/** リポスト（SPEC §7.3）。 */
+export async function repost(
+  token: string,
+  mediaId: string,
+  options: CallOptions,
+): Promise<{ id: string }> {
+  return (await call(token, "POST", `/${mediaId}/repost`, {}, options)) as { id: string };
 }

@@ -2,12 +2,16 @@
 #
 # 本番バンドルに Threads モック（worker/src/mock/*）が入っていないことを確かめる（SPEC §11）。
 #
-# `lib/threads.ts` の `call()` は M1 時点でどこからも呼ばれていないので、素直に
-# `wrangler deploy --dry-run` しても「未使用だから消えている」だけで、DEV ガードが
-# 効いているのか区別できない。そこで **`call()` を到達可能にした一時エントリ**を作って
-# ビルドし、それでもモックの識別子が0件であることを見る。
-#
 #   ./scripts/check-bundle.sh
+#
+# 2つのエントリで見る:
+#   1. 本番エントリ（wrangler.toml の main = worker/src/index.ts）
+#      M2 でジョブが `call()` を呼ぶようになったので、これが本番そのものの確認になる
+#   2. 一時エントリ（call() を直接叩くだけ。このスクリプトが作って必ず消す）
+#      本番エントリから call() への到達経路が将来切れても、ガードの効きを測り続けるための保険
+#
+# どちらも「call() がバンドルに入っている（＝検査が意味を持つ）」ことを先に確かめ、
+# そのうえでモック由来の識別子が0件であることを見る。
 #
 # 終了コード 0 = モックなし（OK） / 1 = モックが混入（NG）
 set -euo pipefail
@@ -24,7 +28,55 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# call() を到達可能にする一時エントリ（このスクリプトが作って必ず消す）
+# mock/threads.ts にしか無い識別子
+MARKERS=(SEED_TEXTS "Unsupported mock path" MockThreadsError mockCall callMock seedStore storeFor metricsFor resetMock "mock/threads")
+
+# $1=ラベル $2=エントリ（空なら wrangler.toml の main） $3=出力ディレクトリ
+check_entry() {
+  local label="$1" entry="$2" dir="$3"
+  echo "▸ $label で本番ビルド（__DEV__ は wrangler.toml の false）"
+  if [ -n "$entry" ]; then
+    npx wrangler deploy --dry-run --outdir "$dir" "$entry" > "$dir/build.log" 2>&1 || {
+      echo "✗ ビルドに失敗しました"; cat "$dir/build.log"; return 1
+    }
+  else
+    npx wrangler deploy --dry-run --outdir "$dir" > "$dir/build.log" 2>&1 || {
+      echo "✗ ビルドに失敗しました"; cat "$dir/build.log"; return 1
+    }
+  fi
+
+  local bundle
+  bundle="$(find "$dir" -maxdepth 1 -name '*.js' | head -1)"
+  if [ ! -f "$bundle" ]; then
+    echo "✗ 出力バンドルが見つかりません"; ls -la "$dir"; return 1
+  fi
+  echo "  バンドル: $(basename "$bundle") ($(wc -c < "$bundle" | tr -d ' ') bytes)"
+
+  # call() が実際にバンドルへ入っていること（＝到達可能な状態で検査できていること）
+  if ! grep -q 'graph.threads.net' "$bundle"; then
+    echo "✗ call() がバンドルに入っていません。この検査は無意味なので中止します"
+    return 1
+  fi
+  echo "  call() は到達可能（graph.threads.net あり）"
+
+  local found=0 n
+  for m in "${MARKERS[@]}"; do
+    n="$(grep -c -- "$m" "$bundle" || true)"
+    printf '  %-24s %s件\n' "$m" "$n"
+    [ "$n" -eq 0 ] || found=1
+  done
+  [ "$found" -eq 0 ] || return 1
+  return 0
+}
+
+# 1. 本番エントリ（wrangler.toml の main）
+mkdir -p "$OUT/main"
+if ! check_entry "本番エントリ (worker/src/index.ts)" "" "$OUT/main"; then
+  echo "✗ NG: モックが本番バンドルに入っています（lib/threads.ts の分岐に __DEV__ を直接書くこと）"
+  exit 1
+fi
+
+# 2. call() を直接叩くだけの一時エントリ
 cat > "$ROOT/$PROBE" <<'PROBE_EOF'
 // 一時ファイル。scripts/check-bundle.sh が生成し、実行後に削除する。
 // lib/threads.ts の call() をエントリから到達可能にした状態でバンドルし、
@@ -42,42 +94,10 @@ export default {
 };
 PROBE_EOF
 
-echo "▸ 一時エントリ ($PROBE) で本番ビルド（__DEV__ は wrangler.toml の false）"
-npx wrangler deploy --dry-run --outdir "$OUT" "$PROBE" > "$OUT/build.log" 2>&1 || {
-  echo "✗ ビルドに失敗しました"
-  cat "$OUT/build.log"
-  exit 1
-}
-
-BUNDLE="$OUT/__bundle_probe.js"
-[ -f "$BUNDLE" ] || BUNDLE="$(find "$OUT" -maxdepth 1 -name '*.js' | head -1)"
-if [ ! -f "$BUNDLE" ]; then
-  echo "✗ 出力バンドルが見つかりません"
-  ls -la "$OUT"
-  exit 1
-fi
-
-echo "▸ バンドル: $(basename "$BUNDLE") ($(wc -c < "$BUNDLE" | tr -d ' ') bytes)"
-
-# call() が実際にバンドルへ入っていること（＝到達可能な状態で検査できていること）
-if ! grep -q 'graph.threads.net' "$BUNDLE"; then
-  echo "✗ call() がバンドルに入っていません。この検査は無意味なので中止します"
-  exit 1
-fi
-echo "  call() は到達可能（graph.threads.net あり）"
-
-# mock/threads.ts にしか無い識別子
-MARKERS=(SEED_TEXTS "Unsupported mock path" MockThreadsError mockCall callMock seedStore storeFor metricsFor resetMock "mock/threads")
-FOUND=0
-for m in "${MARKERS[@]}"; do
-  n="$(grep -c -- "$m" "$BUNDLE" || true)"
-  printf '  %-24s %s件\n' "$m" "$n"
-  [ "$n" -eq 0 ] || FOUND=1
-done
-
-if [ "$FOUND" -ne 0 ]; then
+mkdir -p "$OUT/probe"
+if ! check_entry "一時エントリ ($PROBE)" "$PROBE" "$OUT/probe"; then
   echo "✗ NG: モックが本番バンドルに入っています（lib/threads.ts の分岐に __DEV__ を直接書くこと）"
   exit 1
 fi
 
-echo "✓ OK: モックは本番バンドルに含まれていません"
+echo "✓ OK: モックは本番バンドルに含まれていません（本番エントリ・一時エントリの両方）"
