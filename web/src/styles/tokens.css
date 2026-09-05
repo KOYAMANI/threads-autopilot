@@ -1,13 +1,21 @@
 /*
- * 暫定版・prototype 到着後に差し替え（M3）。SPEC §12.2 / §13 M1。
+ * デザイントークン（SPEC §12.2 / §12.5）。
  *
- * docs/prototype.jsx が未着のため、Login 画面が読める最小限の CSS 変数だけを置いている。
- * 色・数値はプロトタイプ冒頭の CSS 定数から写した値で、確定ではない。
- * M3 の最初にプロトタイプの CSS 定数で丸ごと置き換える（変数名もプロトタイプ側に合わせ、
- * 暫定側は残さない）。ここに独自のデザイン判断を足さないこと。
+ * `docs/prototype.jsx` は消失し再提供の見込みがないため、このファイルが UI の正本
+ * （DECISIONS 2026-09-06）。レイアウト・画面構成・文言は `docs/design-v0.2.md` §3 と
+ * SPEC §12.1〜12.3、動き・触感・タイポは `.claude/skills/apple-design/SKILL.md` と §12.5 に従う。
+ *
+ * 決めごと:
+ * - 画面幅 430px を上限に中央寄せ。フォントはシステムフォント（Webフォントを足さない）
+ * - 余白は rem / em で書き、端末の文字サイズ設定を大きくしても壊れないようにする
+ * - 大見出しは letter-spacing -0.02em、本文は 0。行間は大きい文字ほど詰める
+ * - 動くのは transform と opacity だけ。指で触る要素の動きは CSS transition ではなく
+ *   `motion` の spring（web/src/lib/motion.ts のプリセット）で書く。ここに置く transition は
+ *   pointer-down の押し込みなど、掴んで反転しない一方向のフィードバックに限る
  */
 
 :root {
+  /* 面と文字 */
   --bg: #f2f3f0;
   --paper: #ffffff;
   --paper2: #f7f8f6;
@@ -15,23 +23,45 @@
   --ink2: #5b626a;
   --ink3: #8b9199;
   --line: #e2e4e0;
+
+  /* アクセント（オートパイロット色） */
   --ap: #2748e8;
   --ap-soft: #e9edfd;
   --ap-ink: #1b33b8;
+
+  /* 状態色 */
   --amber: #d98e1f;
   --amber-soft: #fbf0da;
   --bad: #cf4640;
   --bad-soft: #fbe5e3;
   --ok: #1e8757;
   --ok-soft: #dff3e8;
-  --r: 14px;
 
-  /* 余白の基本単位（暫定） */
-  --sp: 8px;
+  /* 角丸と余白 */
+  --r: 14px;
+  --r-sm: 10px;
+  --r-pill: 999px;
+  --sp: 0.5rem;
   --maxw: 430px;
 
-  --font: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI",
-    sans-serif;
+  /* 浮いている面（大きい面ほど厚く見せる。apple-design §12） */
+  --shadow-1: 0 1px 2px rgba(16, 19, 23, 0.05);
+  --shadow-2: 0 6px 20px rgba(16, 19, 23, 0.1);
+  --shadow-3: 0 18px 48px rgba(16, 19, 23, 0.22);
+
+  /* 半透明レイヤー（TopBar / ApBar / Sheet）。prefers-reduced-transparency で不透明にする */
+  --chrome-bg: rgba(242, 243, 240, 0.72);
+  --chrome-blur: blur(20px) saturate(180%);
+  --scrim: rgba(16, 19, 23, 0.32);
+
+  /* クロム（固定バー）の高さ。本文の余白計算に使う */
+  --topbar-h: 3.25rem;
+  --apbar-h: 2.5rem;
+  --tabs-h: 3.5rem;
+
+  --font:
+    -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", sans-serif;
+  --font-num: ui-rounded, -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
 }
 
 * {
@@ -48,9 +78,11 @@ body {
   background: var(--bg);
   color: var(--ink);
   font-family: var(--font);
-  font-size: 15px;
+  font-size: 0.9375rem; /* 15px 相当。rem なので端末の文字サイズ設定に追随する */
   line-height: 1.6;
+  letter-spacing: 0;
   -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
 }
 
 #root {
@@ -58,27 +90,83 @@ body {
   margin: 0 auto;
   min-height: 100dvh;
   background: var(--bg);
+  position: relative;
+  overflow-x: clip; /* 430px を超える中身が出ても横スクロールを作らない */
 }
 
-/* 大見出しだけ字間を詰める（SPEC §12.5 タイポグラフィ） */
+/* 大きい文字ほど字間を詰め、行間も詰める（SPEC §12.5 タイポグラフィ） */
 h1,
-h2 {
-  letter-spacing: -0.02em;
-  line-height: 1.15;
+h2,
+h3 {
   margin: 0;
+  letter-spacing: -0.02em;
+}
+
+h1 {
+  font-size: 1.5rem;
+  line-height: 1.15;
+}
+
+h2 {
+  font-size: 1.0625rem;
+  line-height: 1.25;
+}
+
+h3 {
+  font-size: 0.9375rem;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
 }
 
 p {
   margin: 0;
 }
 
-/* ── 最小限の部品（Login のみ） ───────────────────── */
+button {
+  font: inherit;
+  color: inherit;
+}
+
+a {
+  color: var(--ap-ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--ap);
+  outline-offset: 2px;
+}
+
+/* ── 汎用パーツ ─────────────────────────────────────── */
 
 .card {
   background: var(--paper);
   border: 1px solid var(--line);
   border-radius: var(--r);
   padding: calc(var(--sp) * 3);
+}
+
+.section {
+  margin-top: calc(var(--sp) * 3);
+}
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp);
+  margin-bottom: var(--sp);
+  padding: 0 calc(var(--sp) * 0.5);
+}
+
+.muted {
+  color: var(--ink3);
+  font-size: 0.8125rem;
+}
+
+.num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
 }
 
 .field {
@@ -88,19 +176,19 @@ p {
 
 .field > span {
   display: block;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--ink2);
   margin-bottom: calc(var(--sp) * 0.5);
 }
 
 .input {
   width: 100%;
-  padding: 12px;
+  padding: 0.75rem;
   font: inherit;
   color: var(--ink);
   background: var(--paper2);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--r-sm);
 }
 
 .input:focus-visible {
@@ -108,19 +196,26 @@ p {
   outline-offset: 1px;
 }
 
-/* 押した瞬間に返す（SPEC §12.5 pointer-down で反応） */
+textarea.input {
+  min-height: 6rem;
+  resize: vertical;
+}
+
+/* 押した瞬間に返す（apple-design §1「Respond on pointer-down」）。
+   一方向のフィードバックなので CSS transition でよい */
 .btn {
   width: 100%;
-  padding: 13px 16px;
-  font: inherit;
+  padding: 0.8125rem 1rem;
   font-weight: 600;
   color: #fff;
   background: var(--ap);
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   transform: scale(1);
-  transition: transform 90ms cubic-bezier(0.2, 0, 0, 1), opacity 90ms linear;
+  transition:
+    transform 100ms cubic-bezier(0.2, 0, 0, 1),
+    opacity 100ms linear;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
@@ -136,21 +231,28 @@ p {
   transform: scale(1);
 }
 
+.btn-sub {
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  font-weight: 500;
+}
+
 .btn-quiet {
   background: transparent;
   color: var(--ap-ink);
   font-weight: 500;
-  font-size: 13px;
+  font-size: 0.8125rem;
   width: auto;
-  padding: 8px 4px;
+  padding: 0.5rem 0.25rem;
   white-space: nowrap;
 }
 
 .msg {
   margin-top: calc(var(--sp) * 2);
-  padding: 10px 12px;
-  border-radius: 10px;
-  font-size: 13px;
+  padding: 0.625rem 0.75rem;
+  border-radius: var(--r-sm);
+  font-size: 0.8125rem;
 }
 
 .msg-bad {
@@ -163,22 +265,661 @@ p {
   color: var(--ok);
 }
 
-.muted {
-  color: var(--ink3);
-  font-size: 13px;
+.msg-warn {
+  background: var(--amber-soft);
+  color: var(--amber);
 }
 
-/* SPEC §12.5: reduced-motion では transform を動かさない */
+/* ── チップ（期間・指標の切り替え） ─────────────────── */
+
+.chips {
+  display: flex;
+  gap: calc(var(--sp) * 0.75);
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: calc(var(--sp) * 0.5) calc(var(--sp) * 0.5);
+  margin: 0 calc(var(--sp) * -0.5);
+  -webkit-overflow-scrolling: touch;
+}
+
+.chips::-webkit-scrollbar {
+  display: none;
+}
+
+.chip {
+  flex: 0 0 auto;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--ink2);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  white-space: nowrap;
+  transform: scale(1);
+  transition:
+    transform 100ms cubic-bezier(0.2, 0, 0, 1),
+    background-color 120ms linear,
+    color 120ms linear;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.chip:active {
+  transform: scale(0.95);
+}
+
+.chip[aria-pressed="true"] {
+  color: #fff;
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+/* ── 固定クロム（TopBar / ApBar / Tabs） ─────────────── */
+
+.chrome {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: var(--maxw);
+  z-index: 20;
+  background: var(--chrome-bg);
+  backdrop-filter: var(--chrome-blur);
+  -webkit-backdrop-filter: var(--chrome-blur);
+}
+
+.topbar {
+  top: 0;
+  height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  gap: var(--sp);
+  padding: 0 calc(var(--sp) * 1.5);
+  /* 硬い1pxの罫線ではなく、下端をぼかして本文と分ける（apple-design §12） */
+  box-shadow: 0 0.5rem 0.75rem -0.75rem rgba(16, 19, 23, 0.25);
+}
+
+.icon-btn {
+  flex: 0 0 auto;
+  width: 2.25rem;
+  height: 2.25rem;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  color: var(--ink);
+  transform: scale(1);
+  transition:
+    transform 100ms cubic-bezier(0.2, 0, 0, 1),
+    background-color 120ms linear;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.icon-btn:active {
+  transform: scale(0.9);
+  background: rgba(16, 19, 23, 0.06);
+}
+
+.account-chip {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--sp) * 0.75);
+  padding: 0.25rem 0.625rem;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  transform: scale(1);
+  transition: transform 100ms cubic-bezier(0.2, 0, 0, 1);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.account-chip:active {
+  transform: scale(0.97);
+}
+
+.account-chip > .name {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dot {
+  flex: 0 0 auto;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--ink3);
+}
+
+.apbar {
+  top: var(--topbar-h);
+  height: var(--apbar-h);
+  display: flex;
+  align-items: center;
+  gap: calc(var(--sp) * 0.75);
+  padding: 0 calc(var(--sp) * 2);
+  font-size: 0.75rem;
+  color: var(--ap-ink);
+  background: var(--ap-soft);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-bottom: 1px solid rgba(39, 72, 232, 0.12);
+}
+
+.tabs {
+  bottom: 0;
+  height: calc(var(--tabs-h) + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  box-shadow: 0 -0.5rem 0.75rem -0.75rem rgba(16, 19, 23, 0.25);
+}
+
+.tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.125rem;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: var(--ink3);
+  font-size: 0.625rem;
+  font-weight: 500;
+  transform: scale(1);
+  transition:
+    transform 100ms cubic-bezier(0.2, 0, 0, 1),
+    color 120ms linear;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tab:active {
+  transform: scale(0.92);
+}
+
+.tab[aria-current="page"] {
+  color: var(--ap);
+}
+
+/* 本文はクロムの下に潜る（apple-design §12「content scrolls under」） */
+.screen {
+  padding: calc(var(--topbar-h) + var(--apbar-h) + var(--sp) * 2) calc(var(--sp) * 2)
+    calc(var(--tabs-h) + env(safe-area-inset-bottom, 0px) + var(--sp) * 3);
+}
+
+.screen-plain {
+  padding: calc(var(--sp) * 4) calc(var(--sp) * 2);
+}
+
+/* ── Drawer / Sheet / 覆い ──────────────────────────── */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: var(--scrim);
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.drawer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: max(0px, calc(50% - var(--maxw) / 2));
+  width: min(20rem, 82vw);
+  z-index: 31;
+  background: var(--paper);
+  box-shadow: var(--shadow-3);
+  display: flex;
+  flex-direction: column;
+  padding: calc(var(--sp) * 2);
+  overflow-y: auto;
+  touch-action: pan-y;
+}
+
+.sheet {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  width: 100%;
+  max-width: var(--maxw);
+  z-index: 31;
+  background: var(--paper);
+  border-radius: var(--r) var(--r) 0 0;
+  box-shadow: var(--shadow-3);
+  padding: var(--sp) calc(var(--sp) * 2) calc(var(--sp) * 3 + env(safe-area-inset-bottom, 0px));
+  touch-action: none;
+}
+
+.sheet-grip {
+  width: 2.25rem;
+  height: 0.25rem;
+  border-radius: var(--r-pill);
+  background: var(--line);
+  margin: calc(var(--sp) * 0.5) auto calc(var(--sp) * 1.5);
+}
+
+.menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--sp);
+  padding: 0.75rem;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-sm);
+  text-align: left;
+  cursor: pointer;
+  transform: scale(1);
+  transition:
+    transform 100ms cubic-bezier(0.2, 0, 0, 1),
+    background-color 120ms linear;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.menu-item:active {
+  transform: scale(0.98);
+  background: var(--paper2);
+}
+
+/* シートの中では <a> も同じ見た目にする（下線と青文字を出さない） */
+a.menu-item {
+  color: inherit;
+  text-decoration: none;
+}
+
+.menu-item[aria-current="true"] {
+  background: var(--ap-soft);
+  color: var(--ap-ink);
+  font-weight: 600;
+}
+
+/* ── トースト ───────────────────────────────────────── */
+
+.toast-wrap {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(var(--tabs-h) + env(safe-area-inset-bottom, 0px) + var(--sp) * 1.5);
+  width: 100%;
+  max-width: var(--maxw);
+  padding: 0 calc(var(--sp) * 2);
+  z-index: 40;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--sp) * 0.75);
+}
+
+.toast {
+  pointer-events: auto;
+  padding: 0.75rem 0.875rem;
+  border-radius: var(--r-sm);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: #fff;
+  background: rgba(16, 19, 23, 0.92);
+  box-shadow: var(--shadow-2);
+}
+
+.toast-bad {
+  background: var(--bad);
+}
+
+.toast-ok {
+  background: var(--ok);
+}
+
+/* ── KPI ────────────────────────────────────────────── */
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--sp);
+}
+
+.kpi {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: calc(var(--sp) * 1.5);
+  box-shadow: var(--shadow-1);
+  min-width: 0;
+}
+
+.kpi > .label {
+  font-size: 0.75rem;
+  color: var(--ink3);
+}
+
+.kpi > .value {
+  font-size: 1.5rem;
+  line-height: 1.1;
+  font-weight: 700;
+  margin-top: 0.125rem;
+  overflow-wrap: anywhere;
+}
+
+.kpi > .delta {
+  font-size: 0.75rem;
+  margin-top: 0.125rem;
+  color: var(--ink3);
+}
+
+.delta-up {
+  color: var(--ok);
+}
+
+.delta-down {
+  color: var(--bad);
+}
+
+/* ── グラフ ─────────────────────────────────────────── */
+
+.chart-card {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: calc(var(--sp) * 1.5) calc(var(--sp) * 0.5) var(--sp);
+  box-shadow: var(--shadow-1);
+}
+
+.chart-title {
+  font-size: 0.75rem;
+  color: var(--ink3);
+  padding: 0 var(--sp);
+  margin-bottom: calc(var(--sp) * 0.5);
+}
+
+.chart-empty {
+  height: 8rem;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 0 calc(var(--sp) * 2);
+}
+
+.tip {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-2);
+  padding: 0.375rem 0.5rem;
+  font-size: 0.75rem;
+}
+
+/* ── 投稿の行 ───────────────────────────────────────── */
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp);
+}
+
+.row {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+
+.row-main {
+  width: 100%;
+  display: block;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: calc(var(--sp) * 1.5);
+  cursor: pointer;
+  transform: scale(1);
+  transition:
+    transform 100ms cubic-bezier(0.2, 0, 0, 1),
+    background-color 120ms linear;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.row-main:active {
+  transform: scale(0.99);
+  background: var(--paper2);
+}
+
+.row-meta {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--sp) * 0.75);
+  font-size: 0.6875rem;
+  color: var(--ink3);
+  margin-bottom: 0.25rem;
+}
+
+.row-text {
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.row-stats {
+  display: flex;
+  gap: calc(var(--sp) * 1.5);
+  margin-top: calc(var(--sp) * 0.75);
+  font-size: 0.75rem;
+  color: var(--ink2);
+}
+
+.row-stats .lead {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.tag {
+  flex: 0 0 auto;
+  padding: 0.0625rem 0.375rem;
+  border-radius: var(--r-pill);
+  background: var(--paper2);
+  border: 1px solid var(--line);
+  font-size: 0.625rem;
+  color: var(--ink2);
+}
+
+.tag-link {
+  background: var(--ap-soft);
+  border-color: transparent;
+  color: var(--ap-ink);
+}
+
+.row-panel {
+  border-top: 1px solid var(--line);
+  padding: var(--sp) calc(var(--sp) * 1.5) calc(var(--sp) * 1.5);
+  background: var(--paper2);
+}
+
+.child {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp);
+  padding: calc(var(--sp) * 0.75) 0;
+  font-size: 0.75rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.child:last-of-type {
+  border-bottom: 0;
+}
+
+.child > .t {
+  color: var(--ink2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--sp) * 0.75);
+  margin-top: var(--sp);
+}
+
+.row-actions .btn {
+  width: auto;
+  flex: 1 1 auto;
+  padding: 0.5rem 0.625rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+/* ── リンク一覧 ─────────────────────────────────────── */
+
+.link-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp);
+  padding: calc(var(--sp) * 1.25) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.link-row:last-of-type {
+  border-bottom: 0;
+}
+
+.link-row .label {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.link-row .url {
+  display: block;
+  font-size: 0.6875rem;
+  line-height: 1.45;
+  color: var(--ink3);
+  overflow-wrap: anywhere;
+}
+
+/* ── 進捗バー ───────────────────────────────────────── */
+
+.bar {
+  height: 0.375rem;
+  border-radius: var(--r-pill);
+  background: var(--line);
+  overflow: hidden;
+}
+
+.bar > i {
+  display: block;
+  height: 100%;
+  background: var(--ap);
+  border-radius: inherit;
+  transform-origin: left center;
+}
+
+/* ── 手順（Connect） ────────────────────────────────── */
+
+.steps {
+  counter-reset: step;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--sp) * 1.5);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.steps > li {
+  counter-increment: step;
+  display: grid;
+  grid-template-columns: 1.5rem 1fr;
+  gap: var(--sp);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+.steps > li::before {
+  content: counter(step);
+  width: 1.5rem;
+  height: 1.5rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--ap-soft);
+  color: var(--ap-ink);
+  font-size: 0.6875rem;
+  font-weight: 700;
+}
+
+/* ── 環境設定の尊重（SPEC §12.5 / apple-design §14） ─── */
+
 @media (prefers-reduced-motion: reduce) {
-  * {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
 
-  .btn:active {
+  /* transform は動かさず、濃さだけで反応を返す */
+  .btn:active,
+  .chip:active,
+  .icon-btn:active,
+  .tab:active,
+  .row-main:active,
+  .menu-item:active,
+  .account-chip:active {
     transform: none;
     opacity: 0.8;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .chrome {
+    background: var(--bg);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .toast {
+    background: #14171b;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .chrome {
+    background: var(--bg);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border-bottom: 1px solid var(--ink);
+  }
+
+  .card,
+  .kpi,
+  .row,
+  .chart-card {
+    border-color: var(--ink2);
   }
 }

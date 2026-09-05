@@ -1,10 +1,10 @@
 /**
  * デモ用ダミーデータの投入（SPEC §11 / §13 M1）。
  *
- * **暫定版**。docs/prototype.jsx が未着のため、固定のダミーデータを直書きしている。
+ * ここに直書きした固定データが**デモデータの正本**（DECISIONS 2026-09-06）。
+ * `docs/prototype.jsx` は消失し再提供の見込みがないため、SPEC §11 が言う
+ * 「M3 で prototype の makeAccount() 移植版へ差し替える」は行わない。
  * 乱数は使わない（何度実行しても同じ状態になる ＝ テストが値を前提にできる）。
- * M3 の最初に prototype の makeAccount() 移植版へ差し替える。
- * 呼び出し方（npm run seed:demo）とテーブルの範囲は変えない。
  *
  * 使い方:
  *   npm run seed:demo                                  # ローカル D1
@@ -217,7 +217,7 @@ function buildSql(email: string, tokenEnc: string): string {
     );
   }
 
-  // 投稿20本 = root 15 + children 5（SPEC §11 の暫定版）
+  // 投稿20本 = root 15 + children 5（SPEC §11）
   const postRows: string[] = [];
   const historyRows: string[] = [];
   let childIndex = 0;

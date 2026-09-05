@@ -15,9 +15,14 @@ export default defineConfig({
   server: {
     port: Number(process.env.PORT ?? 5173),
     // 開発は vite（5173）+ wrangler dev（8787）。/api は Worker に投げる（SPEC §11）
+    //
+    // `/a` を素の文字列で書くと **前方一致** になり、SPA 側の `/app/*`（SPEC §12.1）まで
+    // Worker に流れてしまう。Worker は `/app/home` を ASSETS に渡すので、開発中なのに
+    // ビルド済みの `web/dist` が返り、vite の更新が画面に出なくなる。
+    // `^` 始まりのキーは正規表現として扱われるので、`/a/` だけを厳密に拾う（SPEC §7.9）。
     proxy: {
-      "/api": { target: "http://127.0.0.1:8787", changeOrigin: true },
-      "/a": { target: "http://127.0.0.1:8787", changeOrigin: true },
+      "^/api(/|$)": { target: "http://127.0.0.1:8787", changeOrigin: true },
+      "^/a/": { target: "http://127.0.0.1:8787", changeOrigin: true },
     },
   },
   build: {

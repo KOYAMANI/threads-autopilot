@@ -1,24 +1,44 @@
 /**
- * ルーティング（SPEC §12.1）。M1 は /login と /reset、/app/* は認証ガードのみ。
- * 各画面（Home / Create / Queue / Autopilot / Settings）と /connect は M3 以降。
+ * ルーティング（SPEC §12.1）。
+ * 未認証で `/app/*` → `/login`。アカウント0件で `/app/*` → `/connect`。
+ * 選択中アカウントは `localStorage.activeAccountId`（components/Shell.tsx）。
  */
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import type { ReactElement } from "react";
+import Shell from "./components/Shell";
+import { ToastProvider } from "./components/Toast";
+import Connect from "./screens/Connect";
+import Home from "./screens/Home";
 import Login from "./screens/Login";
-import { useMe, useLogout } from "./api/auth";
+import { Autopilot, Create, Queue, Settings } from "./screens/Placeholder";
+import { useMe } from "./api/auth";
 
 function Loading() {
   return (
-    <main style={{ padding: "calc(var(--sp) * 6) calc(var(--sp) * 2)" }}>
+    <main className="screen-plain">
       <p className="muted">読み込んでいます…</p>
     </main>
   );
 }
 
-/** 未認証は /login へ。アカウント0件のときの /connect 送りは M3 で足す。 */
+/** 未認証は /login、アカウント0件は /connect（SPEC §12.1）。 */
 function RequireAuth({ children }: { children: ReactElement }) {
   const { data, isPending, isError } = useMe();
   const location = useLocation();
+
+  if (isPending) return <Loading />;
+  if (isError || !data) {
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  }
+  if (data.accounts.length === 0) return <Navigate to="/connect" replace />;
+  return children;
+}
+
+/** /connect も認証は要る（アカウント0件でも通す）。 */
+function RequireLogin({ children }: { children: ReactElement }) {
+  const { data, isPending, isError } = useMe();
+  const location = useLocation();
+
   if (isPending) return <Loading />;
   if (isError || !data) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
@@ -26,46 +46,42 @@ function RequireAuth({ children }: { children: ReactElement }) {
   return children;
 }
 
-/** M3 で本実装する画面のプレースホルダ。 */
-function AppPlaceholder() {
-  const { data } = useMe();
-  const logout = useLogout();
-  return (
-    <main style={{ padding: "calc(var(--sp) * 4) calc(var(--sp) * 2)" }}>
-      <h1 style={{ fontSize: 22 }}>ログインできています</h1>
-      <p className="muted" style={{ marginTop: 6 }}>
-        {data?.user.email}
-      </p>
-      <div className="card" style={{ marginTop: "calc(var(--sp) * 3)" }}>
-        <p className="muted">
-          ホーム・作る・キュー・オートパイロット・設定の各画面は M3 以降で作ります
-          （プロトタイプ到着後）。
-        </p>
-        <div style={{ marginTop: "calc(var(--sp) * 3)" }}>
-          <button className="btn" type="button" onClick={() => logout.mutate()} disabled={logout.isPending}>
-            ログアウト
-          </button>
-        </div>
-      </div>
-    </main>
-  );
-}
-
 export default function App() {
   return (
-    <Routes>
-      <Route path="/login" element={<Login />} />
-      {/* メールのリンクは /login?reset=<token>。/reset でも同じ画面を出す */}
-      <Route path="/reset" element={<Login />} />
-      <Route
-        path="/app/*"
-        element={
-          <RequireAuth>
-            <AppPlaceholder />
-          </RequireAuth>
-        }
-      />
-      <Route path="*" element={<Navigate to="/app/home" replace />} />
-    </Routes>
+    <ToastProvider>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        {/* メールのリンクは /login?reset=<token>。/reset でも同じ画面を出す */}
+        <Route path="/reset" element={<Login />} />
+
+        <Route
+          path="/connect"
+          element={
+            <RequireLogin>
+              <Connect />
+            </RequireLogin>
+          }
+        />
+
+        <Route
+          path="/app"
+          element={
+            <RequireAuth>
+              <Shell />
+            </RequireAuth>
+          }
+        >
+          <Route index element={<Navigate to="/app/home" replace />} />
+          <Route path="home" element={<Home />} />
+          <Route path="create" element={<Create />} />
+          <Route path="queue" element={<Queue />} />
+          <Route path="autopilot" element={<Autopilot />} />
+          <Route path="settings" element={<Settings />} />
+          <Route path="*" element={<Navigate to="/app/home" replace />} />
+        </Route>
+
+        <Route path="*" element={<Navigate to="/app/home" replace />} />
+      </Routes>
+    </ToastProvider>
   );
 }

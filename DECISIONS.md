@@ -183,3 +183,22 @@ v1.1 の独立検証で、要求項目は全件反映されていたが、v1.1 �
 - 2026-09-06 code 190 の**通知**（メール）は M2 では出さない。`markNeedsReauth()` で `accounts.status='needs_reauth'` にし、ジョブを `failed` で止めるところまでが M2 の範囲 — SPEC §13 M1 が「メール（`lib/email.ts`）は `password_reset` テンプレだけ先行実装」、§13 M6 が「メール通知」と定めており、`needs_reauth` テンプレは §10.5 の名前だけ確定済み。SPEC §6.1 の「190 は…通知」はテンプレ実装と同時（M6）に繋ぐ
 - 2026-09-06 `CLICK_FLOOR_SEC = 1712991600` の実際の時刻は **2024-04-13T07:00:00Z**（コメントの「T00:00:00Z」は誤り）。値は SPEC §8.5 が指定するものをそのまま使い、動かさない — 週の境界がどこであれ「固定起点から7日刻み」という性質（＝二重計上しない）は変わらないため。コメントだけ訂正した
 - 2026-09-06 「他人の accountId は触れない」テストを、アカウントIDを取る**全14ルート**（dashboard / diagnose / sync GET・POST / refresh-token / PATCH / posts 一覧・詳細・repost / links 4本 / DELETE）に広げた — 元は DELETE と dashboard の2本だけで、新しいルートを足したときに `loadOwnedAccount()` の付け忘れを検出できなかった。復号トークンが応答に出ないことのテストも足した
+
+## M3 実装で決めたこと
+
+- 2026-09-06 **`docs/prototype.jsx` は消失し、再提供の見込みがない**。SPEC §0-3 の「プロトタイプを分解して実装する」は実行できないので、UI の正本を次のように置き換える。SPEC §13 M3 の完了条件「暫定 `tokens.css` がリポジトリに残っていない」は「**暫定注記が残っていない**」と読み替える
+  - レイアウト・画面構成・文言 … `docs/design-v0.2.md` §3（3-1〜3-7）と SPEC §12.1〜12.3
+  - CSS トークン … `web/src/styles/tokens.css`（M1 の暫定版を正式版に昇格。変数名・色・430px 中央寄せ・システムフォントはそのまま引き継ぎ、M3 で必要になった分＝影・半透明レイヤー・クロムの高さ・角丸の段階を足した）
+  - 動き・触感・タイポ … `.claude/skills/apple-design/SKILL.md` と SPEC §12.5
+  - デモデータ … `scripts/seed-demo.ts` の現行の固定データ（`makeAccount()` 移植は行わない）
+- 2026-09-06 `web/vite.config.ts` の proxy キーを `"/a"` から **`"^/a/"`（正規表現）** に直した — 素の文字列キーは前方一致なので `/app/*`（SPEC §12.1 のアプリ本体）まで Worker に流れ、開発中なのに `web/dist` のビルド済み資産が返っていた。M1・M2 は `/app/*` に中身が無かったので表面化していなかった。`/api` も `"^/api(/|$)"` に揃えた
+- 2026-09-06 spring の数値は `web/src/lib/motion.ts` のプリセットにだけ置き、画面から直接書かない（SPEC §12.5）。`as const satisfies Transition` にしてあるのは、コンポーネントの `transition` 属性と `animate(motionValue, …)` の第3引数の両方に同じ値をそのまま渡せるようにするため
+- 2026-09-06 Drawer / Sheet はドラッグを離したとき、`project()`（`current + (v/1000)·d/(1−d)`, `d=0.998`）で求めた**投影点**が閾値を越えたかで開閉を決め、越えなければ離した速度を初速にして元の位置へ戻す（apple-design §5・§6）。境界の外は `dragElastic` のラバーバンドに任せる
+- 2026-09-06 行の展開（ツリーの各段）は `transform` と `opacity` だけを動かし、**高さはアニメーションしない**（SPEC §12.5「`height` / `top` / `width` は動かさない」）。開いた瞬間に高さが決まり、中身が上から降りてくる
+- 2026-09-06 タブの切り替えは「前の画面の退場を待たない」cross-fade にした（`AnimatePresence mode="wait"` を使わない）— 退場を挟むとタップから新画面までに固定の待ち時間が入り、apple-design §1「kill latency」に反するため
+- 2026-09-06 行の操作（リライト / これを型にして作る / リポスト / Threads で開く）は行の「⋯」から開く**シート**に置き、行タップは各段の数字の展開に割り当てた — どちらも1タップで届く。展開パネルにも「リライト」「これを型にして作る」を残す
+- 2026-09-06 Create へ渡す下敷きは `location.state.preset = { mode: 'template' | 'rewrite', postId, text }`（SPEC §12.3 の `location.state.preset`）。受け口は `web/src/screens/Placeholder.tsx` の `Create`（本実装は M5）
+- 2026-09-06 Connect の初回同期は**終わるまで足止めしない**。進捗バーと一緒に「ホームへ」を常に出す — 取り込みは5分ごとの cron ジョブで進む（SPEC §8.2）ので、待たせると最大5分の空白になる。design-v0.2 §3-1 の「初回同期は裏で進み、進捗バーを出す」に合わせた
+- 2026-09-06 ApBar は `GET /accounts/:id/autopilot/next`（SPEC §7.7）が M6 なので、いまはプレースホルダの文言だけを出す。M6 で `next` を読んで差し替える
+- 2026-09-06 アイコンは SPEC §2.2 が挙げる `lucide-react` を入れず、`web/src/components/Icons.tsx` のインライン SVG 9個で足りる範囲に留めた — 依存を1つ減らし、`currentColor` と `stroke-width` を揃えるため。必要になったら差し替えられる
+- 2026-09-06 `web/dist` の JS が約 750KB（gzip 225KB）になっている。ほとんどが recharts。SPA なので初回だけの読み込みだが、M7 の仕上げで `manualChunks` による分割を検討する
