@@ -6,7 +6,11 @@
 export const DAY_MS = 86_400_000;
 export const WEEK_MS = 7 * DAY_MS;
 
-/** クリックの週グリッドの固定起点（SPEC §8.5）。2024-04-13T00:00:00Z の UNIX 秒。 */
+/**
+ * クリックの週グリッドの固定起点（SPEC §8.5）。値は SPEC が指定する 1712991600 をそのまま使う。
+ * 実際の時刻は 2024-04-13T07:00:00Z（= 2024-04-13 16:00 JST）で、UTC 深夜ちょうどではない。
+ * 週の境界がどこであっても「固定起点から7日刻み」という性質は変わらないので値は動かさない。
+ */
 export const CLICK_FLOOR_SEC = 1_712_991_600;
 export const CLICK_FLOOR_MS = CLICK_FLOOR_SEC * 1000;
 

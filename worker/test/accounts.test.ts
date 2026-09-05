@@ -103,7 +103,7 @@ describe("POST /api/accounts（SPEC §7.1）", () => {
     expect(again.body.data.account.status).toBe("ok");
   });
 
-  it("他人のアカウントは触れない", async () => {
+  it("他人のアカウントは触れない（アカウントIDを取るルート全部）", async () => {
     const owner = await registerUser();
     const other = await registerUser();
     const res = await api("POST", "/api/accounts", {
@@ -112,10 +112,58 @@ describe("POST /api/accounts（SPEC §7.1）", () => {
     });
     const accountId = res.body.data.account.id as string;
 
-    expect((await api("DELETE", `/api/accounts/${accountId}`, { cookie: other.cookie })).status).toBe(404);
-    expect(
-      (await api("GET", `/api/accounts/${accountId}/dashboard`, { cookie: other.cookie })).status,
-    ).toBe(404);
+    // 本人の側でリンクと投稿を1件ずつ作り、子リソースのIDも他人から叩けないことを見る
+    const ctx = makeJobContext(env, { now: NOW });
+    await enqueueJob(ctx, "full_sync", { accountId, force: true });
+    await runJobs(ctx);
+    const links = await api("GET", `/api/accounts/${accountId}/links`, { cookie: owner.cookie });
+    const linkId = links.body.data.links[0].id as string;
+    const posts = await api("GET", `/api/accounts/${accountId}/posts`, { cookie: owner.cookie });
+    const postId = posts.body.data.posts[0].id as string;
+
+    const routes: Array<[string, string, unknown?]> = [
+      ["GET", `/api/accounts/${accountId}/dashboard`],
+      ["GET", `/api/accounts/${accountId}/diagnose`],
+      ["GET", `/api/accounts/${accountId}/sync`],
+      ["POST", `/api/accounts/${accountId}/sync`, {}],
+      ["POST", `/api/accounts/${accountId}/refresh-token`, {}],
+      ["PATCH", `/api/accounts/${accountId}`, { color: "#123456" }],
+      ["GET", `/api/accounts/${accountId}/posts`],
+      ["GET", `/api/accounts/${accountId}/posts/${postId}`],
+      ["POST", `/api/accounts/${accountId}/posts/${postId}/repost`, {}],
+      ["GET", `/api/accounts/${accountId}/links`],
+      ["POST", `/api/accounts/${accountId}/links`, { url: "https://x.example", label: "x" }],
+      ["PATCH", `/api/accounts/${accountId}/links/${linkId}`, { label: "x" }],
+      ["DELETE", `/api/accounts/${accountId}/links/${linkId}`],
+      ["DELETE", `/api/accounts/${accountId}`],
+    ];
+
+    for (const [method, path, body] of routes) {
+      const r = await api(method, path, {
+        cookie: other.cookie,
+        ...(body === undefined ? {} : { body }),
+      });
+      expect({ method, path, status: r.status }).toEqual({ method, path, status: 404 });
+    }
+
+    // 本人のアカウントは消えていない
+    const still = await testDb().first("SELECT id FROM accounts WHERE id=?", accountId);
+    expect(still).not.toBeNull();
+  });
+
+  it("接続応答にも一覧にも復号したトークンは出ない（SPEC §5.2）", async () => {
+    const u = await registerUser();
+    const token = mockToken("leak1");
+    const res = await api("POST", "/api/accounts", { cookie: u.cookie, body: { token } });
+    expect(JSON.stringify(res.body)).not.toContain(token);
+    expect(JSON.stringify(res.body)).not.toContain("token_enc");
+
+    const list = await api("GET", "/api/accounts", { cookie: u.cookie });
+    expect(JSON.stringify(list.body)).not.toContain(token);
+
+    const accountId = res.body.data.account.id as string;
+    const diag = await api("GET", `/api/accounts/${accountId}/diagnose`, { cookie: u.cookie });
+    expect(JSON.stringify(diag.body)).not.toContain(token);
   });
 });
 

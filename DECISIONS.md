@@ -177,3 +177,9 @@ v1.1 の独立検証で、要求項目は全件反映されていたが、v1.1 �
 - 2026-09-05 `wrangler.toml` の `run_worker_first` に `/__scheduled` を足した — `wrangler dev --test-scheduled` が注入する cron 手動実行の入口が、静的アセット側に取られて Worker まで届かなかったため（`docs/qa.md` M2-2）。本番では `--test-scheduled` の middleware が無く `index.ts` が ASSETS へそのまま渡すので、挙動は追加前と変わらない
 - 2026-09-05 `mock/threads.ts` はトークンに `expired` を含むとき code 190 を投げる — `needs_reauth` の経路（SPEC §6.1 / §8.6）をモックだけでテストするため
 - 2026-09-05 `scripts/check-bundle.sh` は本番エントリ（`worker/src/index.ts`）と一時エントリの**両方**を検査する — M2 でジョブが `call()` を呼ぶようになり、本番エントリ自体が到達可能な検査対象になった。一時エントリは、将来その経路が切れてもガードの効きを測り続けるための保険として残す
+
+## M2 独立検証（2026-09-06）
+
+- 2026-09-06 code 190 の**通知**（メール）は M2 では出さない。`markNeedsReauth()` で `accounts.status='needs_reauth'` にし、ジョブを `failed` で止めるところまでが M2 の範囲 — SPEC §13 M1 が「メール（`lib/email.ts`）は `password_reset` テンプレだけ先行実装」、§13 M6 が「メール通知」と定めており、`needs_reauth` テンプレは §10.5 の名前だけ確定済み。SPEC §6.1 の「190 は…通知」はテンプレ実装と同時（M6）に繋ぐ
+- 2026-09-06 `CLICK_FLOOR_SEC = 1712991600` の実際の時刻は **2024-04-13T07:00:00Z**（コメントの「T00:00:00Z」は誤り）。値は SPEC §8.5 が指定するものをそのまま使い、動かさない — 週の境界がどこであれ「固定起点から7日刻み」という性質（＝二重計上しない）は変わらないため。コメントだけ訂正した
+- 2026-09-06 「他人の accountId は触れない」テストを、アカウントIDを取る**全14ルート**（dashboard / diagnose / sync GET・POST / refresh-token / PATCH / posts 一覧・詳細・repost / links 4本 / DELETE）に広げた — 元は DELETE と dashboard の2本だけで、新しいルートを足したときに `loadOwnedAccount()` の付け忘れを検出できなかった。復号トークンが応答に出ないことのテストも足した
