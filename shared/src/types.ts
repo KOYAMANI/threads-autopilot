@@ -201,3 +201,88 @@ export type LinkSummary = {
   lastUsedAt: string | null;
   createdAt: string;
 };
+
+/* ── キュー（SPEC §7.4 / §12.3） ─────────────────────── */
+
+export type QueueStatus =
+  | "draft"
+  | "pending_approval"
+  | "scheduled"
+  | "publishing"
+  | "done"
+  | "failed"
+  | "cancelled";
+
+export type QueueSource = "manual" | "autopilot" | "recycle";
+export type ReplyControl = "everyone" | "accounts_you_follow" | "mentioned_only";
+
+/** `done` のときだけ付く、実際に出た投稿の数字（SPEC §7.4「`done` は `posts` の数字を結合」）。 */
+export type QueueMetrics = {
+  postId: string;
+  permalink: string | null;
+  postedAt: string;
+  views: number;
+  likes: number;
+  replies: number;
+  reposts: number;
+  quotes: number;
+  shares: number;
+  clicks: number;
+};
+
+export type QueueItem = {
+  id: string;
+  accountId: string;
+  status: QueueStatus;
+  scheduledAt: string | null;
+  body: string;
+  comments: string[];
+  imageUrl: string | null;
+  replyControl: ReplyControl;
+  source: QueueSource;
+  approvalMode: "manual" | "cancel" | "auto" | null;
+  /** 取消可モードの締切。残り時間の計算は client 側（SPEC §12.3） */
+  approveDeadline: string | null;
+  step: number;
+  containerPolls: number;
+  /** 公開済みの投稿ID。二重投稿防止のため、成功したぶんは必ず保存される（SPEC §8.3） */
+  resultIds: string[];
+  /** ユーザー向けの日本語 */
+  error: string | null;
+  /** Threads からの返答そのまま */
+  errorRaw: string | null;
+  attempts: number;
+  originPostId: string | null;
+  sourceIds: string[];
+  createdAt: string;
+  updatedAt: string;
+  metrics: QueueMetrics | null;
+};
+
+export type QueueListResponse = { items: QueueItem[] };
+
+export type CreateQueueRequest = {
+  /** `now` は「今すぐ投稿」（`scheduledAt = now` にして予約する） */
+  status: "draft" | "scheduled" | "now";
+  scheduledAt?: string;
+  body: string;
+  comments?: string[];
+  imageUrl?: string | null;
+  replyControl?: ReplyControl;
+  originPostId?: string | null;
+  sourceIds?: string[];
+};
+
+export type PatchQueueRequest = {
+  body?: string;
+  comments?: string[];
+  scheduledAt?: string | null;
+  imageUrl?: string | null;
+  replyControl?: ReplyControl;
+  status?: "draft" | "scheduled";
+};
+
+export type QueueItemResponse = { item: QueueItem };
+
+/** `GET /accounts/:id/queue/suggest-slot`（SPEC §7.4 / §9.3）。 */
+export type SuggestSlotResponse = { at: string; reason: string; n: number };

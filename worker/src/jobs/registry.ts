@@ -1,16 +1,18 @@
 /**
  * ジョブ種別 → ハンドラの対応表（SPEC §8.2）。
  * `lib/jobs.ts` の `runJobs()` はこの表だけを見る。
- * `publish`（§8.3）は M4、`ap_plan` / `ap_notify` / `ap_score`（§9）は M6。
+ * `ap_plan` / `ap_notify` / `ap_score`（§9）は M6。
  */
 import type { JobHandler, JobType } from "../lib/jobs";
 import { dailyViewsJob, demographicsJob, followersJob } from "./account-metrics";
 import { clicksJob } from "./clicks";
 import { insightsJob } from "./insights";
 import { cleanupJob, tokenRefreshJob } from "./maintenance";
+import { publishJob } from "./publish";
 import { fullSyncJob } from "./sync";
 
 export const HANDLERS: Partial<Record<JobType, JobHandler>> = {
+  publish: publishJob,
   full_sync: fullSyncJob,
   insights_recent: insightsJob("recent"),
   insights_daily: insightsJob("daily"),

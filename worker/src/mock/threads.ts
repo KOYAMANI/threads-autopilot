@@ -22,14 +22,47 @@ type MockPost = {
   link_attachment_url: string | null;
 };
 
-type MockContainer = { id: string; text: string; replyToId: string | null; createdAt: number; polls: number };
+type MockContainer = {
+  id: string;
+  text: string;
+  replyToId: string | null;
+  createdAt: number;
+  polls: number;
+  /** [[SLOW]] を含むコンテナは FINISHED にならない（container_polls の上限を試すため） */
+  slow: boolean;
+};
 
 type MockStore = {
   user: { id: string; username: string; name: string; threads_profile_picture_url: string };
   posts: MockPost[];
   containers: Map<string, MockContainer>;
   seq: number;
+  /** [[RATE]] を1回だけ跳ね返すために、既に跳ね返した本文を覚えておく */
+  rateLimited: Set<string>;
 };
+
+/**
+ * 本文に埋めるテスト用マーカー（SPEC §14 のジョブテスト用）。実 API には無い仕掛けで、
+ * モックの中だけで効く。published される本文からは取り除く。
+ *
+ *   [[RATE]]  … その本文の初回だけ code 4（レート制限）で跳ね返す。2回目は通る
+ *   [[FAIL]]  … 常に code 100 で跳ね返す（途中失敗 → 二重投稿しないことの確認）
+ *   [[SLOW]]  … コンテナが FINISHED にならない（container_polls の上限を試す）
+ */
+export const MOCK_RATE_MARKER = "[[RATE]]";
+export const MOCK_FAIL_MARKER = "[[FAIL]]";
+export const MOCK_SLOW_MARKER = "[[SLOW]]";
+
+function stripMarkers(text: string): string {
+  return text
+    .split(MOCK_RATE_MARKER)
+    .join("")
+    .split(MOCK_FAIL_MARKER)
+    .join("")
+    .split(MOCK_SLOW_MARKER)
+    .join("")
+    .trim();
+}
 
 const stores = new Map<string, MockStore>();
 
@@ -69,6 +102,7 @@ function seedStore(token: string): MockStore {
     posts: [],
     containers: new Map(),
     seq: 0,
+    rateLimited: new Set(),
   };
 
   // 直近30日に root 10本 + そのうち3本に返信1本ずつ。時刻は固定（決定的）。
@@ -254,17 +288,25 @@ export function mockCall(req: MockRequest): unknown {
     if ((text.match(/https?:\/\/\S+/g) ?? []).length > 5) {
       throw mockError(100, "THREADS_API__LINK_LIMIT_EXCEEDED: too many links");
     }
+    if (text.includes(MOCK_FAIL_MARKER)) {
+      throw mockError(100, "Invalid parameter: mock failure requested");
+    }
+    if (text.includes(MOCK_RATE_MARKER) && !store.rateLimited.has(text)) {
+      store.rateLimited.add(text);
+      throw mockError(4, "Application request limit reached");
+    }
     const replyToId = p.reply_to_id ?? null;
     if (replyToId && !store.posts.some((x) => x.id === replyToId)) {
       throw mockError(100, "Invalid parameter: reply_to_id not found");
     }
     const id = `${store.user.id}${String(9000 + store.seq++)}`;
     if (p.auto_publish_text === "true" && (p.media_type ?? "TEXT") === "TEXT") {
-      publish(store, id, text, replyToId, now);
+      publish(store, id, stripMarkers(text), replyToId, now);
       return { id };
     }
     // コンテナ作成（画像、または3ステップ方式のコメント）
-    store.containers.set(id, { id, text, replyToId, createdAt: now, polls: 0 });
+    const slow = text.includes(MOCK_SLOW_MARKER) || (p.image_url ?? "").includes("slow");
+    store.containers.set(id, { id, text: stripMarkers(text), replyToId, createdAt: now, polls: 0, slow });
     return { id };
   }
   if (path === "/me/threads_publish" && req.method === "POST") {
@@ -385,6 +427,7 @@ export function mockCall(req: MockRequest): unknown {
       const container = store.containers.get(id);
       if (container) {
         container.polls += 1;
+        if (container.slow) return { id, status: "IN_PROGRESS" };
         return container.polls >= 2
           ? { id, status: "FINISHED" }
           : { id, status: "IN_PROGRESS" };

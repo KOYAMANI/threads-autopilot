@@ -21,7 +21,7 @@ import { HANDLERS } from "../jobs/registry";
 /* ── ジョブの種類と優先度（SPEC §8.2） ─────────────── */
 
 export const JOB_TYPES = [
-  "publish", // M4
+  "publish",
   "full_sync",
   "insights_recent",
   "insights_daily",
@@ -197,7 +197,13 @@ export const WEEKLY_UTC_DAY = 0;
  * 5分ごとの cron は投入せず `runJobs()` だけを回す。
  */
 export async function enqueueForCron(ctx: JobContext, cron: string): Promise<void> {
-  if (cron === CRON_5MIN) return;
+  if (cron === CRON_5MIN) {
+    // SPEC §8.2 は「runJobs() のみ」だが、publish（§8.3）を動かす入口はここしかない。
+    // 出番のあるアカウントにだけ publish を積む。重複投入はしないので、同じアカウントの
+    // publish は常に1本（並走してコメントを二重投稿することがない）
+    await enqueuePendingPublishes(ctx);
+    return;
+  }
 
   const accounts = await ctx.sys.all<{ id: string }>(
     "SELECT id FROM accounts WHERE status='ok' ORDER BY created_at ASC",
@@ -225,6 +231,28 @@ export async function enqueueForCron(ctx: JobContext, cron: string): Promise<voi
       // ap_score は M6
     }
     await enqueueJob(ctx, "cleanup");
+  }
+}
+
+/**
+ * 出番のあるキュー（`scheduled` で時刻が来たもの、または途中まで進んだ `publishing`）を
+ * 持つアカウントに `publish` を積む（SPEC §8.3）。5分ごとの cron から呼ぶ。
+ * 進行中のキューが次のステップを待っている間も、次の5分でここが積み直す。
+ */
+export async function enqueuePendingPublishes(ctx: JobContext): Promise<void> {
+  const nowIso = ctx.now.toISOString();
+  const rows = await ctx.sys.all<{ account_id: string }>(
+    `SELECT DISTINCT q.account_id AS account_id
+       FROM queue q JOIN accounts a ON a.id=q.account_id
+      WHERE q.status IN ('scheduled','publishing')
+        AND a.status='ok'
+        AND q.scheduled_at IS NOT NULL AND q.scheduled_at<=?
+        AND (q.next_step_at IS NULL OR q.next_step_at<=?)`,
+    nowIso,
+    nowIso,
+  );
+  for (const r of rows) {
+    await enqueueJob(ctx, "publish", { accountId: r.account_id });
   }
 }
 
@@ -319,7 +347,7 @@ export async function runJobs(
 
     const handler = handlers[job.type];
     if (!handler) {
-      // 未実装のジョブ（publish は M4）。落とさず done にして詰まらせない
+      // 未実装のジョブ（ap_* は M6）。落とさず done にして詰まらせない
       await finish(ctx, job, "done", "handler not implemented");
       result.done++;
       continue;

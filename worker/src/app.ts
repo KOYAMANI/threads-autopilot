@@ -18,6 +18,7 @@ import { adminRoutes } from "./routes/admin";
 import { accountRoutes } from "./routes/accounts";
 import { dashboardRoutes } from "./routes/dashboard";
 import { postRoutes } from "./routes/posts";
+import { queueRoutes } from "./routes/queue";
 import { linkRoutes } from "./routes/links";
 import { healthRoutes } from "./routes/health";
 
@@ -93,6 +94,7 @@ export function createApp() {
   app.route("/accounts", accountRoutes());
   app.route("/accounts", dashboardRoutes());
   app.route("/accounts", postRoutes());
+  app.route("/accounts", queueRoutes());
   app.route("/accounts", linkRoutes());
 
   app.notFound(() => fail("NOT_FOUND", "見つかりませんでした", 404));

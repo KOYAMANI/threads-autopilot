@@ -4,3 +4,4 @@ export * from "./similarity";
 export * from "./url";
 export * from "./clicks";
 export * from "./validate";
+export * from "./slot";

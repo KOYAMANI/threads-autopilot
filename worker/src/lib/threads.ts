@@ -1,7 +1,8 @@
 /**
  * Threads API 呼び出し（SPEC §6）。
  * call() の骨格・threadsReason()・モック分岐と、§6.3 の各エンドポイントのラッパ。
- * publish 系（`POST /me/threads` のツリー投稿）は M4。
+ * 投稿系（`POST /me/threads` / コンテナ / `threads_publish`）はファイル末尾。
+ * ステップの組み立ては `jobs/publish.ts`（SPEC §8.3）。
  */
 import { DEV, type Env } from "../env";
 import type { Budget } from "./budget";
@@ -394,4 +395,89 @@ export async function repost(
   options: CallOptions,
 ): Promise<{ id: string }> {
   return (await call(token, "POST", `/${mediaId}/repost`, {}, options)) as { id: string };
+}
+
+/* ── 投稿（SPEC §6.3 / §8.3） ─────────────────────────
+ * すべて `POST /me/threads` の使い分け。`auto_publish_text=true` を付けると
+ * コンテナを作らずその場で公開され、応答の `{id}` が公開済み投稿IDになる。
+ */
+
+export type ReplyControl = "everyone" | "accounts_you_follow" | "mentioned_only";
+
+export type CreateTextOptions = {
+  /** ツリーの親（SPEC §8.3）。root には付けない */
+  replyToId?: string | null;
+  replyControl?: ReplyControl | null;
+  /** 本文にリンクを置く設定のときだけ使う（SPEC §6.3） */
+  linkAttachment?: string | null;
+  /**
+   * `true` ならコンテナを作らず即公開（1ステップ方式）。
+   * `false` ならコンテナIDが返るので、`/{id}` で FINISHED を待って publish する（3ステップ方式）。
+   */
+  autoPublish: boolean;
+};
+
+/** テキスト投稿。`autoPublish` の値で1ステップ方式・3ステップ方式を切り替える。 */
+export async function createTextPost(
+  token: string,
+  text: string,
+  create: CreateTextOptions,
+  options: CallOptions,
+): Promise<{ id: string }> {
+  const params: ThreadsParams = { media_type: "TEXT", text };
+  if (create.autoPublish) params.auto_publish_text = true;
+  if (create.replyToId) params.reply_to_id = create.replyToId;
+  if (create.replyControl) params.reply_control = create.replyControl;
+  if (create.linkAttachment) params.link_attachment = create.linkAttachment;
+  return (await call(token, "POST", "/me/threads", params, options)) as { id: string };
+}
+
+/** 画像投稿のコンテナを作る（SPEC §6.3）。応答の `{id}` は creation_id。 */
+export async function createImageContainer(
+  token: string,
+  imageUrl: string,
+  text: string,
+  create: Omit<CreateTextOptions, "autoPublish">,
+  options: CallOptions,
+): Promise<{ id: string }> {
+  const params: ThreadsParams = { media_type: "IMAGE", image_url: imageUrl, text };
+  if (create.replyToId) params.reply_to_id = create.replyToId;
+  if (create.replyControl) params.reply_control = create.replyControl;
+  return (await call(token, "POST", "/me/threads", params, options)) as { id: string };
+}
+
+export type ContainerStatus = {
+  id?: string;
+  status?: "IN_PROGRESS" | "FINISHED" | "ERROR" | "EXPIRED" | "PUBLISHED" | string;
+  error_message?: string | null;
+};
+
+/** コンテナの状態確認（SPEC §6.3 / §8.3 step 1）。 */
+export async function getContainerStatus(
+  token: string,
+  containerId: string,
+  options: CallOptions,
+): Promise<ContainerStatus> {
+  return (await call(
+    token,
+    "GET",
+    `/${containerId}`,
+    { fields: "status,error_message" },
+    options,
+  )) as ContainerStatus;
+}
+
+/** コンテナを公開する（SPEC §6.3）。応答の `{id}` が公開済み投稿ID。 */
+export async function publishContainer(
+  token: string,
+  creationId: string,
+  options: CallOptions,
+): Promise<{ id: string }> {
+  return (await call(
+    token,
+    "POST",
+    "/me/threads_publish",
+    { creation_id: creationId },
+    options,
+  )) as { id: string };
 }
