@@ -1,0 +1,25 @@
+# wrangler dev 用の Secrets 雛形（SPEC §3.2）。
+# このファイルをコピーして `.dev.vars` を作り、実値を入れる。`.dev.vars` は .gitignore 済み。
+# 本番は `wrangler secret put <NAME>` で登録する。実値をこのファイルに書かない。
+
+# 32バイトを base64 にしたもの。トークン・AIキーの暗号化鍵（AES-256-GCM）。
+#   生成: openssl rand -base64 32
+ENC_KEY=
+
+# 32バイト以上。セッション署名と署名トークン（pwreset / qaction）の HMAC 鍵。
+#   生成: openssl rand -base64 48
+SESSION_SECRET=
+
+# 管理API（ライセンス発行・失効）の鍵。X-Admin-Secret ヘッダで送る。
+#   生成: openssl rand -hex 32
+ADMIN_SECRET=
+
+# メール送信（Resend）。未設定ならメールは送らず、開発用のコンソール出力にフォールバックする。
+RESEND_API_KEY=
+
+# 差出人アドレス（未設定なら noreply@example.com）
+MAIL_FROM=
+
+# Web Push（M6。M1 では未使用）
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=

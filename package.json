@@ -1,0 +1,35 @@
+{
+  "name": "threads-autopilot",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "worker",
+    "web"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit -p shared/tsconfig.json && tsc --noEmit -p worker/tsconfig.json && tsc --noEmit -p web/tsconfig.json && tsc --noEmit -p scripts/tsconfig.json",
+    "test": "npm run test --workspaces --if-present",
+    "dev": "npm-run-all -p dev:worker dev:web",
+    "dev:worker": "wrangler dev --define __DEV__:true",
+    "dev:web": "npm -w web run dev",
+    "build": "npm -w web run build",
+    "db:migrate": "wrangler d1 migrations apply threads-autopilot --local",
+    "db:migrate:remote": "wrangler d1 migrations apply threads-autopilot --remote",
+    "seed:demo": "tsx scripts/seed-demo.ts",
+    "licenses": "tsx scripts/make-licenses.ts",
+    "smoke": "tsx scripts/smoke.ts",
+    "clean": "rm -rf node_modules */node_modules web/dist .wrangler *.tsbuildinfo"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@cloudflare/workers-types": "^5.20260904.1",
+    "@types/node": "^22.20.1",
+    "npm-run-all": "^4.1.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.129.0"
+  }
+}
