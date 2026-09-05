@@ -13,7 +13,11 @@ __DEV__ = "false"
 directory = "./web/dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-run_worker_first = ["/api/*", "/a/*"]
+# SPEC §3.1 の2つに加えて `/__scheduled` を足してある。`wrangler dev --test-scheduled` が
+# 注入する cron 手動実行の入口で、静的アセット側に取られると Worker まで届かないため。
+# 本番では `--test-scheduled` の middleware が無く、index.ts が ASSETS にそのまま渡すので
+# 挙動は追加前と変わらない（docs/qa.md M2-2）。
+run_worker_first = ["/api/*", "/a/*", "/__scheduled"]
 
 [[d1_databases]]
 binding = "DB"

@@ -154,3 +154,26 @@ v1.1 の独立検証で、要求項目は全件反映されていたが、v1.1 �
 - 2026-09-04 Login のボタンは `:active` の `transform: scale(0.97)`（90ms）で pointer-down に反応させ、`prefers-reduced-motion: reduce` では transform を止めて opacity だけにする（apple-design SKILL.md の「Respond on pointer-down」「reduced-motion はクロスフェード」）。spring（`motion`）の導入は M3
 - 2026-09-04 `/reset` ルートは `/login?reset=<token>` と同じ画面を出し、`?reset=` と `?token=` の両方を受ける — メールのリンク（SPEC §5.1）は `/login?reset=` のままにする
 - 2026-09-04 `POST /api/auth/register` はライセンスを `UPDATE ... WHERE status='unused'` で押さえ、`changes=0` なら作った `users` 行を消して `LICENSE_INVALID` にする — 同じキーでの同時登録を1本に絞るため（D1 にトランザクションが無い前提の書き方）
+
+## M2 実装で決めたこと
+
+- 2026-09-05 ジョブ台帳（`jobs` テーブル）の読み書きは **作業用とは別の予算** で数える（`lib/jobs.ts` の `JOB_BOOKKEEPING_QUERIES=150`）— 作業予算（`MAX_DB_QUERIES` 既定800）が尽きた**あとに** `state_json` を保存できないと再開できないため。SPEC §2.5 / §8.1 が「Paid の実測上限は1呼び出し1,000クエリ、既定800は余裕を200残した値」としており、150はその200の内側に収まる
+- 2026-09-05 `BudgetExceeded` はジョブの失敗として数えない（`attempts` を増やさず `next_run_at=now` の pending に戻す）— 予算切れは「続きがある」であって異常ではないため。指数バックオフ（1,2,4,8分・5回）は本当の失敗にだけ効かせる
+- 2026-09-05 `runJobs()` は1回の実行で最大50ジョブまで（`MAX_JOBS_PER_RUN`）— SPEC に上限の記載がないので暴走ガードとして入れる。時間予算が先に当たるのが通常
+- 2026-09-05 ハンドラ未実装のジョブ種別（`publish` は M4、`ap_*` は M6）は `done` にして流す — キューの先頭で詰まって後続のジョブが永久に走らなくなるのを防ぐ
+- 2026-09-05 週1のジョブ（`insights_old` / `demographics` / `token_refresh`）は **UTC 日曜** に投入する（`WEEKLY_UTC_DAY=0`）— SPEC §8.2 は「週1」としか書いていないので曜日を固定する。日次 cron（18:00 UTC）の中で判定する
+- 2026-09-05 `buildUpsertChunks` の更新指定に式を渡せるようにした（`{column, expr}`）— `full_sync` が採点済みの `tags_json`（`scored`）や既存の数字を潰さないために `CASE WHEN posts.tags_json='{}' THEN excluded.tags_json ELSE posts.tags_json END` のような式が要る。文字列だけの従来の指定はそのまま使える
+- 2026-09-05 `full_sync` の upsert が上書きするのは本文・permalink・メディア・投稿日時・`root_id`・`is_reply`・`deleted`・（未設定時のみ）`tags_json` だけ。`views` などの数字・`clicks`・`metrics_fetched_at`・`source`・`queue_id` は触らない（SPEC §8.4「既存の数字は保持」の具体化）
+- 2026-09-05 `insights_*` の履歴チェックポイントは「初回取得なら**いま入っている帯だけ**、2回目以降は前回の経過 < しきい値 <= 今回の経過を満たすもの」で判定する（`crossedCheckpoints()`）— SPEC §8.4 の「初めて超えた取得時に1行だけ」と「30日を超えて初めて取得した投稿は 48h と 7d を埋めない」を1つの規則にまとめたもの
+- 2026-09-05 `insights_*` の再開は `state_json.pending`（`[id, posted_at, 前回の metrics_fetched_at]` の配列）で行う。1件処理しきってから配列の先頭を落とすので、予算切れで途中終了しても取りこぼさない。1回の投入で拾う上限は200件（`MAX_TARGETS`）
+- 2026-09-05 `click_weeks.url` には **正規化後**のURLを入れ、同じ週の中で正規化が衝突するURLは合算してから1行にする — 生のURLのまま入れると、1文の `ON CONFLICT DO UPDATE` が同じ行を二度触ってエラーになる。合算してから `MAX(excluded.clicks, click_weeks.clicks)` を当てるので「前回より小さい値が来たら前回を残す」（SPEC §8.5）は保たれる
+- 2026-09-05 クリックの按分は `shared/src/clicks.ts` の `allocateClicks()` に純関数として置き、`clicks` ジョブ（`posts.clicks` の更新）とダッシュボード（`links` と `unassignedClicks`）の両方から同じ関数を呼ぶ — 2か所で別々に按分すると数字がずれるため
+- 2026-09-05 `follower_snapshots.date` は **アカウントの timezone** の当日を使う（`daily_views.date` は API の `end_time` すなわち UTC 日付のまま）— 日次 cron は 18:00 UTC = 03:00 JST に走るので、UTC 日付だと日本の買い手には前日として記録されてしまう
+- 2026-09-05 `demographics` は M2 では `breakdown=age` の1本だけ取る — SPEC §6.3 が例示するのが age のみ。テーブルは `(account_id, breakdown)` が主キーなので、後から増やしても壊れない
+- 2026-09-05 `POST /accounts` で同じ Threads アカウント（`(user_id, threads_user_id)` が一致）を再接続したときは、新規作成せず**トークンを差し替えて `status='ok'` に戻す**（応答は 200、新規は 201）— `needs_reauth` からの「つなぎ直し」（SPEC §6.2 の文言）が通る唯一の経路だから。3件上限にも数えない
+- 2026-09-05 `POST /accounts` の `app_secret` は長期化の試行にだけ使い、保存しない。長期化に失敗しても接続自体は成立させ、短期トークンのまま保存して応答に `secretIgnored:true` を返す — トークンが有効なのに App Secret の入力ミスだけで接続そのものを失敗させない
+- 2026-09-05 `GET /accounts/:id/sync` の `progress` / `total` は**ページ数**で返す（`total=30` = threads 15ページ + replies 15ページ）— SPEC §7.1 が単位を定めていないため。投稿数だと分母が同期しないと決まらず、進捗バーにならない
+- 2026-09-05 Threads API の失敗（`ThreadsApiError`）は Hono の `onError` で `{code:'THREADS_ERROR', message: threadsReason(e)}` の 502 に変える — 日本語の理由＋原文（`#code message`）を1か所で組み立てる（SPEC §2.4 / §6.2）
+- 2026-09-05 `wrangler.toml` の `run_worker_first` に `/__scheduled` を足した — `wrangler dev --test-scheduled` が注入する cron 手動実行の入口が、静的アセット側に取られて Worker まで届かなかったため（`docs/qa.md` M2-2）。本番では `--test-scheduled` の middleware が無く `index.ts` が ASSETS へそのまま渡すので、挙動は追加前と変わらない
+- 2026-09-05 `mock/threads.ts` はトークンに `expired` を含むとき code 190 を投げる — `needs_reauth` の経路（SPEC §6.1 / §8.6）をモックだけでテストするため
+- 2026-09-05 `scripts/check-bundle.sh` は本番エントリ（`worker/src/index.ts`）と一時エントリの**両方**を検査する — M2 でジョブが `call()` を呼ぶようになり、本番エントリ自体が到達可能な検査対象になった。一時エントリは、将来その経路が切れてもガードの効きを測り続けるための保険として残す

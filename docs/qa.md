@@ -25,7 +25,7 @@ npm run db:migrate                 # ローカル D1 にスキーマを流す
 | # | 手順 | 期待 | 種別 |
 |---|---|---|---|
 | 1-1 | `npm run typecheck` | エラー0（shared / worker / web / scripts の4プロジェクト） | 自動 |
-| 1-2 | `npm test` | shared 51件・worker 88件すべて green | 自動 |
+| 1-2 | `npm test` | shared 51件・worker 96件すべて green（M2 時点では shared 58件・worker 158件） | 自動 |
 | 1-3 | `npm run build` | `web/dist/` が生成される | 手動 |
 
 ### 2. Worker の起動と `/api/health`
@@ -158,6 +158,110 @@ THREADS_TOKEN=... npm run smoke            # 投稿して確認し、最後に�
 
 ---
 
-## M2 以降
+## M2 アカウント接続と同期
+
+### M2-0. 準備
+
+M1 の「0. 準備」と同じ。`.dev.vars` の代わりに `--var` で渡してもよい（下のコマンドはその形）。
+
+```bash
+npm run db:migrate
+npx wrangler dev --port 8787 --test-scheduled --define __DEV__:true \
+  --var THREADS_MOCK:1 \
+  --var ADMIN_SECRET:dev-admin-secret \
+  --var ENC_KEY:"$(openssl rand -base64 32)" \
+  --var SESSION_SECRET:"$(openssl rand -base64 48)"
+```
+
+`--test-scheduled` が cron の手動実行口（`/__scheduled`）を足す。`wrangler.toml` の
+`run_worker_first` に `/__scheduled` が入っているのは、これが静的アセット側に取られて
+Worker まで届かないため（DECISIONS 2026-09-05）。
+
+### M2-1. ビルドとテスト
+
+| # | 手順 | 期待 | 種別 |
+|---|---|---|---|
+| 1-1 | `npm run typecheck` | エラー0 | 自動 |
+| 1-2 | `npm test` | shared 58件・worker 158件すべて green | 自動 |
+| 1-3 | `npm run check:bundle` | 本番エントリ・一時エントリの両方でモック識別子0件 | 自動 |
+
+`call()` が M2 でジョブから呼ばれるようになったので、1-3 は本番エントリ
+（`worker/src/index.ts`）そのものの確認になっている。
+
+### M2-2. モックで接続 → cron → 数字が入る（SPEC §13 M2 の完了条件）
+
+```bash
+# ライセンスを1本発行して登録する
+KEY=$(curl -s -X POST http://127.0.0.1:8787/api/admin/licenses \
+  -H 'Content-Type: application/json' -H 'X-Requested-With: fetch' \
+  -H 'X-Admin-Secret: dev-admin-secret' -d '{"count":1}' | jq -r .data.keys[0].key)
+curl -s -c /tmp/c.txt -X POST http://127.0.0.1:8787/api/auth/register \
+  -H 'Content-Type: application/json' -H 'X-Requested-With: fetch' \
+  -d "{\"email\":\"you@example.com\",\"password\":\"password1234\",\"license_key\":\"$KEY\"}"
+
+# モックトークンで接続（THAAdemo で始まるトークンだけがモックに入る）
+ACC=$(curl -s -b /tmp/c.txt -X POST http://127.0.0.1:8787/api/accounts \
+  -H 'Content-Type: application/json' -H 'X-Requested-With: fetch' \
+  -d '{"token":"THAAdemo_manual"}' | jq -r .data.account.id)
+
+# cron を手動実行（5分 → 毎時 → 日次 → 5分でやり残しを片付ける）
+for CRON in '*/5+*+*+*+*' '0+*+*+*+*' '0+18+*+*+*' '*/5+*+*+*+*'; do
+  curl -s -o /dev/null -w "$CRON %{http_code}\n" "http://127.0.0.1:8787/__scheduled?cron=$CRON"
+  sleep 3
+done
+```
+
+| # | 確認 | 期待 |
+|---|---|---|
+| 2-1 | `POST /api/accounts` の応答 | 201 / `{account, longLived:false, secretIgnored:false}` |
+| 2-2 | `accounts.token_enc` | 平文の `THAAdemo…` を含まない（暗号化して保存。SPEC §5.2） |
+| 2-3 | 5分 cron のあと `SELECT COUNT(*) FROM posts` | 14件（root 10 + 自分の返信4） |
+| 2-4 | `SELECT COUNT(*) FROM links` | 2件。本文のURLが `normalizeUrl()` 済みで自動追加される（SPEC §7.5） |
+| 2-5 | 日次 cron のあと | `daily_views` 63件 / `follower_snapshots` 1件 / `click_weeks` に行 / `posts.clicks` が 0 でない |
+| 2-6 | `SELECT type, status, last_error FROM jobs` | 全て `done`、`last_error` は NULL |
+| 2-7 | `GET /api/accounts/$ACC/sync` | 同期後は `{running:false, progress:30, total:30}` |
+| 2-8 | `GET /api/accounts/$ACC/diagnose` | 6段すべて `ok:true`（トークン / アカウント情報 / 投稿の取得 / 投稿の数字 / アカウントの表示回数 / リンクのクリック） |
+
+### M2-3. ダッシュボード（SPEC §7.2）
+
+```bash
+curl -s -b /tmp/c.txt -H 'X-Requested-With: fetch' \
+  "http://127.0.0.1:8787/api/accounts/$ACC/dashboard?period=30" | jq .
+```
+
+| # | 確認 | 期待 |
+|---|---|---|
+| 3-1 | 応答の形 | `period / from / to / followers{current,delta,series} / views{total,series} / likes / clicks / posts[] / links[] / unassignedClicks` |
+| 3-2 | `posts[]` | 期間内の root だけ。`children` と `hook` と `link` が入っている |
+| 3-3 | `links[]` | `lin.ee` と `example.com/sheet` にクリックが付き、`unassignedClicks` が 0 |
+| 3-4 | フォロワーが1点しかないとき | `delta` が 0（画面は「明日から推移が出ます」を出す。M3） |
+| 3-5 | `?period=all` / `?period=999` | `all` はそのまま、不正値は 7 に丸める |
+
+### M2-4. 自動テストで担保している項目（手で見ない）
+
+| 項目 | テスト |
+|---|---|
+| 予算超過（fetch / D1クエリ）で途中終了 → 次回続きから完了 | `worker/test/sync.test.ts`, `insights.test.ts`, `clicks.test.ts` |
+| クリックの週グリッドが固定起点で二重計上しない | `worker/test/clicks.test.ts` |
+| 按分が §8.5 の基準どおり（views 比・同一ツリーは max・正規化URLで突合） | `shared/test/clicks.test.ts`, `worker/test/clicks.test.ts` |
+| `post_metrics_history` が 48h/7d/30d を1回ずつ、1投稿最大3行 | `worker/test/insights.test.ts` |
+| 3アカウント上限・再接続・他人のアカウントに触れない | `worker/test/accounts.test.ts` |
+| `DELETE /accounts/:id` で関連テーブル（`click_weeks_done` 含む）が全部消える | `worker/test/accounts.test.ts` |
+| code 190 で `needs_reauth`、日本語＋原文のエラー | `worker/test/maintenance.test.ts` |
+| ジョブの優先度・重複投入なし・バックオフ・running の回収 | `worker/test/jobs.test.ts` |
+
+### M2-5. 実トークンでの確認（トークン到着後）
+
+SPEC §13 M2 の残り1件。モックでは代替できない。
+
+| # | 確認 | 期待 |
+|---|---|---|
+| 5-1 | 実アカウントで `clicks` ジョブを回す | `threads_insights?metric=clicks` の `link_url` が `normalizeUrl()` 経由で投稿と突合でき、`unassignedClicks` に全部落ちない |
+
+外れた場合は `shared/src/url.ts` の `normalizeUrl()` の除去パラメータを調整し、`DECISIONS.md` に1行残す。
+
+---
+
+## M3 以降
 
 各マイルストーンの完了条件（SPEC §13）を、着手時にこのファイルへ表として起こす。
