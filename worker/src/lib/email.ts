@@ -242,7 +242,8 @@ export async function sendEmail(
   vars: Record<string, string> = {},
 ): Promise<SendResult> {
   const { subject, text } = render(template, vars);
-  const from = env.MAIL_FROM ?? "noreply@example.com";
+  // `[vars]` に空文字で置かれることがあるので、空も未設定として扱う（`??` だと素通りする）
+  const from = (env.MAIL_FROM ?? "").trim() || "noreply@example.com";
 
   if (!env.RESEND_API_KEY) {
     if (!DEV) {

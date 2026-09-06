@@ -20,6 +20,7 @@ import { runDigest, previousDayRange, tzDateAndHour } from "../src/jobs/digest";
 import { makeJobContext } from "../src/lib/jobs";
 import { clearOutbox, getOutbox } from "../src/lib/email";
 import { pushToUser } from "../src/lib/notify";
+import { sha256Hex } from "../src/lib/crypto";
 import { decryptPayload, generateVapidKeys } from "../src/lib/webpush";
 import { api, countRows, insertAccount, registerUser, testDb } from "./helpers";
 import { createApp } from "../src/app";
@@ -351,6 +352,128 @@ describe("ライセンス表示 GET /users/me/license", () => {
     expect(res.body.data.license.keyTail).toBe(key!.key.slice(-4));
     expect(res.body.data.license.status).toBe("active");
     expect(JSON.stringify(res.body)).not.toContain(key!.key);
+  });
+});
+
+/* ── 4-2. 監査ログ（SPEC §13 M7 / docs/qa.md M7-7） ── */
+
+describe("監査ログ audit_log", () => {
+  /** その買い手の記録を新しい順に。`user_delete` は user_id を持たないので別で引く。 */
+  async function actionsOf(userId: string): Promise<string[]> {
+    const rows = await testDb().all<{ action: string }>(
+      "SELECT action FROM audit_log WHERE user_id=? ORDER BY at ASC",
+      userId,
+    );
+    return rows.map((r) => r.action);
+  }
+
+  it("登録・ログイン・接続・キー変更・AP ON/OFF・書き出し・削除・退会が1件ずつ入る", async () => {
+    const user = await registerUser();
+    expect(await actionsOf(user.userId)).toContain("register");
+
+    // ログイン（同じ買い手でもう1本セッションを作る）
+    expect(
+      (await api("POST", "/api/auth/login", {
+        body: { email: user.email, password: "password1234" },
+      })).status,
+    ).toBe(200);
+
+    // アカウントの接続（モックのトークン。SPEC §11）
+    const connect = await api("POST", "/api/accounts", {
+      cookie: user.cookie,
+      body: { token: "THAAdemo_audit" },
+    });
+    expect(connect.status).toBe(201);
+    const accountId = connect.body.data.account.id as string;
+
+    // AIキーの保存
+    expect(
+      (await api("PUT", "/api/ai/settings", {
+        cookie: user.cookie,
+        body: { provider: "gemini", key: "AIzaSecretKeyValue123456", storeOnServer: true },
+      })).status,
+    ).toBe(200);
+
+    // オートパイロットの ON（AIキーと参考情報が要るので、まず参考情報を1件）
+    await api("POST", "/api/sources", {
+      cookie: user.cookie,
+      body: { type: "text", title: "ネタ", content: "本文".repeat(20) },
+    });
+    await api("PUT", `/api/accounts/${accountId}/autopilot`, {
+      cookie: user.cookie,
+      body: { enabled: true },
+    });
+    await api("PUT", `/api/accounts/${accountId}/autopilot`, {
+      cookie: user.cookie,
+      body: { enabled: false },
+    });
+
+    // 書き出しと、アカウントの削除
+    expect((await api("GET", `/api/export/${accountId}`, { cookie: user.cookie })).status).toBe(200);
+    expect((await api("DELETE", `/api/accounts/${accountId}`, { cookie: user.cookie })).status).toBe(200);
+
+    const actions = await actionsOf(user.userId);
+    for (const want of [
+      "register",
+      "login",
+      "account_connect",
+      "ai_key_change",
+      "autopilot.on",
+      "autopilot.off",
+      "export",
+      "account_delete",
+    ]) {
+      expect(actions).toContain(want);
+    }
+
+    // detail に秘密（AIキー・トークン・パスワード）が入っていない
+    const details = await testDb().all<{ detail: string | null }>(
+      "SELECT detail FROM audit_log WHERE user_id=?",
+      user.userId,
+    );
+    const blob = details.map((d) => d.detail ?? "").join("\n");
+    expect(blob).not.toContain("AIzaSecretKeyValue123456");
+    expect(blob).not.toContain("THAAdemo_audit");
+    expect(blob).not.toContain("password1234");
+
+    // 退会は user_id を持たない行として1件だけ入る
+    expect(
+      (await api("DELETE", "/api/users/me", {
+        cookie: user.cookie,
+        body: { password: "password1234" },
+      })).status,
+    ).toBe(200);
+    const hash = await sha256Hex(user.email.trim().toLowerCase());
+    const deletes = await testDb().all<{ detail: string | null }>(
+      "SELECT detail FROM audit_log WHERE action='user_delete'",
+    );
+    expect(deletes.filter((d) => (d.detail ?? "").includes(hash))).toHaveLength(1);
+    // ハッシュだけで、メールの平文はどこにも無い
+    expect(deletes.map((d) => d.detail ?? "").join("\n")).not.toContain(user.email);
+  });
+
+  it("ライセンスの発行と失効が入り、キー本体は detail に出ない", async () => {
+    const admin = { "X-Admin-Secret": env.ADMIN_SECRET! };
+    const issued = await api("POST", "/api/admin/licenses", {
+      body: { count: 2, note: "監査テスト" },
+      headers: admin,
+    });
+    expect(issued.status).toBe(201);
+    const first = issued.body.data.keys[0] as { id: string; key: string };
+
+    const revoked = await api("POST", `/api/admin/licenses/${first.id}/revoke`, {
+      body: {},
+      headers: admin,
+    });
+    expect(revoked.status).toBe(200);
+
+    const rows = await testDb().all<{ action: string; detail: string | null }>(
+      "SELECT action, detail FROM audit_log WHERE action IN ('license_issue','license_revoke')",
+    );
+    expect(rows.some((r) => r.action === "license_issue")).toBe(true);
+    expect(rows.some((r) => r.action === "license_revoke" && (r.detail ?? "").includes(first.id))).toBe(true);
+    // 在庫の流出になるのでキー本体は書かない
+    expect(rows.map((r) => r.detail ?? "").join("\n")).not.toContain(first.key);
   });
 });
 

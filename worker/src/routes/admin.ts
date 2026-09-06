@@ -7,6 +7,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { ok } from "@tap/shared";
 import { fail, type AppEnv } from "../app";
+import { audit } from "../lib/audit";
 import { generateLicenseKey, timingSafeEqual } from "../lib/crypto";
 
 const MAX_BATCH = 200;
@@ -76,6 +77,10 @@ export function adminRoutes() {
       });
     }
     await db.batch(statements);
+    // 発行を監査に残す（DECISIONS 2026-09-06「ライセンスの発行と失効」）。
+    // **キーそのものは書かない** — 監査ログを読める経路がそのまま在庫の流出になるため、
+    // 発行した本数とメモだけ残す。個々の ID はレスポンスの `keys` にある
+    await audit(db, null, "license_issue", { count: keys.length, note: note ?? null });
 
     return c.json(ok({ keys }), 201);
   });
@@ -94,14 +99,7 @@ export function adminRoutes() {
     await db.run("UPDATE licenses SET status='revoked', revoked_at=? WHERE id=?", nowIso, id);
     // ログイン中のセッションも切る（自動投稿が続かないように。SPEC §5.4）
     if (row.user_id) await db.run("DELETE FROM sessions WHERE user_id=?", row.user_id);
-    await db.run(
-      "INSERT INTO audit_log (id, user_id, at, action, detail) VALUES (?,?,?,?,?)",
-      crypto.randomUUID(),
-      row.user_id,
-      nowIso,
-      "license_revoke",
-      id,
-    );
+    await audit(db, row.user_id, "license_revoke", { licenseId: id });
 
     return c.json(ok({ id, status: "revoked" as const, revokedAt: nowIso }));
   });

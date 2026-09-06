@@ -44,6 +44,10 @@ REPLY_TWO_STEP = "0"   # 1 にすると SPEC §8.3 のコメント投稿を3ス�
 # 秘密鍵のほうは `wrangler secret put VAPID_PRIVATE_KEY`。作り方は README「本番へのデプロイ」。
 # 空のままだと設定画面のプッシュのスイッチが無効になり、通知はメールだけになる。
 VAPID_PUBLIC_KEY = ""
+# メールの差出人。**秘密ではない**ので [vars] に置く（README「本番へのデプロイ」の表と対応）。
+# 空のままなら `noreply@example.com` を使う。本番は Resend で送信を検証したドメインにする。
+MAIL_FROM = ""
+
 # Push の VAPID JWT に入れる連絡先（RFC 8292 の `sub`）。mailto: か https: で始める。
 # Push サービス側が配信を止めるときの連絡先になる。空なら APP_ORIGIN を使う。
 VAPID_SUBJECT = ""

@@ -883,13 +883,14 @@ SELECT (SELECT COUNT(*) FROM users) u, (SELECT COUNT(*) FROM accounts) a,
 | オートパイロットの ON / OFF | `autopilot.on` / `autopilot.off` |
 | CSV の書き出し | `export` |
 | 退会 | `user_delete`（メールは `emailHash` としてハッシュのみ） |
+| ライセンスの発行 / 失効（管理API） | `license_issue`（本数とメモだけ。**キー本体は入らない**） / `license_revoke` |
 
 `SELECT detail FROM audit_log;` に、トークン・AIキー・パスワード・メールの平文が
 1つも出ていないことを目で見る。
 
 ### M7-8. 自動テストで担保していること
 
-`worker/test/m7.test.ts`（20件）:
+`worker/test/m7.test.ts`（22件）:
 
 - 3アカウントで dashboard / queue / autopilot が混ざらない。4件目は `ACCOUNT_LIMIT` で断る
 - 同じ Threads アカウントを2ユーザーが接続してもデータが混ざらない（`(account_id, id)` の主キー）。
@@ -902,6 +903,9 @@ SELECT (SELECT COUNT(*) FROM users) u, (SELECT COUNT(*) FROM accounts) a,
   48h の値が入る、`format=json` は 400、他人のアカウントは 404、
   `=SUM(...)` が `'=SUM(...)` になる（数式インジェクション）、日時がアカウントの timezone
 - ライセンス: 末尾4桁だけ返し、応答のどこにもキー全体が入らない
+- 監査ログ: 上の M7-7 の表の `action` が実際に入る（登録・ログイン・接続・キー変更・
+  AP ON/OFF・書き出し・アカウント削除・退会・ライセンスの発行と失効）。`detail` に
+  AIキー・Threads のトークン・パスワード・ライセンスキー本体・メールの平文が入らない
 - `/ai/generate` の11回目が 429
 - `daily_digest`: timezone ごとの日付と時刻の判定、`digest_hour` の時刻にだけ送る、
   同じ日に二度送らない、メール通知オフなら送らない
@@ -913,6 +917,12 @@ SELECT (SELECT COUNT(*) FROM users) u, (SELECT COUNT(*) FROM accounts) a,
 `rs`/`idlen` の値、4010 バイト超で例外、ES256 JWT の3パートと `aud`（origin のみ）・`exp`・
 署名64バイト・`crypto.subtle.verify` での検証、`vapid t=…, k=…` の形、
 `sendPush` が 201/410/500/例外でそれぞれ何を返すかとヘッダ。**実送信はしない**（`fetch` はスタブ）。
+
+`worker/test/webpush-rfc8291-vector.test.ts`（2件）: **RFC 8291 §5 の公式テストベクタ**
+（`When I grow up, I want to be a watermelon`）をそのまま復号できることを見る。
+webpush.test.ts の往復は自前の暗号化と自前の復号を突き合わせているだけなので、
+HKDF の `info` 文字列やヘッダの並びを両方とも同じように間違えていると気づけない。
+外部の既知の値と突き合わせる1本を置いて、そこを塞ぐ。
 
 ### M7-9. 自動テストで担保していないこと（M7 の残り）
 

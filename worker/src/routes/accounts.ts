@@ -17,6 +17,7 @@ import {
   tokenExpiresInDays,
   type AccountRow,
 } from "../lib/accounts";
+import { audit } from "../lib/audit";
 import { encrypt } from "../lib/crypto";
 import { enqueueJob, jobContextFrom } from "../lib/jobs";
 import { refreshAccountToken, remainingDays } from "../jobs/maintenance";
@@ -203,6 +204,16 @@ export function accountRoutes() {
       );
     }
 
+    // 接続を監査に残す（docs/qa.md M7-7）。**トークンは書かない** — 長期化できたかと
+    // つなぎ直しかどうかだけ
+    await audit(
+      db,
+      userId,
+      "account_connect",
+      { accountId, longLived, reconnect: Boolean(existing) },
+      now,
+    );
+
     // 接続直後に full_sync（SPEC §7.1）
     const jobCtx = jobContextFrom(c.env, db, c.get("budget"), now);
     await enqueueJob(jobCtx, "full_sync", { accountId });
@@ -226,14 +237,8 @@ export function accountRoutes() {
     if (!account) return fail("NOT_FOUND", "見つかりませんでした", 404);
 
     await deleteAccountData(db, account.id);
-    await db.run(
-      "INSERT INTO audit_log (id, user_id, at, action, detail) VALUES (?,?,?,?,?)",
-      crypto.randomUUID(),
-      c.get("userId"),
-      new Date().toISOString(),
-      "account_delete",
-      account.id,
-    );
+    // `detail` は他の記録と同じく JSON にそろえる（生の ID 文字列を混ぜない）
+    await audit(db, c.get("userId")!, "account_delete", { accountId: account.id });
     return c.json(ok({ deleted: true }));
   });
 

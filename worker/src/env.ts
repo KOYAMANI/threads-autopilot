@@ -19,6 +19,7 @@ export type Env = {
   SESSION_SECRET: string;
   ADMIN_SECRET?: string;
   RESEND_API_KEY?: string;
+  /** [vars]。差出人アドレス。空文字なら未設定として扱い `noreply@example.com` にする */
   MAIL_FROM?: string;
   /** [vars]。空文字なら未設定として扱う（秘密ではないので secret にしない） */
   VAPID_PUBLIC_KEY?: string;

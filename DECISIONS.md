@@ -441,3 +441,62 @@ SPEC §13 M6・§5.3・§7.7・§7.9・§9・§10.5・§12.3 Autopilot・§12.4 
   React Query のキャッシュを持ち越さない
 - 2026-09-06 診断は「押したら走る」ミューテーションにして、開いた時点で1回だけ自動実行する。
   6段のうち後半は実際に Threads API を叩くので、画面を開くたびに毎回走らせない
+
+---
+
+## M7 独立検証（2026-09-06）
+
+SPEC §5.4・§7.1・§7.8・§8.7・§12.3 Settings・§13 M7・§15 に対して、実装者とは別の
+コンテキストで採点した。**採点11項目のうち FAIL は1件**（監査ログ）。直したものは下記。
+
+- ビルド… `typecheck` / `test`（shared 85・worker 376）/ `build` / `check:bundle`（モック0件、
+  本番エントリと一時エントリの両方）/ `wrangler deploy --dry-run` すべて成功。
+  初回 JS は `index` 66.4KB + `react` 46.0KB = 112.4KB（gzip）で目安 300KB の内側
+- 複数アカウント… 3アカウント × 3リソース（dashboard の投稿と表示回数 / queue / autopilot の設定）で
+  分離を確認。4件目は `ACCOUNT_LIMIT`
+- 退会… 削除順は「子テーブル → `accounts` → `user_id` の6テーブル → `rate_events` →
+  `licenses` を revoked（`user_id=NULL`）→ `users`」。スキーマに `FOREIGN KEY` は1つも無いので
+  外部キー違反は起こり得ないが、順序自体は子から親で安全。`ACCOUNT_CHILD_TABLES` は
+  SPEC §7.1 の13テーブル（`click_weeks_done` を含む）と一致
+- CSV… 実際に `GET /api/export/:id` を叩いて確認。先頭3バイト `EF BB BF`、CRLF、21列、
+  `= + - @`（＋タブ・CR）始まりに `'` を足す、他人の accountId は 404、上限は
+  `ORDER BY posted_at DESC LIMIT 5000`（超過分は古い順に落ちる。買い手への通知は無い）
+- Web Push… **RFC 8291 §5 の公式テストベクタで独立に検証した**。既存の webpush.test.ts は
+  自前の暗号化と自前の復号の往復なので、`info` 文字列やヘッダの並びを両方同じように
+  間違えていても通ってしまう。RFC の暗号文をそのまま復号できることを見る1本を足した
+  （`worker/test/webpush-rfc8291-vector.test.ts`）。VAPID の `aud`（endpoint の origin）・
+  `exp`（12時間 ≤ 24時間）・`sub`（mailto:/https: を強制）、`vapid t=…, k=…`、
+  404/410 での購読削除、Push 本文にワンタイム URL を入れないことも確認
+- レート制限… `/ai/generate|revise|test` は `rate_events` の `ai:<user_id>` で1分10回。11回目が 429
+- セキュリティ… `accountId` を取る29ルートすべてが `loadOwnedAccount` を通る。
+  `sources` は `WHERE id=? AND user_id=?`。`console.*` は全て `redact()` / `redactEmail()` 経由
+  （`[email:dummy]` の全文出力だけは `!DEV` で先に return するので本番では到達しない）。
+  `dangerouslySetInnerHTML` は0件。`index.ts` が D1 に触らせるのは `/api/*` と `/a/*` だけ。
+  `.dev.vars` は `.gitignore` 済みで、履歴に実キーは無い（`THAA` / `sk-` / `AIza` / `re_` の
+  ヒットは `redact.ts` のパターンとモック用の `THAAdemo` だけ）
+
+**FAIL と修正**
+
+- 2026-09-06 **監査ログの `account_connect` と `license_issue` が実装されていなかった**。
+  `docs/qa.md` M7-7 の表と DECISIONS「M7 実装で決めたこと」は「アカウントの接続」「ライセンスの発行」も
+  記録すると書いており、`AuditAction` 型にも名前があるのに、書き込む側が無かった
+  （買い手の手元で QA チェックリストを上から追うと、この行だけ空になる）。
+  `POST /accounts` と `POST /admin/licenses` に追加し、テストで表の `action` を全件見るようにした。
+  `license_issue` の `detail` にキー本体は入れない — 監査ログを読める経路がそのまま在庫の流出になるため
+
+**検証中に直したもの（M7 の FAIL ではない）**
+
+- 2026-09-06 `wrangler.toml` の `[vars]` に `MAIL_FROM` が無かった。README「本番へのデプロイ」の
+  `[vars]` の表には載っているので、手順どおりに読むと「書き換える行が無い」。行を足したうえで、
+  `lib/email.ts` の既定値の判定を `??` から「空文字も未設定として扱う」に変えた
+  （`[vars]` は値を空文字で持つので、`??` だと空の差出人がそのまま Resend に行く）
+- 2026-09-06 `audit_log.detail` の形を JSON にそろえた。`account_delete` と `license_revoke` だけが
+  生の ID 文字列を入れており、`SELECT detail` を読むときに形が混ざっていた
+
+**残していること（FAIL ではないが把握しておく）**
+
+- `AuditAction` の `logout` と `account_refresh_token` は定義だけで書き込みが無い。
+  どちらも SPEC §13 M7 の要所にも qa.md の表にも無いので足していない
+- 退会は `audit_log` の過去行（その買い手の `login` / `export` 等）を消さない。SPEC §7.8 の
+  削除対象の表に `audit_log` は入っておらず、残る行に PII は無い（`login` は UA だけ）
+- CSV の 5,000 行上限に達したことは買い手に伝わらない。DECISIONS 済みの判断なので変えていない
