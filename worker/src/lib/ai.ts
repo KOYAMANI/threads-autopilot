@@ -115,6 +115,11 @@ export type BuildContextInput = {
   links: Array<{ label: string; url: string }>;
   instruction: string;
   n: number;
+  /**
+   * オートパイロットの生成（SPEC §10.3 の「User（オートパイロット）」）。
+   * 型はサーバー側の集計（§9.4-3）で決めてから渡す。AI に選ばせない。
+   */
+  fixedHook?: string | null;
 };
 
 /** 参考情報の上限（SPEC §10.2）。 */
@@ -166,9 +171,12 @@ export function buildContext(input: BuildContextInput): string {
     parts.push("# リンク\n" + input.links.map((l) => `${l.label}: ${l.url}`).join("\n"));
   }
   parts.push("# 指示\n" + (input.instruction.trim() === "" ? "（指定なし）" : input.instruction));
-  parts.push(
-    `型を変えて${input.n}案。型の候補: ${HOOK_TYPES.join(", ")}`,
-  );
+  if (input.fixedHook && input.fixedHook.trim() !== "") {
+    // 型・枠・ネタ源はサーバー側の集計で決まっている（SPEC §10.3 の AP プロンプト）
+    parts.push(`型は「${input.fixedHook.trim()}」に固定。この型で1案だけ返す。`);
+  } else {
+    parts.push(`型を変えて${input.n}案。型の候補: ${HOOK_TYPES.join(", ")}`);
+  }
   return parts.join("\n\n");
 }
 

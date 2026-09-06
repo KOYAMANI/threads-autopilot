@@ -17,6 +17,9 @@
  */
 import { buildTags, validatePost, type PostTags } from "@tap/shared";
 import { accountToken, loadAccount, type AccountRow } from "../lib/accounts";
+import { apLog, loadAutopilot } from "../lib/autopilot";
+import { sendEmail } from "../lib/email";
+import { notifyTargets } from "../lib/notify";
 import { buildUpsertChunks, type Db } from "../lib/db";
 import { redact } from "../lib/redact";
 import { enqueueJob, type JobContext, type RunningJob } from "../lib/jobs";
@@ -122,6 +125,68 @@ async function failQueue(
     errorRaw: raw,
     ...extra,
   });
+
+  // 失敗はメールで知らせる（SPEC §10.5 `publish_failed`）。自動投稿なら ap_log にも残し、
+  // 3連続で止める数（SPEC §9.6）を進める
+  const account = await ctx.db.first<{ username: string }>(
+    "SELECT username FROM accounts WHERE id=?",
+    row.account_id,
+  );
+  if (row.source === "autopilot") {
+    await ctx.db.run(
+      `INSERT INTO autopilot (account_id, consecutive_failures, updated_at) VALUES (?,1,?)
+         ON CONFLICT(account_id) DO UPDATE SET
+           consecutive_failures = consecutive_failures + 1, updated_at = excluded.updated_at`,
+      row.account_id,
+      ctx.now.toISOString(),
+    );
+    await apLog(ctx.db, row.account_id, "error", `投稿に失敗しました: ${message}`, row.id, ctx.now);
+    await stopIfTooManyFailures(ctx, row.account_id, account?.username ?? "", message);
+  }
+  const target = await notifyTargets(ctx.db, row.account_id);
+  if (target) {
+    await sendEmail(ctx.env, target.email, "publish_failed", {
+      username: account?.username ?? "",
+      reason: message,
+      ...(raw ? { raw } : {}),
+      appOrigin: ctx.env.APP_ORIGIN,
+    });
+  }
+}
+
+/** Threads 失敗3連続でオートパイロットを止める（SPEC §9.6）。 */
+async function stopIfTooManyFailures(
+  ctx: JobContext,
+  accountId: string,
+  username: string,
+  reason: string,
+): Promise<void> {
+  const row = await ctx.db.first<{ consecutive_failures: number; enabled: number }>(
+    "SELECT consecutive_failures, enabled FROM autopilot WHERE account_id=?",
+    accountId,
+  );
+  if (!row || !row.enabled || row.consecutive_failures < 3) return;
+  await ctx.db.run(
+    "UPDATE autopilot SET enabled=0, updated_at=? WHERE account_id=?",
+    ctx.now.toISOString(),
+    accountId,
+  );
+  await apLog(
+    ctx.db,
+    accountId,
+    "stopped",
+    "3回続けて失敗したので、オートパイロットを止めました",
+    null,
+    ctx.now,
+  );
+  const target = await notifyTargets(ctx.db, accountId);
+  if (target) {
+    await sendEmail(ctx.env, target.email, "ap_stopped", {
+      username,
+      reason,
+      appOrigin: ctx.env.APP_ORIGIN,
+    });
+  }
 }
 
 /* ── 直前チェック（SPEC §8.3） ─────────────────────── */
@@ -344,11 +409,14 @@ async function runStep(
       return "continue";
     }
 
+    // 手で書いた投稿（`manual`）は本文にリンクを置いてよい。見るのは空・500文字・
+    // リンク5本・NGワードだけ。オートパイロット経由（`autopilot`）は設定の
+    // `link_placement` と `ng_words` を効かせる（SPEC §9.6）
+    const ap = row.source === "autopilot" ? await loadAutopilot(ctx.db, account.id) : null;
     const check = validatePost(row.body, {
       comments,
-      // 本文にリンクを置くかどうかはキュー側の判断（AP の link_placement は M6）。
-      // ここでは本数と長さと空文字だけを見る
-      linkPlacement: "body",
+      linkPlacement: ap ? (ap.link_placement as "comment" | "body" | "none") : "body",
+      ...(ap ? { ngWords: ap.ng_words } : {}),
     });
     if (!check.ok) {
       await failQueue(ctx, row, check.issues[0]!.message, null);

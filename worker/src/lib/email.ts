@@ -7,8 +7,8 @@ import { redact, redactEmail } from "./redact";
 
 export type EmailTemplate =
   | "password_reset"
-  // 以下は M4 / M6 で実装する（テンプレ名だけ先に確定させておく）
   | "ap_draft"
+  | "ap_published"
   | "publish_failed"
   | "token_expiring"
   | "needs_reauth"
@@ -41,12 +41,29 @@ type Rendered = { subject: string; text: string };
 
 export type TemplateVars = {
   password_reset: { url: string; appOrigin: string };
-  ap_draft: Record<string, string>;
-  publish_failed: Record<string, string>;
-  token_expiring: Record<string, string>;
-  needs_reauth: Record<string, string>;
-  ap_stopped: Record<string, string>;
+  /** 自動投稿の下書き（SPEC §9.5）。`approveUrl` / `cancelUrl` は `/a/<token>`（ログイン不要） */
+  ap_draft: {
+    username: string;
+    when: string;
+    hook: string;
+    body: string;
+    mode: string;
+    approveUrl?: string;
+    cancelUrl?: string;
+    appOrigin: string;
+  };
+  ap_published: { username: string; when: string; body: string; appOrigin: string };
+  publish_failed: { username: string; reason: string; raw?: string; appOrigin: string };
+  token_expiring: { username: string; days: string; appOrigin: string };
+  needs_reauth: { username: string; appOrigin: string };
+  ap_stopped: { username: string; reason: string; appOrigin: string };
 };
+
+/** 本文を読みやすい長さに切る（メールに投稿の全文を貼らない）。 */
+function excerpt(text: string | undefined, max = 300): string {
+  const t = (text ?? "").trim();
+  return t.length > max ? `${t.slice(0, max)}…` : t;
+}
 
 function render(template: EmailTemplate, vars: Record<string, string>): Rendered {
   switch (template) {
@@ -66,11 +83,111 @@ function render(template: EmailTemplate, vars: Record<string, string>): Rendered
           vars.appOrigin ?? "",
         ].join("\n"),
       };
-    default:
-      // M4 / M6 で埋める。到達したら分かるように本文へ書く。
+    case "ap_draft": {
+      // 承認方式で意味が変わる（SPEC §9.5）。`manual` は承認しないと出ない、
+      // `cancel` は放っておくと出る。件名と1行目でどちらかが分かるようにする
+      const cancelMode = Boolean(vars.cancelUrl) && !vars.approveUrl;
+      const lines = [
+        cancelMode
+          ? `${vars.when ?? ""} に自動で投稿します。止めたいときだけ下のリンクを押してください。`
+          : `${vars.when ?? ""} の下書きができました。承認すると投稿します。`,
+        "",
+        `アカウント: ${vars.username ?? ""}`,
+        `型: ${vars.hook ?? ""}`,
+        "",
+        "--- 本文 ---",
+        excerpt(vars.body),
+        "------------",
+        "",
+      ];
+      if (vars.approveUrl) lines.push("承認して投稿する:", vars.approveUrl, "");
+      if (vars.cancelUrl) lines.push("取り消す:", vars.cancelUrl, "");
+      lines.push(
+        "リンクはログインしなくても開けます。1回だけ使えます。",
+        "",
+        vars.appOrigin ?? "",
+      );
       return {
-        subject: `【Threads オートパイロット】${template}`,
-        text: `このテンプレート（${template}）は未実装です。`,
+        subject: cancelMode
+          ? `【Threads オートパイロット】${vars.when ?? ""} に投稿します（取り消せます）`
+          : `【Threads オートパイロット】${vars.when ?? ""} の下書きを承認してください`,
+        text: lines.join("\n"),
+      };
+    }
+
+    case "ap_published":
+      return {
+        subject: "【Threads オートパイロット】自動投稿しました",
+        text: [
+          `${vars.when ?? ""} に自動で投稿しました。`,
+          "",
+          `アカウント: ${vars.username ?? ""}`,
+          "",
+          "--- 本文 ---",
+          excerpt(vars.body),
+          "------------",
+          "",
+          vars.appOrigin ?? "",
+        ].join("\n"),
+      };
+
+    case "publish_failed":
+      return {
+        subject: "【Threads オートパイロット】投稿に失敗しました",
+        text: [
+          `${vars.username ?? ""} の投稿に失敗しました。`,
+          "",
+          vars.reason ?? "",
+          ...(vars.raw ? ["", `Threads からの返答: ${vars.raw}`] : []),
+          "",
+          "キューの「失敗」タブから本文を直して出し直せます。",
+          "",
+          vars.appOrigin ?? "",
+        ].join("\n"),
+      };
+
+    case "token_expiring":
+      return {
+        subject: "【Threads オートパイロット】トークンの期限が近づいています",
+        text: [
+          `${vars.username ?? ""} のトークンが、あと${vars.days ?? ""}日で切れます。`,
+          "",
+          "設定からつなぎ直してください。切れると自動投稿も数字の取得も止まります。",
+          "",
+          vars.appOrigin ?? "",
+        ].join("\n"),
+      };
+
+    case "needs_reauth":
+      return {
+        subject: "【Threads オートパイロット】再接続が必要です",
+        text: [
+          `${vars.username ?? ""} のトークンが無効になりました。`,
+          "",
+          "設定からつなぎ直してください。つなぎ直すまで、自動投稿は止まります。",
+          "",
+          vars.appOrigin ?? "",
+        ].join("\n"),
+      };
+
+    case "ap_stopped":
+      return {
+        subject: "【Threads オートパイロット】オートパイロットを止めました",
+        text: [
+          `${vars.username ?? ""} のオートパイロットを止めました。`,
+          "",
+          `3回続けて失敗したためです。最後の理由: ${vars.reason ?? ""}`,
+          "",
+          "原因を直したら、自動の画面からもう一度オンにしてください。",
+          "",
+          vars.appOrigin ?? "",
+        ].join("\n"),
+      };
+
+    default:
+      return {
+        subject: `【Threads オートパイロット】${template as string}`,
+        text: `このテンプレート（${template as string}）は未実装です。`,
       };
   }
 }

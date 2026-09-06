@@ -9,6 +9,8 @@ import {
   type AccountRow,
 } from "../lib/accounts";
 import { encrypt } from "../lib/crypto";
+import { sendEmail } from "../lib/email";
+import { notifyTargets } from "../lib/notify";
 import type { JobContext, RunningJob } from "../lib/jobs";
 import { refreshLongLivedToken, type CallOptions } from "../lib/threads";
 import { DAY_MS } from "../lib/time";
@@ -17,7 +19,7 @@ import { DAY_MS } from "../lib/time";
 export const REFRESH_MIN_AGE_MS = 24 * 3600_000;
 /** 前回の延長からの最小間隔（週1）。 */
 export const REFRESH_INTERVAL_MS = 7 * DAY_MS;
-/** 残りがこれを切ったら通知対象（メール本体は M6）。 */
+/** 残りがこれを切ったら通知する（SPEC §8.6 / §10.5 `token_expiring`）。 */
 export const EXPIRY_WARN_DAYS = 7;
 
 export type TokenRefreshOutcome = "skipped" | "refreshed" | "not_long_lived" | "expiring";
@@ -47,7 +49,18 @@ export async function refreshAccountToken(
     : Number.POSITIVE_INFINITY;
 
   if (!force && (age < REFRESH_MIN_AGE_MS || sinceRefresh < REFRESH_INTERVAL_MS)) {
-    return remainingDays(account, nowMs) <= EXPIRY_WARN_DAYS ? "expiring" : "skipped";
+    const days = remainingDays(account, nowMs);
+    if (days > EXPIRY_WARN_DAYS) return "skipped";
+    // 残り7日を切ったら通知（SPEC §8.6）。ジョブは週1なので、送るのも週1になる
+    const target = await notifyTargets(ctx.db, account.id);
+    if (target) {
+      await sendEmail(ctx.env, target.email, "token_expiring", {
+        username: account.username,
+        days: String(Math.max(0, days)),
+        appOrigin: ctx.env.APP_ORIGIN,
+      });
+    }
+    return "expiring";
   }
 
   const token = await accountToken(ctx.env, account);

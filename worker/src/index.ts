@@ -1,12 +1,14 @@
 /**
  * Worker の入口（SPEC §2.1）。
  * - fetch:     /api/* を Hono、それ以外は Workers Static Assets（SPA）
- * - scheduled: Cron Triggers（SPEC §8.2）。中身は M2
+ * - /a/*:     メールからの承認/取消（SPEC §7.9。Cookie 非依存）
+ * - scheduled: Cron Triggers（SPEC §8.2）
  */
 import type { Env } from "./env";
 import { createApp } from "./app";
 import { createJobContext, enqueueForCron, runJobs } from "./lib/jobs";
 import { redact } from "./lib/redact";
+import { handleAction } from "./routes/action";
 
 const app = createApp();
 
@@ -18,14 +20,10 @@ export default {
       return app.fetch(request, env, ctx);
     }
 
-    // GET|POST /a/:token（メールからの承認/取消、SPEC §7.9）は M6 で実装する。
-    // それまでは SPA 側に落とさず、Worker がそのまま日本語のHTMLを返す。
+    // GET|POST /a/:token（メールからの承認/取消、SPEC §7.9）。
+    // Cookie を読まない専用経路なので Hono（/api の CSRF・セッション）には載せない。
     if (url.pathname.startsWith("/a/")) {
-      return new Response(
-        "<!doctype html><html lang=\"ja\"><meta charset=\"utf-8\"><title>準備中</title>" +
-          "<body style=\"font-family:system-ui;padding:2rem\"><p>この機能はまだ使えません。</p></body></html>",
-        { status: 503, headers: { "Content-Type": "text/html; charset=utf-8" } },
-      );
+      return handleAction(request, env);
     }
 
     if (env.ASSETS) return env.ASSETS.fetch(request);

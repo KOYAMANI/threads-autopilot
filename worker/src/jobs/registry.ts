@@ -1,7 +1,7 @@
 /**
  * ジョブ種別 → ハンドラの対応表（SPEC §8.2）。
  * `lib/jobs.ts` の `runJobs()` はこの表だけを見る。
- * `ap_plan` / `ap_notify` / `ap_score`（§9）は M6。
+ * `ap_plan` / `ap_notify` / `ap_score` は §9（M6）。
  */
 import type { JobHandler, JobType } from "../lib/jobs";
 import { dailyViewsJob, demographicsJob, followersJob } from "./account-metrics";
@@ -10,6 +10,9 @@ import { insightsJob } from "./insights";
 import { cleanupJob, tokenRefreshJob } from "./maintenance";
 import { publishJob } from "./publish";
 import { fullSyncJob } from "./sync";
+import { apPlanJob } from "./plan";
+import { apNotifyJob } from "./notify";
+import { apScoreJob } from "./score";
 
 export const HANDLERS: Partial<Record<JobType, JobHandler>> = {
   publish: publishJob,
@@ -23,4 +26,7 @@ export const HANDLERS: Partial<Record<JobType, JobHandler>> = {
   clicks: clicksJob,
   token_refresh: tokenRefreshJob,
   cleanup: cleanupJob,
+  ap_plan: apPlanJob,
+  ap_notify: apNotifyJob,
+  ap_score: apScoreJob,
 };

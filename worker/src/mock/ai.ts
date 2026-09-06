@@ -8,11 +8,16 @@
  * ブラウザでの確認とテストのためのものなので、実際のモデルの挙動は真似ない。
  */
 
-/** プロンプトから「型を変えて3案」の 3 を読む。 */
+/** プロンプトから「型を変えて3案」「この型で1案」の数を読む。 */
 function requestedCount(user: string): number {
-  const m = /型を変えて(\d+)案/.exec(user);
+  const m = /型を変えて(\d+)案/.exec(user) ?? /この型で(\d+)案/.exec(user);
   const n = m ? Number.parseInt(m[1] ?? "3", 10) : 3;
   return Math.min(5, Math.max(1, Number.isFinite(n) ? n : 3));
+}
+
+/** オートパイロットの生成（SPEC §10.3）は型が1つに固定されている。その型名を読む。 */
+function fixedHookOf(user: string): string | null {
+  return /型は「(.+?)」に固定/.exec(user)?.[1] ?? null;
 }
 
 function firstSection(user: string, heading: string): string {
@@ -95,10 +100,16 @@ export default function aiMockCall(input: MockAiInput): string {
 
   const n = requestedCount(input.user);
   const basisFrom = sourceTitle(input.user);
+  const fixed = fixedHookOf(input.user);
+  // オートパイロットは同じ枠に同じ本文が並ぶと重複判定（SPEC §8.3）で全部落ちるので、
+  // ネタ源の名前で本文をずらす。乱数は使わない（同じ入力からは同じ本文）。
+  const offset = fixed
+    ? [...basisFrom].reduce((acc, ch) => (acc + ch.codePointAt(0)!) % MOCK_BODIES.length, 0)
+    : 0;
   const candidates = Array.from({ length: n }, (_, i) => ({
-    hook: MOCK_HOOKS[i % MOCK_HOOKS.length]!,
-    body: MOCK_BODIES[i % MOCK_BODIES.length]!,
-    comments: MOCK_COMMENTS[i % MOCK_COMMENTS.length]!,
+    hook: fixed ?? MOCK_HOOKS[i % MOCK_HOOKS.length]!,
+    body: MOCK_BODIES[(i + offset) % MOCK_BODIES.length]!,
+    comments: MOCK_COMMENTS[(i + offset) % MOCK_COMMENTS.length]!,
     basis: `「${basisFrom}」の内容を使いました`,
   }));
   return JSON.stringify({ candidates });

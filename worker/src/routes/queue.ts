@@ -7,9 +7,17 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
-import { ok, suggestSlot, validatePost, type QueueItem, type SuggestSlotResponse } from "@tap/shared";
+import {
+  MIN_SAMPLES_LEARNING,
+  ok,
+  suggestSlot,
+  validatePost,
+  type QueueItem,
+  type SuggestSlotResponse,
+} from "@tap/shared";
 import { fail, type AppEnv } from "../app";
 import { loadOwnedAccount } from "../lib/accounts";
+import { recentAutoTags } from "../lib/autopilot";
 import { jobContextFrom } from "../lib/jobs";
 import { enqueuePublish } from "../jobs/publish";
 import {
@@ -138,6 +146,14 @@ export function queueRoutes() {
       "SELECT scheduled_at FROM queue WHERE account_id=? AND status IN ('scheduled','pending_approval','publishing') AND scheduled_at IS NOT NULL",
       account.id,
     );
+    // 実績（`learning` の `dim='slot'`）と直近の自動投稿を渡す。ここが AP の枠選択と
+    // 同じ関数（`suggestSlot`）を通るので、画面のおすすめと自動投稿の枠が一致する（SPEC §9.3）
+    const learned = await db.all<{ value: string; n: number; score_sum: number }>(
+      "SELECT value, n, score_sum FROM learning WHERE account_id=? AND dim='slot' AND n>=?",
+      account.id,
+      MIN_SAMPLES_LEARNING,
+    );
+    const recent = await recentAutoTags(db, account.id, 3);
     const settings = publishSettings(account);
     const body: SuggestSlotResponse = suggestSlot({
       nowMs: Date.now(),
@@ -148,7 +164,12 @@ export function queueRoutes() {
       taken: taken.map((t) => t.scheduled_at),
       dailyLimit: ap?.daily_limit ?? 1,
       minGapMin: settings.minGapMin,
-      // 実績（learning の dim='slot'）を渡すのは M6
+      history: learned.map((x) => ({
+        value: x.value,
+        n: x.n,
+        avgScore: x.n > 0 ? x.score_sum / x.n : 0,
+      })),
+      recentValues: recent.map((r) => r.slot).filter((v): v is string => v !== null),
     });
     return c.json(ok(body));
   });

@@ -32,6 +32,9 @@ export const JOB_TYPES = [
   "clicks",
   "token_refresh",
   "cleanup",
+  "ap_plan",
+  "ap_notify",
+  "ap_score",
 ] as const;
 
 export type JobType = (typeof JOB_TYPES)[number];
@@ -40,6 +43,9 @@ export type JobType = (typeof JOB_TYPES)[number];
 export const JOB_PRIORITY: Record<JobType, number> = {
   publish: 1,
   insights_recent: 3,
+  // ap_notify は「もう出る」と伝えるものなので、計画より先に届かせる
+  ap_notify: 3,
+  ap_plan: 4,
   full_sync: 4,
   token_refresh: 4,
   followers: 5,
@@ -48,6 +54,7 @@ export const JOB_PRIORITY: Record<JobType, number> = {
   insights_daily: 6,
   insights_old: 8,
   demographics: 8,
+  ap_score: 7,
   cleanup: 9,
 };
 
@@ -213,7 +220,8 @@ export async function enqueueForCron(ctx: JobContext, cron: string): Promise<voi
   if (cron === CRON_HOURLY) {
     for (const a of accounts) {
       await enqueueJob(ctx, "insights_recent", { accountId: a.id });
-      // ap_plan / ap_notify は M6
+      await enqueueJob(ctx, "ap_plan", { accountId: a.id });
+      await enqueueJob(ctx, "ap_notify", { accountId: a.id });
     }
     return;
   }
@@ -228,7 +236,7 @@ export async function enqueueForCron(ctx: JobContext, cron: string): Promise<voi
       await enqueueJob(ctx, "followers", { accountId: a.id });
       if (weekly) await enqueueJob(ctx, "demographics", { accountId: a.id });
       if (weekly) await enqueueJob(ctx, "token_refresh", { accountId: a.id });
-      // ap_score は M6
+      await enqueueJob(ctx, "ap_score", { accountId: a.id });
     }
     await enqueueJob(ctx, "cleanup");
   }
@@ -366,7 +374,7 @@ export async function runJobs(
         break;
       }
       if (isReauthError(e) && job.accountId) {
-        await markNeedsReauth(ctx.sys, job.accountId);
+        await markNeedsReauth(ctx.sys, job.accountId, ctx.env);
         await finish(ctx, job, "failed", describeError(e));
         result.failed++;
         continue;

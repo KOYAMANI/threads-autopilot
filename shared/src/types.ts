@@ -395,3 +395,97 @@ export type AiReviseRequest = {
 };
 
 export type AiReviseResponse = { candidate: AiCandidate };
+
+/* ── オートパイロット（SPEC §7.7 / §9） ─────────────── */
+
+export type ApprovalMode = "manual" | "cancel" | "auto";
+export type LinkPlacementSetting = "comment" | "body" | "none";
+export type ScoreWeightsSetting = "balanced" | "followers" | "clicks";
+
+/** `autopilot` の1行（SPEC §4）。画面はこの形で読み書きする。 */
+export type AutopilotSettings = {
+  accountId: string;
+  enabled: boolean;
+  /** 週あたり本数（1日1本=7, 1日2本=14, 週3本=3, 週5本=5） */
+  perWeek: number;
+  slotMode: "auto" | "fixed";
+  fixedHour: number | null;
+  approvalMode: ApprovalMode;
+  /** 取消可モードで、投稿の何時間前に通知するか */
+  approvalWindowH: number;
+  dailyLimit: number;
+  /** 0〜6時は出さない */
+  quietHours: boolean;
+  ngWords: string;
+  linkPlacement: LinkPlacementSetting;
+  hookMode: "auto" | "fixed";
+  fixedHook: string | null;
+  scoreWeights: ScoreWeightsSetting;
+  consecutiveFailures: number;
+  updatedAt: string | null;
+};
+
+/** ON にできない理由（SPEC §7.7 の4条件 / §12.3 のトースト）。 */
+export type AutopilotBlocker = "no_key" | "no_source" | "needs_reauth" | "license";
+
+export type AutopilotResponse = {
+  settings: AutopilotSettings;
+  /** ON にできるか。できないときは `blockers` に理由が並ぶ */
+  canEnable: boolean;
+  blockers: AutopilotBlocker[];
+  /** 画面のトーストに出す日本語（`blockers` と同じ並び） */
+  blockerMessages: string[];
+};
+
+export type PutAutopilotRequest = Partial<
+  Omit<AutopilotSettings, "accountId" | "consecutiveFailures" | "updatedAt">
+>;
+
+/** `GET /accounts/:id/autopilot/learning`（SPEC §7.7）。`n < 10` の行は数値が null。 */
+export type LearningRow = {
+  dim: "hook" | "slot" | "length" | "source";
+  value: string;
+  n: number;
+  avgScore: number | null;
+  avgViews: number | null;
+  likeRate: number | null;
+  /** `dim='source'` のときの参考情報のタイトル（消えていたら null） */
+  label: string | null;
+};
+
+export type LearningResponse = { rows: LearningRow[] };
+
+export type ApLogEntry = {
+  id: string;
+  at: string;
+  kind: string;
+  message: string;
+  refId: string | null;
+};
+
+export type ApLogResponse = { entries: ApLogEntry[] };
+
+/** `GET /accounts/:id/autopilot/next`（SPEC §7.7）。ApBar が読む。 */
+export type ApNextResponse = {
+  enabled: boolean;
+  item: QueueItem | null;
+  /** ApBar に出す1行（「次は 9/7 21:00。取消は 17:00 まで」など） */
+  summary: string;
+};
+
+/* ── 通知・Push（SPEC §7.8 / §12.4） ─────────────────── */
+
+export type PutNotificationsRequest = Partial<NotificationSettings>;
+
+export type NotificationsResponse = {
+  notifications: NotificationSettings;
+  /** Web Push の公開鍵（未設定なら null。画面は購読ボタンを出さない） */
+  vapidPublicKey: string | null;
+};
+
+export type PushSubscribeRequest = {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+};
+
+export type PushSubscribeResponse = { id: string };

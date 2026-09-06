@@ -24,6 +24,8 @@ import { linkRoutes } from "./routes/links";
 import { healthRoutes } from "./routes/health";
 import { sourceRoutes } from "./routes/sources";
 import { aiRoutes } from "./routes/ai";
+import { autopilotRoutes } from "./routes/autopilot";
+import { notificationRoutes, pushRoutes } from "./routes/notifications";
 
 export type Vars = {
   db: Db;
@@ -99,8 +101,11 @@ export function createApp() {
   app.route("/accounts", postRoutes());
   app.route("/accounts", queueRoutes());
   app.route("/accounts", linkRoutes());
+  app.route("/accounts", autopilotRoutes());
   app.route("/sources", sourceRoutes());
   app.route("/ai", aiRoutes());
+  app.route("/notifications", notificationRoutes());
+  app.route("/push", pushRoutes());
 
   app.notFound(() => fail("NOT_FOUND", "見つかりませんでした", 404));
 

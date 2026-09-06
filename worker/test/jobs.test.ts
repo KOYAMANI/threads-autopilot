@@ -150,13 +150,13 @@ describe("cron の投入（SPEC §8.2）", () => {
     expect(await countJobs()).toBe(before);
   });
 
-  it("毎時は insights_recent だけ", async () => {
+  it("毎時は insights_recent と ap_plan / ap_notify（SPEC §8.2）", async () => {
     const u = await registerUser();
     const accountId = await insertAccount({ userId: u.userId });
     const ctx = makeJobContext(env, { now: NOW });
     await enqueueForCron(ctx, "0 * * * *");
     const types = await jobTypes(accountId);
-    expect(types).toEqual(["insights_recent"]);
+    expect(types).toEqual(["ap_notify", "ap_plan", "insights_recent"]);
   });
 
   it("日次（平日）は週1ジョブを含まない", async () => {
@@ -166,7 +166,14 @@ describe("cron の投入（SPEC §8.2）", () => {
     const ctx = makeJobContext(env, { now: new Date("2026-09-09T18:00:00.000Z") });
     await enqueueForCron(ctx, "0 18 * * *");
     const types = await jobTypes(accountId);
-    expect(types).toEqual(["clicks", "daily_views", "followers", "full_sync", "insights_daily"]);
+    expect(types).toEqual([
+      "ap_score",
+      "clicks",
+      "daily_views",
+      "followers",
+      "full_sync",
+      "insights_daily",
+    ]);
     // cleanup はアカウントに紐づかない1本（他のテストが入れた account 付きのものは数えない）
     expect(await countJobs("type='cleanup' AND account_id IS NULL")).toBe(1);
   });

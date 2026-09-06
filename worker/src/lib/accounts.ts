@@ -4,6 +4,8 @@
  */
 import type { AccountSummary } from "@tap/shared";
 import type { Db } from "./db";
+import { sendEmail } from "./email";
+import { notifyTargets } from "./notify";
 import type { Env } from "../env";
 import { decrypt } from "./crypto";
 import { isTokenInvalid, ThreadsApiError } from "./threads-error";
@@ -67,9 +69,37 @@ export function parseSettings(account: AccountRow): Record<string, unknown> {
   }
 }
 
-/** code 190 を受けたらアカウントを needs_reauth にする（SPEC §6.1 / §8.6）。 */
-export async function markNeedsReauth(db: Db, accountId: string): Promise<void> {
-  await db.run("UPDATE accounts SET status='needs_reauth' WHERE id=? AND status<>'disabled'", accountId);
+/**
+ * code 190 を受けたらアカウントを `needs_reauth` にする（SPEC §6.1 / §8.6）。
+ * あわせてオートパイロットを一時停止し、`env` があればメールで知らせる（SPEC §8.6 / §10.5）。
+ * 状態が変わった回だけ送る（毎時のジョブが同じメールを繰り返さないように）。
+ */
+export async function markNeedsReauth(db: Db, accountId: string, env?: Env): Promise<void> {
+  const res = await db.run(
+    "UPDATE accounts SET status='needs_reauth' WHERE id=? AND status='ok'",
+    accountId,
+  );
+  if (res.changes === 0) return; // すでに needs_reauth か disabled。二度目は送らない
+
+  // needs_reauth のアカウントは計画しない（SPEC §9.6）。設定ごと止めて、
+  // つなぎ直したときに買い手が自分でオンに戻す
+  await db.run(
+    "UPDATE autopilot SET enabled=0, updated_at=? WHERE account_id=? AND enabled=1",
+    new Date().toISOString(),
+    accountId,
+  );
+  if (!env) return;
+  const account = await db.first<{ username: string }>(
+    "SELECT username FROM accounts WHERE id=?",
+    accountId,
+  );
+  const target = await notifyTargets(db, accountId);
+  if (target) {
+    await sendEmail(env, target.email, "needs_reauth", {
+      username: account?.username ?? "",
+      appOrigin: env.APP_ORIGIN,
+    });
+  }
 }
 
 export function isReauthError(e: unknown): boolean {
