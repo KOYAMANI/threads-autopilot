@@ -12,7 +12,8 @@ import Create from "./screens/Create";
 import Home from "./screens/Home";
 import Login from "./screens/Login";
 import Queue from "./screens/Queue";
-import { Autopilot, Settings } from "./screens/Placeholder";
+import { Autopilot } from "./screens/Placeholder";
+import Settings from "./screens/Settings";
 import { useMe } from "./api/auth";
 
 function Loading() {

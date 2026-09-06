@@ -1,7 +1,7 @@
 /**
  * M6〜M7 で作る画面の受け口（SPEC §13）。
  * タブから遷移できて、何がいつ来るかが分かる状態にしておく。
- * Create（M4 で最小フォーム）と Queue（M4）は本実装に移した。
+ * Create（M5）・Queue（M4）・Settings（M5 で AI の部分）は本実装に移した。
  */
 
 function Stub({ title, lead, note }: { title: string; lead: string; note: string }) {
@@ -28,12 +28,3 @@ export function Autopilot() {
   );
 }
 
-export function Settings() {
-  return (
-    <Stub
-      title="設定"
-      lead="アカウント・AIキー・通知・リンク・ライセンス（M5 / M7）"
-      note="AIキー（BYOK）は M5、診断・書き出し・退会は M7 で作ります。"
-    />
-  );
-}
