@@ -37,4 +37,5 @@ MAX_SUBREQUESTS = "300"
 MAX_DB_QUERIES = "800"
 JOB_TIME_BUDGET_MS = "20000"
 THREADS_MOCK = "0"
+AI_MOCK = "0"
 REPLY_TWO_STEP = "0"   # 1 にすると SPEC §8.3 のコメント投稿を3ステップ方式に切り替える

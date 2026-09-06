@@ -13,6 +13,7 @@ import { createDb, type Db } from "./lib/db";
 import { getSession, hasRequestedWith, readCookie, SESSION_COOKIE } from "./lib/session";
 import { redact } from "./lib/redact";
 import { ThreadsApiError, threadsReason } from "./lib/threads-error";
+import { AiError } from "./lib/ai";
 import { authRoutes } from "./routes/auth";
 import { adminRoutes } from "./routes/admin";
 import { accountRoutes } from "./routes/accounts";
@@ -21,6 +22,8 @@ import { postRoutes } from "./routes/posts";
 import { queueRoutes } from "./routes/queue";
 import { linkRoutes } from "./routes/links";
 import { healthRoutes } from "./routes/health";
+import { sourceRoutes } from "./routes/sources";
+import { aiRoutes } from "./routes/ai";
 
 export type Vars = {
   db: Db;
@@ -96,6 +99,8 @@ export function createApp() {
   app.route("/accounts", postRoutes());
   app.route("/accounts", queueRoutes());
   app.route("/accounts", linkRoutes());
+  app.route("/sources", sourceRoutes());
+  app.route("/ai", aiRoutes());
 
   app.notFound(() => fail("NOT_FOUND", "見つかりませんでした", 404));
 
@@ -103,6 +108,12 @@ export function createApp() {
     if (err instanceof ThreadsApiError) {
       // Threads の失敗は、日本語＋原文をそのままユーザーに見せる（SPEC §2.4 / §6.2）
       return fail("THREADS_ERROR", threadsReason(err.toThreadsError()), 502);
+    }
+    if (err instanceof AiError) {
+      // キー未設定は 400、応答が読めない・呼べないは 502（外部の失敗）
+      const status = err.code === "AI_KEY_REQUIRED" ? 400 : 502;
+      if (err.raw) console.error(`[ai] ${err.code}: ${redact(err.raw)}`);
+      return fail(err.code, err.message, status);
     }
     if (err instanceof BudgetExceeded) {
       console.error(`[api] budget exceeded: ${err.kind} ${err.used}/${err.limit}`);

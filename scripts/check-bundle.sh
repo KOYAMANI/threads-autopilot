@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# 本番バンドルに Threads モック（worker/src/mock/*）が入っていないことを確かめる（SPEC §11）。
+# 本番バンドルにモック（worker/src/mock/*）が入っていないことを確かめる（SPEC §11）。
+# 対象は Threads のモック（mock/threads.ts）と AI のモック（mock/ai.ts、M5）の両方。
 #
 #   ./scripts/check-bundle.sh
 #
@@ -30,6 +31,8 @@ trap cleanup EXIT
 
 # mock/threads.ts にしか無い識別子
 MARKERS=(SEED_TEXTS "Unsupported mock path" MockThreadsError mockCall callMock seedStore storeFor metricsFor resetMock "mock/threads")
+# mock/ai.ts にしか無い識別子（M5）
+MARKERS+=(MOCK_BODIES MOCK_COMMENTS MOCK_HOOKS aiMockCall requestedCount sourceTitle "mock/ai")
 
 # $1=ラベル $2=エントリ（空なら wrangler.toml の main） $3=出力ディレクトリ
 check_entry() {
@@ -52,12 +55,17 @@ check_entry() {
   fi
   echo "  バンドル: $(basename "$bundle") ($(wc -c < "$bundle" | tr -d ' ') bytes)"
 
-  # call() が実際にバンドルへ入っていること（＝到達可能な状態で検査できていること）
+  # call() / callAi() が実際にバンドルへ入っていること（＝到達可能な状態で検査できていること）
   if ! grep -q 'graph.threads.net' "$bundle"; then
     echo "✗ call() がバンドルに入っていません。この検査は無意味なので中止します"
     return 1
   fi
   echo "  call() は到達可能（graph.threads.net あり）"
+  if ! grep -q 'generativelanguage.googleapis.com' "$bundle"; then
+    echo "✗ lib/ai.ts がバンドルに入っていません。この検査は無意味なので中止します"
+    return 1
+  fi
+  echo "  callAi() は到達可能（generativelanguage.googleapis.com あり）"
 
   local found=0 n
   for m in "${MARKERS[@]}"; do
@@ -72,7 +80,7 @@ check_entry() {
 # 1. 本番エントリ（wrangler.toml の main）
 mkdir -p "$OUT/main"
 if ! check_entry "本番エントリ (worker/src/index.ts)" "" "$OUT/main"; then
-  echo "✗ NG: モックが本番バンドルに入っています（lib/threads.ts の分岐に __DEV__ を直接書くこと）"
+  echo "✗ NG: モックが本番バンドルに入っています（lib/threads.ts と lib/ai.ts の分岐に __DEV__ を直接書くこと）"
   exit 1
 fi
 
@@ -83,20 +91,34 @@ cat > "$ROOT/$PROBE" <<'PROBE_EOF'
 // __DEV__=false のとき mock/ が消えることを確かめるためだけに存在する。
 import { createBudget } from "./lib/budget";
 import { call } from "./lib/threads";
+import { generateRaw } from "./lib/ai";
 import type { Env } from "./env";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const token = new URL(request.url).searchParams.get("t") ?? "";
-    const data = await call(token, "GET", "/me", { fields: "id" }, { budget: createBudget({}), env });
-    return Response.json(data);
+    const budget = createBudget({});
+    const data = await call(token, "GET", "/me", { fields: "id" }, { budget, env });
+    const text = await generateRaw(
+      env,
+      {
+        provider: "gemini",
+        model: "gemini-2.5-flash",
+        apiKey: token,
+        system: "s",
+        user: "u",
+        appOrigin: env.APP_ORIGIN,
+      },
+      { budget },
+    );
+    return Response.json({ data, text });
   },
 };
 PROBE_EOF
 
 mkdir -p "$OUT/probe"
 if ! check_entry "一時エントリ ($PROBE)" "$PROBE" "$OUT/probe"; then
-  echo "✗ NG: モックが本番バンドルに入っています（lib/threads.ts の分岐に __DEV__ を直接書くこと）"
+  echo "✗ NG: モックが本番バンドルに入っています（lib/threads.ts と lib/ai.ts の分岐に __DEV__ を直接書くこと）"
   exit 1
 fi
 

@@ -27,6 +27,10 @@ export type ErrorCode =
   | "VALIDATION"
   | "BUDGET_EXCEEDED"
   | "THREADS_ERROR"
+  | "AI_KEY_REQUIRED"
+  | "AI_BAD_OUTPUT"
+  | "AI_FAILED"
+  | "EXTRACT_FAILED"
   | "INTERNAL";
 
 /* ── 認証（SPEC §5.1 / §7） ──────────────────────────── */
@@ -286,3 +290,108 @@ export type QueueItemResponse = { item: QueueItem };
 
 /** `GET /accounts/:id/queue/suggest-slot`（SPEC §7.4 / §9.3）。 */
 export type SuggestSlotResponse = { at: string; reason: string; n: number };
+
+/* ── 参考情報（SPEC §7.5 / §10.4） ───────────────────── */
+
+export type SourceType = "text" | "youtube" | "file" | "url";
+
+/** `sources` 1件。`content` は一覧では先頭だけ返す（`contentPreview`）。 */
+export type SourceSummary = {
+  id: string;
+  type: SourceType;
+  title: string;
+  url: string | null;
+  charCount: number;
+  contentPreview: string;
+  enabledForAp: boolean;
+  lastUsedAt: string | null;
+  useCount: number;
+  createdAt: string;
+};
+
+export type SourceListResponse = { sources: SourceSummary[] };
+export type SourceItemResponse = { source: SourceSummary };
+
+export type CreateSourceRequest = {
+  type: SourceType;
+  title?: string;
+  url?: string;
+  /** `text` / `file` は必須。`url` はサーバーで抽出、`youtube` は空でよい */
+  content?: string;
+};
+
+export type PatchSourceRequest = {
+  title?: string;
+  content?: string;
+  enabledForAp?: boolean;
+};
+
+/* ── AI（SPEC §7.6 / §10） ──────────────────────────── */
+
+export type AiProvider = "gemini" | "openrouter";
+
+export const AI_DEFAULT_MODEL: Record<AiProvider, string> = {
+  gemini: "gemini-2.5-flash",
+  openrouter: "anthropic/claude-sonnet-4.6",
+};
+
+/** `GET /ai/settings` / `PUT /ai/settings` の応答（SPEC §7.6）。 */
+export type AiSettingsResponse = {
+  provider: AiProvider | null;
+  model: string | null;
+  hasKey: boolean;
+  storeOnServer: boolean;
+  /** `storeOnServer=false` なら false。サーバーが自動生成のときにキーを読めないため */
+  autopilotAvailable: boolean;
+};
+
+export type PutAiSettingsRequest = {
+  provider: AiProvider;
+  key?: string;
+  model?: string;
+  storeOnServer: boolean;
+};
+
+export type AiTestRequest = { clientKey?: string };
+export type AiTestResponse = { ok: true; model: string; latencyMs: number };
+
+/** 1案（SPEC §7.6 / §10.3）。`key` は案A / 案B / 案C の識別子。 */
+export type AiCandidate = {
+  key: string;
+  hook: string;
+  body: string;
+  comments: string[];
+  basis: string;
+};
+
+export type AiPickMode = "template" | "rewrite";
+
+export type AiGenerateRequest = {
+  accountId: string;
+  picks?: string[];
+  pickMode?: AiPickMode;
+  sourceIds?: string[];
+  instruction?: string;
+  n?: number;
+  /** ブラウザ保存モードのときだけ付く。サーバーに保存しない */
+  clientKey?: string;
+};
+
+export type AiGenerateResponse = {
+  candidates: AiCandidate[];
+  /** OpenRouter に YouTube を渡せないときなど、画面に出す案内 */
+  notes: string[];
+};
+
+/** 会話履歴（SPEC §7.6 の `history`）。 */
+export type AiHistoryTurn = { role: "user" | "assistant"; text: string };
+
+export type AiReviseRequest = {
+  accountId: string;
+  candidate: AiCandidate;
+  instruction: string;
+  history?: AiHistoryTurn[];
+  clientKey?: string;
+};
+
+export type AiReviseResponse = { candidate: AiCandidate };

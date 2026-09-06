@@ -11,6 +11,8 @@ export type Env = {
   JOB_TIME_BUDGET_MS: string;
   THREADS_MOCK: string;
   REPLY_TWO_STEP: string;
+  /** AI 呼び出しのモック（SPEC §11 と同じ DEV ガード）。`1` で `mock/ai.ts` を使う */
+  AI_MOCK?: string;
 
   // secrets（SPEC §3.2）。開発は .dev.vars
   ENC_KEY: string;
