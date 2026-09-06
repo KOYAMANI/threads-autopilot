@@ -20,6 +20,24 @@ function firstSection(user: string, heading: string): string {
   return (re.exec(user)?.[1] ?? "").trim();
 }
 
+/**
+ * 指示だけを取る。`buildRevisePrompt` は `# 指示` の後ろに見出しなしの一文
+ * （「この1案だけを直して…」）を足すので、空行までで切る。
+ */
+function instructionOf(user: string): string {
+  return firstSection(user, "指示").split("\n\n")[0]!.trim();
+}
+
+/** 前回のモック注記を消す。何度直しても本文が積み上がらないようにする。 */
+function stripMockNote(body: string): string {
+  return body
+    .split("\n")
+    .filter((line) => !/^（.*を反映しました）$/.test(line.trim()))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 /** 参考情報の見出し（`## タイトル`）を1つ拾って basis に使う。 */
 function sourceTitle(user: string): string {
   const block = firstSection(user, "参考情報（ここに無いことを事実として書かない）");
@@ -52,7 +70,7 @@ export default function aiMockCall(input: MockAiInput): string {
   // revise は1案だけ返す（直前の案の本文の先頭に指示を織り込んだ体で差し替える）
   const isRevise = input.user.includes("# 直前の案");
   if (isRevise) {
-    const instruction = firstSection(input.user, "指示");
+    const instruction = instructionOf(input.user);
     let prev: { hook?: string; body?: string; comments?: string[] } = {};
     const block = /# 直前の案\n([\s\S]*?)(?:\n\n# |$)/.exec(input.user)?.[1] ?? "";
     try {
@@ -60,11 +78,14 @@ export default function aiMockCall(input: MockAiInput): string {
     } catch {
       prev = {};
     }
+    const lines = stripMockNote(prev.body ?? MOCK_BODIES[0]!).split("\n");
+    const head = lines[0] ?? "";
+    const rest = lines.slice(1).join("\n").trim();
     return JSON.stringify({
       candidates: [
         {
           hook: prev.hook ?? "呼びかけ型",
-          body: `${(prev.body ?? MOCK_BODIES[0]!).split("\n")[0]}\n\n（${instruction || "指示なし"}を反映しました）\n${(prev.body ?? MOCK_BODIES[0]!).split("\n").slice(1).join("\n")}`.trim(),
+          body: `${head}\n\n（${instruction || "指示なし"}を反映しました）\n\n${rest}`.trim(),
           comments: prev.comments ?? MOCK_COMMENTS[0]!,
           basis: "直前の案を指示どおりに直しました",
         },

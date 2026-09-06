@@ -172,12 +172,13 @@ export default function Create() {
     return true;
   }
 
-  /** 生成に使った材料を、あとで辿れるようにキューへ持たせる（SPEC §7.4）。 */
+  /**
+   * 生成に使った材料を、あとで辿れるようにキューへ持たせる（SPEC §7.4）。
+   * `originPostId` は選んだ投稿の先頭（オートパイロットの §9.4-5「文体見本の先頭」と同じ）。
+   * 型・リライトのどちらでも同じ意味で入れる。
+   */
   function provenance() {
-    return {
-      originPostId: pickMode === "rewrite" ? (picks[0] ?? null) : (picks[0] ?? null),
-      sourceIds,
-    };
+    return { originPostId: picks[0] ?? null, sourceIds };
   }
 
   function saveDraft() {
