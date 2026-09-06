@@ -29,6 +29,8 @@ export default defineConfig(async () => {
             ENC_KEY: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
             SESSION_SECRET: "test-session-secret-test-session-secret-0123",
             ADMIN_SECRET: "test-admin-secret",
+            // Web Push の連絡先（RFC 8292 の `sub`）。鍵はテストごとに作って env を差し替える
+            VAPID_SUBJECT: "mailto:push@example.com",
           },
         },
       }),

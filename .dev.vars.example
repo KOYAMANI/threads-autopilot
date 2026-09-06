@@ -27,10 +27,15 @@ MAIL_FROM=
 #   openssl ecparam -name prime256v1 -genkey -noout -out vapid.pem \
 #     && openssl ec -in vapid.pem -pubout -outform DER | tail -c 65 | base64 | tr '+/' '-_' | tr -d '=\n'   # 公開鍵
 #     && openssl ec -in vapid.pem -outform DER | tail -c +8 | head -c 32 | base64 | tr '+/' '-_' | tr -d '=\n' # 秘密鍵
-# 公開鍵はブラウザに渡すので秘密ではない。秘密鍵は wrangler secret put で入れる。
-# 実際の送信は M7（DECISIONS.md 2026-09-06）。M6 は購読の登録・解除までを作る。
+# 公開鍵はブラウザに渡すので秘密ではない（本番は wrangler.toml の [vars] に置く）。
+# 秘密鍵だけ wrangler secret put で入れる。
+#
+# VAPID_SUBJECT は RFC 8292 の `sub`。Push サービスが配信を止めるときの連絡先で、
+# **mailto: か https: で始める必要がある**。空なら APP_ORIGIN を使うが、開発の
+# http://localhost:5173 はどちらでもないので、ローカルで Push を試すなら必ず入れる。
 VAPID_PUBLIC_KEY=
 VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=
 
 # 開発時のモック（SPEC §11）。1 で有効、DEV ビルドのときだけ効く（本番バンドルには入らない）
 #   THREADS_MOCK=1 … Threads API のモック（トークンが THAAdemo で始まるときだけ）

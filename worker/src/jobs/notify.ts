@@ -9,12 +9,17 @@
  *
  * 承認・取消のリンクは §7.9 の `{APP_ORIGIN}/a/<token>`。ログイン状態に関係なく踏める
  * URL であることが要件（`SameSite=Strict` の Cookie はメールからの遷移に付かない）。
- * Web Push は M7（DECISIONS に理由）。
+ *
+ * M7 から、メールと**並行**して Web Push も送る（`push_enabled=1` の購読だけ）。
+ * Push には承認/取消のワンタイム URL を**入れない** — 通知は端末のロック画面にも出るし、
+ * ペイロードは購読ごとの鍵で暗号化されるとはいえ、押すだけで確定できる URL を
+ * 通知の中に置く必要はない。Push はアプリのキュー画面へ誘導するだけにして、
+ * 実際の承認・取消はアプリかメールのリンクで行わせる。
  */
 import { apLog } from "../lib/autopilot";
 import { sendEmail } from "../lib/email";
 import type { JobContext, RunningJob } from "../lib/jobs";
-import { actionUrl, notifyTargets } from "../lib/notify";
+import { actionUrl, notifyTargets, pushToUser } from "../lib/notify";
 import { formatSlot } from "./plan";
 
 /** 1回の実行で送る上限（暴走ガード）。 */
@@ -99,6 +104,11 @@ export async function notifyAccount(ctx: JobContext, accountId: string): Promise
         body: row.body,
         appOrigin: ctx.env.APP_ORIGIN,
       });
+      await pushToUser(ctx.env, ctx.db, target.userId, {
+        title: `@${account.username} に自動投稿しました`,
+        body: `${when} / ${row.body.slice(0, 60)}`,
+        url: "/app/queue",
+      });
     } else {
       const nowMs = ctx.now.getTime();
       const cancelUrl = await actionUrl(ctx.env, {
@@ -125,6 +135,18 @@ export async function notifyAccount(ctx: JobContext, accountId: string): Promise
         ...(approveUrl ? { approveUrl } : {}),
         cancelUrl,
         appOrigin: ctx.env.APP_ORIGIN,
+      });
+      // Push にはワンタイム URL を入れず、アプリのキューへ誘導するだけにする（上のコメント）
+      await pushToUser(ctx.env, ctx.db, target.userId, {
+        title:
+          row.approval_mode === "manual"
+            ? `@${account.username} の下書きを承認してください`
+            : `@${account.username} に ${when} 投稿します`,
+        body:
+          row.approval_mode === "manual"
+            ? `${when} / ${row.body.slice(0, 60)}`
+            : `取り消すならアプリから。${row.body.slice(0, 50)}`,
+        url: "/app/queue",
       });
     }
 

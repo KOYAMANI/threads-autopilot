@@ -20,7 +20,10 @@ export type Env = {
   ADMIN_SECRET?: string;
   RESEND_API_KEY?: string;
   MAIL_FROM?: string;
+  /** [vars]。空文字なら未設定として扱う（秘密ではないので secret にしない） */
   VAPID_PUBLIC_KEY?: string;
+  /** [vars]。RFC 8292 の `sub`（mailto: か https:）。空なら APP_ORIGIN を使う */
+  VAPID_SUBJECT?: string;
   VAPID_PRIVATE_KEY?: string;
 };
 

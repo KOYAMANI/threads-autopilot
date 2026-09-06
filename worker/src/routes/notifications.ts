@@ -14,6 +14,13 @@ import { ok, type NotificationSettings } from "@tap/shared";
 import { fail, type AppEnv } from "../app";
 import { encrypt } from "../lib/crypto";
 import type { Db } from "../lib/db";
+import type { Env } from "../env";
+
+/** 空文字（wrangler.toml の [vars] の既定）は「未設定」として null に寄せる。 */
+function vapidPublicKey(env: Env): string | null {
+  const v = (env.VAPID_PUBLIC_KEY ?? "").trim();
+  return v === "" ? null : v;
+}
 
 const putSchema = z.object({
   emailEnabled: z.boolean().optional(),
@@ -54,7 +61,8 @@ export function notificationRoutes() {
     return c.json(
       ok({
         notifications: settings,
-        vapidPublicKey: c.env.VAPID_PUBLIC_KEY ?? null,
+        // [vars] は空文字で入ることがある。画面は「未設定」と同じに見せたいので null に寄せる
+        vapidPublicKey: vapidPublicKey(c.env),
       }),
     );
   });
@@ -90,7 +98,7 @@ export function notificationRoutes() {
       new Date().toISOString(),
     );
     return c.json(
-      ok({ notifications: next, vapidPublicKey: c.env.VAPID_PUBLIC_KEY ?? null }),
+      ok({ notifications: next, vapidPublicKey: vapidPublicKey(c.env) }),
     );
   });
 

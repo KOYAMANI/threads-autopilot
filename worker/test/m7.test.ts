@@ -8,15 +8,19 @@
  * 5. `/ai/generate` の回数制限（1分10回）
  * 6. アカウント上限3件、削除
  * 7. `daily_digest`（`digest_hour` の時刻にだけ送り、同じ日に二度送らない）
+ * 8. Web Push の配線（鍵が無ければ送らない・`push_enabled` の判定・410 で行を消す・
+ *    送ったボディが購読者の鍵で復号でき、承認URLを含まない）
  */
 import { env } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CSV_HEADERS, csvCell, formatCsvDate } from "../src/routes/export";
 import { USER_TABLES } from "../src/routes/users";
 import { ACCOUNT_CHILD_TABLES } from "../src/lib/accounts";
 import { runDigest, previousDayRange, tzDateAndHour } from "../src/jobs/digest";
 import { makeJobContext } from "../src/lib/jobs";
 import { clearOutbox, getOutbox } from "../src/lib/email";
+import { pushToUser } from "../src/lib/notify";
+import { decryptPayload, generateVapidKeys } from "../src/lib/webpush";
 import { api, countRows, insertAccount, registerUser, testDb } from "./helpers";
 import { createApp } from "../src/app";
 
@@ -433,5 +437,196 @@ describe("daily_digest（notifications.digest_hour）", () => {
     expect(
       getOutbox().filter((m) => m.template === "daily_digest" && m.to === user.email),
     ).toHaveLength(0);
+  });
+});
+
+/* ── 7. Web Push の実送信の配線（M7） ───────────────── */
+
+describe("pushToUser（lib/notify.ts）", () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  /** 購読を1件作って `push_subscriptions` に暗号化して入れる（`POST /push/subscribe` と同じ形）。 */
+  async function subscribe(cookie: string): Promise<string> {
+    const pair = (await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, [
+      "deriveBits",
+    ])) as CryptoKeyPair;
+    const raw = new Uint8Array(
+      (await crypto.subtle.exportKey("raw", pair.publicKey)) as ArrayBuffer,
+    );
+    const b64u = (b: Uint8Array) =>
+      btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const endpoint = `https://push.example.com/send/${crypto.randomUUID()}`;
+    const res = await api("POST", "/api/push/subscribe", {
+      cookie,
+      body: {
+        endpoint,
+        keys: { p256dh: b64u(raw), auth: b64u(crypto.getRandomValues(new Uint8Array(16))) },
+      },
+    });
+    expect(res.status).toBe(201);
+    return endpoint;
+  }
+
+  const withVapid = async () => ({
+    ...env,
+    VAPID_PUBLIC_KEY: (await generateVapidKeys()).publicKey,
+    VAPID_PRIVATE_KEY: (await generateVapidKeys()).privateKey,
+  });
+
+  it("鍵が無ければ何もしない", async () => {
+    const user = await registerUser();
+    let called = 0;
+    globalThis.fetch = (async () => {
+      called++;
+      return new Response(null, { status: 201 });
+    }) as typeof fetch;
+    const out = await pushToUser({ ...env, VAPID_PUBLIC_KEY: "", VAPID_PRIVATE_KEY: "" }, testDb(), user.userId, {
+      title: "t",
+      body: "b",
+    });
+    expect(out).toEqual({ sent: 0, removed: 0 });
+    expect(called).toBe(0);
+  });
+
+  it("push_enabled=0 なら送らない。1 なら送る", async () => {
+    const user = await registerUser();
+    await subscribe(user.cookie);
+    const keys = await generateVapidKeys();
+    const e = { ...env, VAPID_PUBLIC_KEY: keys.publicKey, VAPID_PRIVATE_KEY: keys.privateKey };
+
+    let called = 0;
+    globalThis.fetch = (async () => {
+      called++;
+      return new Response(null, { status: 201 });
+    }) as typeof fetch;
+
+    // 既定は push_enabled=0
+    expect(await pushToUser(e, testDb(), user.userId, { title: "t", body: "b" })).toEqual({
+      sent: 0,
+      removed: 0,
+    });
+    expect(called).toBe(0);
+
+    await api("PUT", "/api/notifications", { cookie: user.cookie, body: { pushEnabled: true } });
+    expect(await pushToUser(e, testDb(), user.userId, { title: "t", body: "b" })).toEqual({
+      sent: 1,
+      removed: 0,
+    });
+    expect(called).toBe(1);
+  });
+
+  it("410 が返った購読は行ごと消す", async () => {
+    const user = await registerUser();
+    await subscribe(user.cookie);
+    await api("PUT", "/api/notifications", { cookie: user.cookie, body: { pushEnabled: true } });
+    const keys = await generateVapidKeys();
+    const e = { ...env, VAPID_PUBLIC_KEY: keys.publicKey, VAPID_PRIVATE_KEY: keys.privateKey };
+
+    globalThis.fetch = (async () => new Response(null, { status: 410 })) as typeof fetch;
+    const out = await pushToUser(e, testDb(), user.userId, { title: "t", body: "b" });
+    expect(out).toEqual({ sent: 0, removed: 1 });
+    expect(await countRows("push_subscriptions", "user_id=?", user.userId)).toBe(0);
+  });
+
+  it("500 は行を残して fail_count を進める", async () => {
+    const user = await registerUser();
+    await subscribe(user.cookie);
+    await api("PUT", "/api/notifications", { cookie: user.cookie, body: { pushEnabled: true } });
+    const keys = await generateVapidKeys();
+    const e = { ...env, VAPID_PUBLIC_KEY: keys.publicKey, VAPID_PRIVATE_KEY: keys.privateKey };
+
+    globalThis.fetch = (async () => new Response(null, { status: 500 })) as typeof fetch;
+    await pushToUser(e, testDb(), user.userId, { title: "t", body: "b" });
+    const row = await testDb().first<{ fail_count: number; last_error_at: string | null }>(
+      "SELECT fail_count, last_error_at FROM push_subscriptions WHERE user_id=?",
+      user.userId,
+    );
+    expect(row?.fail_count).toBe(1);
+    expect(row?.last_error_at).not.toBeNull();
+  });
+
+  it("送ったボディは購読者の鍵で復号でき、承認URLを含まない", async () => {
+    const user = await registerUser();
+    // 購読者側の鍵をこちらで持っておく
+    const pair = (await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, [
+      "deriveBits",
+    ])) as CryptoKeyPair;
+    const raw = new Uint8Array(
+      (await crypto.subtle.exportKey("raw", pair.publicKey)) as ArrayBuffer,
+    );
+    const privateJwk = (await crypto.subtle.exportKey("jwk", pair.privateKey)) as JsonWebKey;
+    const authSecret = crypto.getRandomValues(new Uint8Array(16));
+    const b64u = (b: Uint8Array) =>
+      btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    await api("POST", "/api/push/subscribe", {
+      cookie: user.cookie,
+      body: {
+        endpoint: "https://push.example.com/send/roundtrip",
+        keys: { p256dh: b64u(raw), auth: b64u(authSecret) },
+      },
+    });
+    await api("PUT", "/api/notifications", { cookie: user.cookie, body: { pushEnabled: true } });
+
+    const keys = await generateVapidKeys();
+    const e = { ...env, VAPID_PUBLIC_KEY: keys.publicKey, VAPID_PRIVATE_KEY: keys.privateKey };
+
+    let body: Uint8Array | null = null;
+    let auth = "";
+    globalThis.fetch = (async (_url: unknown, init: RequestInit) => {
+      body = new Uint8Array(init.body as ArrayBuffer);
+      auth = String((init.headers as Record<string, string>).Authorization ?? "");
+      return new Response(null, { status: 201 });
+    }) as unknown as typeof fetch;
+
+    await pushToUser(e, testDb(), user.userId, {
+      title: "下書きを承認してください",
+      body: "9/11 21:00",
+      url: "/app/queue",
+    });
+
+    expect(auth).toMatch(/^vapid t=[\w-]+\.[\w-]+\.[\w-]+, k=[\w-]+$/);
+    const plain = await decryptPayload(body!, privateJwk, authSecret);
+    const parsed = JSON.parse(plain) as { title: string; url: string };
+    expect(parsed.title).toBe("下書きを承認してください");
+    expect(parsed.url).toBe("/app/queue");
+    // ワンタイムの承認/取消 URL は入れない（jobs/notify.ts のコメント）
+    expect(plain).not.toContain("/a/");
+  });
+});
+
+/* ── 9. VAPID の連絡先が使えないときは送らない（M7） ── */
+
+describe("VAPID subject（RFC 8292）", () => {
+  it("http:// の APP_ORIGIN しか無ければ送らない（mailto: か https: が要る）", async () => {
+    const user = await registerUser();
+    await api("PUT", "/api/notifications", { cookie: user.cookie, body: { pushEnabled: true } });
+    const keys = await generateVapidKeys();
+    let called = 0;
+    const real = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      called++;
+      return new Response(null, { status: 201 });
+    }) as typeof fetch;
+    try {
+      const out = await pushToUser(
+        {
+          ...env,
+          VAPID_PUBLIC_KEY: keys.publicKey,
+          VAPID_PRIVATE_KEY: keys.privateKey,
+          VAPID_SUBJECT: "",
+          APP_ORIGIN: "http://localhost:5173",
+        },
+        testDb(),
+        user.userId,
+        { title: "t", body: "b" },
+      );
+      expect(out).toEqual({ sent: 0, removed: 0 });
+      expect(called).toBe(0);
+    } finally {
+      globalThis.fetch = real;
+    }
   });
 });

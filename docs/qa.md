@@ -767,3 +767,201 @@ console.log(s.match(/denylist:\[[^\]]*\]/)?.[0]);
 | 実キーでの `ap_plan` の生成品質 | 実キーが用意できた時点 |
 | 実端末（iOS / Android）でのホーム画面追加と通知の受信 | M7 |
 | `digest_hour`（まとめて知らせる時刻）にもとづく配信 | M7（いまは設定値を持つだけ） |
+
+---
+
+## M7 仕上げ
+
+### M7-0. 準備
+
+M6 と同じ（`.dev.vars` に `THREADS_MOCK=1` / `AI_MOCK=1`、worker は `wrangler dev`、web は
+`npm run dev:web`）。デモは `demo@example.com` / `password1234`。
+
+M7 は**複数アカウント**を見るので、モックのアカウントを2件足しておく。
+モックはトークンの接尾辞ごとに別のアカウントを返す（SPEC §11）:
+
+```bash
+SID=…   # ログインして受け取った sid
+for t in THAAdemo_b THAAdemo_c; do
+  curl -s -X POST http://127.0.0.1:8787/api/accounts \
+    -H 'X-Requested-With: fetch' -H 'Content-Type: application/json' -H "Cookie: sid=$SID" \
+    -d "{\"token\":\"$t\"}"
+done
+curl "http://127.0.0.1:8787/cdn-cgi/handler/scheduled?cron=0+18+*+*+*"   # 3件とも同期する
+```
+
+**マイグレーションを流し直す**（M7 で `0002_m7.sql` が増えた）:
+
+```bash
+npm run db:migrate
+```
+
+### M7-1. ビルドとテスト
+
+| # | 手順 | 期待 | 種別 |
+|---|---|---|---|
+| 1-1 | `npm run typecheck` | エラー0（shared / worker / web / scripts） | 自動 |
+| 1-2 | `npm test` | shared 85件・worker 376件すべて green | 自動 |
+| 1-3 | `npm run build` | 初回 JS（`index` ＋ `react`）が gzip 300KB 未満。recharts は `charts` チャンクに分かれる | 手動 |
+| 1-4 | `npm run check:bundle` | モック識別子が0件 | 自動 |
+| 1-5 | `npx wrangler deploy --dry-run --outdir /tmp/tap-dry` | `Total Upload:` が出て終了コード0 | 手動 |
+
+### M7-2. 複数アカウント（SPEC §7.1 / §13 M7）
+
+| # | 手順 | 期待 |
+|---|---|---|
+| 2-1 | ハンバーガー → ドロワー | 3件が別々の色のドットで並ぶ。選択中に `aria-current` が付く |
+| 2-2 | `@demo__b` を選ぶ | TopBar のチップ・ApBar・ホームの見出しが `@demo__b` に変わり、数字と投稿一覧が入れ替わる |
+| 2-3 | そのままキューへ | `@demo__b の予約と下書き`。demo_yama の下書きが混ざらない |
+| 2-4 | そのまま自動へ | `@demo__b` の設定（オフ）。demo_yama の設定が出てこない |
+| 2-5 | 設定 → アカウント | 3件が並び、`3 / 3`。「アカウントを追加」が押せない（つなげるのは3つまで） |
+| 2-6 | 設定で1件「外す」→ 確認シート → 外す | 一覧から消え、選択中だったら別のアカウントに寄る。トーストが出る |
+| 2-7 | 全部外す | `/connect` に飛ぶ（SPEC §12.1） |
+| 2-8 | リロードして戻る | `localStorage.activeAccountId` で選択が復元される |
+
+### M7-3. 診断（SPEC §7.1 `diagnose`）
+
+| # | 手順 | 期待 |
+|---|---|---|
+| 3-1 | 設定 → アカウントの行 → 「診断」 | シートが開き、**6段**（トークン / アカウント情報 / 投稿の取得 / 投稿の数字 / アカウントの表示回数 / リンクのクリック）が上から出る |
+| 3-2 | 各行 | ✓ か ✕ と、日本語の一言（例「長期トークン（残り約60日）」「@demo__seed（ID 1780…）」） |
+| 3-3 | 「もう一度点検する」 | 走り直す |
+| 3-4 | トークンを壊してから診断（`accounts.token_enc` を書き換える） | 最初の段で ✕ と、Threads からの返答つきの日本語が出る |
+
+### M7-4. ライセンス・書き出し・退会（SPEC §7.8）
+
+| # | 手順 | 期待 |
+|---|---|---|
+| 4-1 | 設定 → ライセンス | `TAP-••••-••••-DEMO` の形で**末尾4桁だけ**。状態が「有効」。DevTools の Network で全体が返っていないことも見る |
+| 4-2 | 設定 → データの書き出し → アカウントごとのボタン | CSV がダウンロードされる。ファイル名は `threads-<username>-YYYY-MM-DD.csv` |
+| 4-3 | その CSV を **Excel で開く** | 日本語が化けない（UTF-8 BOM）。1行目がヘッダ21列。本文の改行と読点でセルが崩れない |
+| 4-4 | 同じ CSV をテキストエディタで開く | 先頭3バイトが `EF BB BF`、改行が CRLF |
+| 4-5 | 設定 → 退会する | 確認シート。「消したデータは戻せません」とライセンス無効化の警告、パスワード欄。空だと押せない |
+| 4-6 | 違うパスワードで実行 | 「パスワードが違います」。データは消えない |
+| 4-7 | 正しいパスワードで実行 | ログイン画面へ。もう一度ログインしようとすると失敗する。`[email:dummy] … template=account_deleted` がコンソールに出る |
+| 4-8 | 退会後に D1 を見る | `users` / `accounts` / `posts` / `queue` / `sources` / `ai_settings` / `notifications` / `push_subscriptions` にその行が無い。`licenses` は行が残り `status='revoked'` で `user_id` が NULL |
+
+```sql
+-- 4-8 の確認（wrangler d1 execute threads-autopilot --local --command "…"）
+SELECT (SELECT COUNT(*) FROM users) u, (SELECT COUNT(*) FROM accounts) a,
+       (SELECT COUNT(*) FROM posts) p, (SELECT status, user_id FROM licenses LIMIT 1) l;
+```
+
+### M7-5. 通知の残り（`digest_hour` と Web Push）
+
+| # | 手順 | 期待 |
+|---|---|---|
+| 5-1 | 設定 → 通知 → 「まとめて知らせる時刻」を 8時に | 保存される。下に「前日の投稿数・表示回数・いいね・失敗を、この時刻に1通にまとめて送ります」 |
+| 5-2 | 毎時の cron を、その時刻の JST に合わせて回す | コンソールに `template=daily_digest`。本文にアカウントごとの1行（`@user  N本 / 表示 … / いいね … / クリック …`）と前日の日付 |
+| 5-3 | 同じ日にもう一度回す | 2通目は出ない（`notifications.last_digest_date`） |
+| 5-4 | メール通知をオフにして回す | 出ない |
+| 5-5 | 設定 → 通知 → プッシュ | `VAPID_PUBLIC_KEY` が空なら「サーバーに鍵が設定されていないので、いまは使えません」で押せない |
+| 5-6 | 鍵を入れて `wrangler dev` を上げ直し、ホーム画面に追加した PWA で押す | ブラウザの許可ダイアログ → オンになる。`push_subscriptions` に暗号化された1行 |
+
+### M7-6. レート制限（SPEC §5.1 / §7.9 ＋ M7）
+
+| # | キー | 手順 | 期待 |
+|---|---|---|---|
+| 6-1 | `login:<email>` | 間違ったパスワードで11回 | 11回目が 429 |
+| 6-2 | `forgot:<email>` | 4回 | 4回目もレスポンスは `{ok:true}`（メールの存在を漏らさない）だが、コンソールにメールが出ない |
+| 6-3 | `action:<ip>` | `/a/<token>` を21回 GET | 21回目が「しばらく待ってからお試しください」 |
+| 6-4 | `ai:<user_id>` | 「3案つくる」を11回 | 11回目が「少し早すぎます。1分ほど空けてからもう一度お試しください」 |
+
+### M7-7. 監査ログ（SPEC §4 `audit_log`）
+
+以下の操作をしてから `SELECT action, COUNT(*) FROM audit_log GROUP BY action;` を見る。
+
+| 操作 | `action` |
+|---|---|
+| 登録 | `register` |
+| ログイン | `login` |
+| パスワード再設定の完了 | `password_reset` |
+| AIキーの保存 | `ai_key_change`（**キー本体は入らない**。provider と storeOnServer だけ） |
+| アカウントの接続 / 削除 | `account_connect` / `account_delete` |
+| アプリ内の承認 / 取消 | `queue.approve` / `queue.cancel` |
+| メールのリンクからの承認 / 取消 | `queue.approve.email` / `queue.cancel.email` |
+| オートパイロットの ON / OFF | `autopilot.on` / `autopilot.off` |
+| CSV の書き出し | `export` |
+| 退会 | `user_delete`（メールは `emailHash` としてハッシュのみ） |
+
+`SELECT detail FROM audit_log;` に、トークン・AIキー・パスワード・メールの平文が
+1つも出ていないことを目で見る。
+
+### M7-8. 自動テストで担保していること
+
+`worker/test/m7.test.ts`（20件）:
+
+- 3アカウントで dashboard / queue / autopilot が混ざらない。4件目は `ACCOUNT_LIMIT` で断る
+- 同じ Threads アカウントを2ユーザーが接続してもデータが混ざらない（`(account_id, id)` の主キー）。
+  他人のアカウントIDを指すと 404
+- アカウント削除で子テーブル13個が全部消え、他のアカウントは残る
+- 退会: パスワードが違えば消さない。正しければ全テーブルから消え、`rate_events` の
+  キー付き行も消え、ライセンスが `revoked` かつ `user_id=NULL`、セッションが 401、
+  監査ログにメールの平文が残らない
+- CSV: 先頭3バイトが `EF BB BF`、CRLF、ヘッダ1行＋投稿の行数、本文の改行と `"` が壊れない、
+  48h の値が入る、`format=json` は 400、他人のアカウントは 404、
+  `=SUM(...)` が `'=SUM(...)` になる（数式インジェクション）、日時がアカウントの timezone
+- ライセンス: 末尾4桁だけ返し、応答のどこにもキー全体が入らない
+- `/ai/generate` の11回目が 429
+- `daily_digest`: timezone ごとの日付と時刻の判定、`digest_hour` の時刻にだけ送る、
+  同じ日に二度送らない、メール通知オフなら送らない
+- Web Push の配線: 鍵が無ければ送らない、`push_enabled=0` なら送らない、410 で行を消す、
+  500 は行を残して `fail_count` を進める、送ったボディが購読者の鍵で復号でき
+  承認/取消のワンタイム URL を含まない、`VAPID_SUBJECT` が `mailto:`/`https:` でなければ送らない
+
+`worker/test/webpush.test.ts`（18件）: 暗号の往復（日本語・絵文字）、salt が毎回変わる、
+`rs`/`idlen` の値、4010 バイト超で例外、ES256 JWT の3パートと `aud`（origin のみ）・`exp`・
+署名64バイト・`crypto.subtle.verify` での検証、`vapid t=…, k=…` の形、
+`sendPush` が 201/410/500/例外でそれぞれ何を返すかとヘッダ。**実送信はしない**（`fetch` はスタブ）。
+
+### M7-9. 自動テストで担保していないこと（M7 の残り）
+
+| 項目 | いつ |
+|---|---|
+| 実キー・実 Push（実際の Push サービスへの配信）・実 Resend・実デプロイ | オーナーが本番を用意した時点（README「既知の制限」） |
+| Excel で実際に CSV を開いたときの見え方 | 手動（M7-4-3） |
+| 実端末（iOS / Android）での PWA と通知の受信 | 手動（M7-5-6） |
+
+---
+
+## 総合チェックリスト（M1〜M7 の通し）
+
+リリース前に上から順に1回通す。各項目の詳細は上のマイルストーンの節を見る。
+
+### A. 機械で見る（コマンド）
+
+| # | コマンド | 期待 |
+|---|---|---|
+| A-1 | `npm run typecheck` | エラー0 |
+| A-2 | `npm test` | shared 85件・worker 376件 green |
+| A-3 | `npm run build` | 初回 JS が gzip 300KB 未満 |
+| A-4 | `npm run check:bundle` | モック識別子0件（本番エントリ・一時エントリの両方） |
+| A-5 | `npx wrangler deploy --dry-run --outdir /tmp/tap-dry` | 成功 |
+| A-6 | `npm run db:migrate` → `npm run seed:demo` を2回 | 2回目も同じ状態になる |
+| A-7 | `curl /api/health` | `{"ok":true,"version":"…","mock":true}`（開発）／本番ビルドで `mock:false` |
+
+### B. 手で見る（画面。デモデータ + モック）
+
+| # | 画面 | 見るもの | 節 |
+|---|---|---|---|
+| B-1 | Login | 登録 → ログイン → forgot → reset → 旧セッションが切れる | M1-9 / M1-5 |
+| B-2 | Connect | トークンを貼る → 同期の進捗 → ホームへ | M2-2 |
+| B-3 | Home | 期間6種 × 指標6種の切り替え、ツリー展開、行の操作から Create へ | M3-2 |
+| B-4 | Home | Drawer と行展開の spring・pointer-down・reduced-motion | M3-3 |
+| B-5 | Create | 箱1（過去投稿）→ 箱2（参考情報）→ 指示 → 3案 → 指示で直す → キューへ | M5-2 |
+| B-6 | Queue | 「今すぐ」「日時指定」「おすすめ枠」の3経路、ツリー、失敗の見え方、リンク6本のエラー | M4-2 / M4-3 |
+| B-7 | Autopilot | オンにする4条件、下書きができる、学習の表（`n<10` は「集計中（あと◯本）」） | M6-2 / M6-6 |
+| B-8 | メール | 承認/取消のリンクをログアウト状態で踏む。2回目は「すでに完了しています」 | M6-4 |
+| B-9 | Settings | アカウント3件・診断6段・AIキー・通知・リンク・ライセンス・書き出し・退会 | M7-2〜M7-4 |
+| B-10 | PWA | ホーム画面に追加 → オフラインで殻が出る。`/api/*` と `/a/*` はキャッシュされない | M6-7 |
+
+### C. 実物が要る（オーナーの作業。README「既知の制限」）
+
+| # | 項目 |
+|---|---|
+| C-1 | `npm run smoke` で H5（ツリーの1ステップ投稿）と文字数の数え方を確定 |
+| C-2 | 実キーで Gemini / OpenRouter の3案生成と YouTube 経路 |
+| C-3 | 実アカウントで clicks が投稿に紐づく（`unassignedClicks` に全部落ちない） |
+| C-4 | Resend の実送信（差出人ドメインの検証） |
+| C-5 | 実端末での PWA と Web Push |
+| C-6 | 本番 Cloudflare（Paid）へのデプロイと Cron 3本の稼働 |

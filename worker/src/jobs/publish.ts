@@ -19,7 +19,7 @@ import { buildTags, validatePost, type PostTags } from "@tap/shared";
 import { accountToken, loadAccount, type AccountRow } from "../lib/accounts";
 import { apLog, loadAutopilot } from "../lib/autopilot";
 import { sendEmail } from "../lib/email";
-import { notifyTargets } from "../lib/notify";
+import { notifyTargets, pushToUser } from "../lib/notify";
 import { buildUpsertChunks, type Db } from "../lib/db";
 import { redact } from "../lib/redact";
 import { enqueueJob, type JobContext, type RunningJob } from "../lib/jobs";
@@ -150,6 +150,12 @@ async function failQueue(
       reason: message,
       ...(raw ? { raw } : {}),
       appOrigin: ctx.env.APP_ORIGIN,
+    });
+    // 失敗は早く知りたいので Push も出す（M7。`push_enabled=1` の購読だけ）
+    await pushToUser(ctx.env, ctx.db, target.userId, {
+      title: `@${account?.username ?? ""} の投稿に失敗しました`,
+      body: message.slice(0, 120),
+      url: "/app/queue",
     });
   }
 }

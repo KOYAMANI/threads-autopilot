@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>プライバシーポリシー｜Threads オートパイロット</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin:0 auto; padding:2rem 1.25rem 6rem; max-width:44rem; line-height:1.8;
+         color:#16181d; background:#f6f7f9;
+         font-family:-apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+  h1 { font-size:1.5rem; letter-spacing:-.02em; line-height:1.25; }
+  h2 { font-size:1.0625rem; letter-spacing:-.01em; margin-top:2.5rem; }
+  p, li { font-size:.9375rem; }
+  table { width:100%; border-collapse:collapse; margin:1rem 0; font-size:.875rem; }
+  th, td { border:1px solid #d9dce1; padding:.5rem .625rem; text-align:left; vertical-align:top; }
+  th { background:#eceef1; font-weight:600; }
+  .todo { background:#fbf0da; color:#8a5a08; padding:.75rem 1rem; border-radius:.5rem; font-size:.875rem; }
+  footer { margin-top:3rem; font-size:.8125rem; color:#5b6068; }
+  @media (prefers-color-scheme: dark) {
+    body { background:#0d0f13; color:#e8eaed; }
+    th { background:#1c2027; } th, td { border-color:#2b303a; }
+    .todo { background:#3a2f14; color:#f0d9a6; }
+    footer { color:#9aa0a8; }
+  }
+</style>
+</head>
+<body>
+
+<p class="todo">
+  <strong>【公開前に埋めるところ】</strong>
+  「◯◯」の箇所（事業者名・所在地・連絡先・保存期間・提供年数）を実際の値に置き換えてから公開してください。
+  雛形であり、法務のレビューを受けたものではありません。
+</p>
+
+<h1>プライバシーポリシー</h1>
+
+<p>
+  ◯◯（以下「当方」）は、当方が提供するウェブアプリ「Threads オートパイロット」（以下「本サービス」）における
+  利用者の情報の取り扱いについて、以下のとおり定めます。
+</p>
+
+<h2>1. 取得する情報</h2>
+
+<table>
+  <tr><th>種類</th><th>内容</th><th>取得の方法</th></tr>
+  <tr><td>アカウント情報</td><td>メールアドレス、パスワード（ハッシュ化して保存）、ライセンスキー</td><td>ご登録時に入力いただく</td></tr>
+  <tr><td>Threads の連携情報</td><td>Threads のアクセストークン（暗号化して保存）、ユーザーID、ユーザー名、表示名、プロフィール画像URL</td><td>利用者ご自身が Meta のアプリで取得し、本サービスに貼り付ける</td></tr>
+  <tr><td>投稿と数字</td><td>投稿の本文・投稿日時・パーマリンク・表示回数・いいね・返信・リポスト・引用・シェア・リンククリック数、フォロワー数の推移</td><td>Threads API から取得</td></tr>
+  <tr><td>利用者が入力した素材</td><td>参考情報（テキスト・URL・ファイルの内容）、リンク、下書き、オートパイロットの設定</td><td>ご自身で入力いただく</td></tr>
+  <tr><td>AI の API キー</td><td>Gemini または OpenRouter の API キー（暗号化して保存。「この端末にだけ保存」を選んだ場合は保存しません）</td><td>ご自身で入力いただく</td></tr>
+  <tr><td>操作の記録</td><td>ログイン、パスワード再設定、キーの変更、アカウントの接続と削除、自動投稿の承認と取消、退会などの操作履歴と日時</td><td>本サービスが自動で記録</td></tr>
+  <tr><td>通信の記録</td><td>接続元IPアドレス（回数制限の判定にのみ使用）、ブラウザの種類</td><td>本サービスが自動で記録</td></tr>
+</table>
+
+<h2>2. 利用の目的</h2>
+<ul>
+  <li>本サービスの提供（ダッシュボードの表示、投稿の予約と実行、オートパイロットの下書き作成）</li>
+  <li>通知（自動投稿の事前連絡、投稿の失敗、トークンの期限、日次のまとめ）</li>
+  <li>不正利用の防止（ログイン試行の回数制限、ライセンスの管理）</li>
+  <li>お問い合わせへの対応</li>
+</ul>
+
+<h2>3. 第三者への提供</h2>
+<p>
+  法令に基づく場合を除き、利用者の情報を第三者へ提供しません。本サービスの運営のため、以下の事業者のサービスを利用します。
+</p>
+<table>
+  <tr><th>事業者</th><th>用途</th><th>渡す情報</th></tr>
+  <tr><td>Cloudflare, Inc.</td><td>アプリの実行環境とデータベース</td><td>本ポリシー1項のすべて（当方が預けている先です）</td></tr>
+  <tr><td>Meta Platforms, Inc.（Threads API）</td><td>投稿の取得と公開</td><td>アクセストークン、公開する投稿の本文と画像</td></tr>
+  <tr><td>Resend, Inc.</td><td>メールの送信</td><td>メールアドレス、メール本文</td></tr>
+  <tr><td>Google LLC（Gemini）または OpenRouter, Inc.</td><td>本文の生成</td><td>利用者の API キー、生成に使う参考情報と過去の投稿の本文</td></tr>
+</table>
+<p>
+  AI への送信は、利用者ご自身の API キーで行われます。当方は生成の内容を保存しますが（下書きとして）、
+  AI 提供者側での取り扱いは各社の規約に従います。
+</p>
+
+<h2>4. 保存する期間</h2>
+<ul>
+  <li>アカウントと投稿の記録は、退会されるまで保存します</li>
+  <li>操作の記録（監査ログ）は ◯◯ か月保存します</li>
+  <li>回数制限のための接続元IPの記録は 1 日で消えます</li>
+  <li>退会されると、投稿の記録・数字・キュー・参考情報・AIキー・Threads のトークンをすべて削除します。削除の事実だけは、メールアドレスをハッシュ化した形で監査ログに残します</li>
+</ul>
+
+<h2>5. バックアップと復旧</h2>
+<p>
+  データベースは Cloudflare D1 の Time Travel により、直近 30 日間の任意の時点へ復旧できます。
+  障害時にこの機能で復旧した場合、直近の変更が失われることがあります。
+</p>
+
+<h2>6. 安全管理</h2>
+<ul>
+  <li>Threads のアクセストークン、AI の API キー、プッシュ通知の購読情報は AES-256-GCM で暗号化して保存します</li>
+  <li>パスワードは PBKDF2-SHA256（100,000 回）でハッシュ化して保存し、元に戻せる形では保存しません</li>
+  <li>通信はすべて HTTPS です</li>
+  <li>ログには秘密情報を出力しません</li>
+</ul>
+
+<h2>7. 開示・訂正・削除のご請求</h2>
+<p>
+  ご自身のデータは、本サービスの「設定 → データの書き出し」からいつでも CSV で取り出せます。
+  削除は「設定 → 退会」から行えます。そのほかのご請求は下記の連絡先へお願いします。
+</p>
+
+<h2>8. Cookie</h2>
+<p>
+  ログイン状態の保持にのみ Cookie を使用します（<code>sid</code>、HttpOnly / Secure / SameSite=Strict、30 日）。
+  広告・解析目的の Cookie は使用しません。
+</p>
+
+<h2>9. 変更</h2>
+<p>本ポリシーを変更する場合、本ページに掲示します。重要な変更は登録メールアドレスへお知らせします。</p>
+
+<h2>10. お問い合わせ</h2>
+<p>
+  ◯◯（事業者名）<br>
+  ◯◯（所在地）<br>
+  ◯◯（メールアドレス）
+</p>
+
+<footer>制定日: ◯◯年◯◯月◯◯日 ／ 最終改定: ◯◯年◯◯月◯◯日</footer>
+
+</body>
+</html>

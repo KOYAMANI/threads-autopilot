@@ -323,3 +323,121 @@ v1.1 の独立検証で、要求項目は全件反映されていたが、v1.1 �
   puppeteer / playwright を依存に足さないため。ログインはページ内の `fetch` で済ませる——
   セッション Cookie は `SameSite=Strict` かつ HttpOnly なので、外から注入するより
   同一オリジンで取らせるほうが確実
+
+## M6 独立検証（2026-09-06）
+
+SPEC §13 M6・§5.3・§7.7・§7.9・§9・§10.5・§12.3 Autopilot・§12.4 に対して、実装者とは別の
+コンテキストで採点した。**FAIL は0件**。直したのは検証中に見つけた別件の1つだけ（下）。
+
+- 採点（§9.2）… `jobs/score.ts` に AI 呼び出しは無い（`lib/ai.ts` を import していない）。
+  48h チェックポイント行のみを使い、分布も 48h 断面。母数10未満は `scored` を付けずに見送る。
+  `learning` は4次元を1クエリのマルチ VALUES で積み、`views_sum` / `like_rate_sum` を持つ
+- 計画（§9.3 / §9.4）… `n>=10` の枠と型だけを「実績あり」とし、無ければ既定枠と既定順。
+  直近3本のローテーション、`quiet_hours`、`daily_limit`、`minGapMin`、ネタ源の7日再使用なし、
+  `consecutive_failures` 3で停止、`needs_reauth` とライセンス `revoked` は計画しない、日割り（`postsForDay`）
+- `/a/:token`（§5.3 / §7.9）… HMAC-SHA256・定数時間比較・期限・`purpose` 一致。
+  GET は消費しない。`publishing|done` は遷移も消費もしない。消費は
+  `WHERE action_token_used_at IS NULL` の条件付き UPDATE の `changes` で見る。
+  `rate_events` の `action:<ip>` で1分20回。HTML は投稿本文を一切出さない（テンプレは固定文言のみ）ので、
+  そもそも XSS の入口が無い。`esc()` も通してある
+- 通知（§9.5 / §10.5）… 3方式の通知タイミング、テンプレ7種、本文にアプリのリンク。
+  `ap_draft` に入る秘密は `qaction` のワンタイム URL だけで、これは仕様どおり（§7.9）
+- ログ… `redact()` / `redactObject()` / `redactEmail()` が入っており、トークンを出す経路は無い。
+  `[email:dummy]` の本文出力だけは DEV ビルド限定で、本番（`__DEV__=false`）では枝ごと通らない
+- 画面（§12.3 / §12.4）… Autopilot の学習表が `n<10` で「集計中（あと◯本）」、`n>=10` で数値。
+  48h の注記あり。ApBar が承認方式ごとの1行を出す。Queue の操作シートに承認/取消。
+  SW は `runtimeCaching` を置かず、`navigateFallbackDenylist` で `/api/*` と `/a/*` を外す
+
+**検証中に直したもの（M6 の FAIL ではない）**
+
+- 2026-09-06 `ACCOUNT_COLORS` の先頭を `#4f7cff` から `#2748e8`（アクセント色そのもの）に変え、
+  使用中の色との比較を大文字小文字を無視する形にした。`seed-demo` が作るアカウントの色が
+  `#2748E8` で、`find(x => used.includes(x))` の素の一致だと「使っていない色」と判定され、
+  2件目に**見分けの付かない青**が割り当たっていた（M7 のブラウザ確認で3件並べて気づいた）
+
+---
+
+## M7 実装で決めたこと（2026-09-06）
+
+- 2026-09-06 `DELETE /users/me` の削除順は「アカウントの子テーブル → `accounts` →
+  `user_id` を持つ6テーブル → `rate_events` のキー付き行 → `licenses` を revoked →
+  `users`」に固定した。対象の列挙は `lib/accounts.ts` の `ACCOUNT_CHILD_TABLES` と
+  `routes/users.ts` の `USER_TABLES` の2つだけに置き、テストがその定数を回して
+  「1件も残っていない」ことを見る。将来テーブルが増えたとき、定数に足し忘れれば
+  テストが素通りしてしまうが、SQL を手で並べるよりは消し残しに気づきやすい
+- 2026-09-06 CSV は **UTF-8 BOM ＋ CRLF**。BOM を付けないと日本語 Windows の Excel が
+  Shift_JIS と誤認して全部化ける。買い手が最初に開くのはほぼ Excel なので、
+  「BOM を嫌う道具もある」より「Excel で開ける」を優先した。
+  あわせて `= + - @` で始まるセルの前に `'` を1つ足す（表計算ソフトが式として実行するのを防ぐ）。
+  テストは `Response.text()` ではなく**バイト列**で BOM を見る — `text()` は仕様上
+  先頭の BOM を落とすので、text で見ると「付けていない」のと区別が付かない
+- 2026-09-06 `GET /export/:accountId` の上限は 5,000 行。D1 と CPU を守るためで、
+  超えたぶんは古い順に落ちる。全部要る買い手が出たら分割ダウンロードを足す
+- 2026-09-06 ライセンスは**末尾4桁と状態だけ**返す（`GET /users/me/license`）。
+  キー全体は購入時のメールにあり、画面に出す理由が無い。出せば肩越しに見られる経路が増える
+- 2026-09-06 `/ai/test` `/ai/generate` `/ai/revise` に **1分10回**の制限を足した
+  （`rate_events` のキー `ai:<user_id>`）。SPEC に窓の指定は無いが、この3つは
+  1リクエスト = 買い手の AI キーの課金1回になる。画面から出せるのは「3案」ボタンの
+  連打くらいなので手が滑った程度では当たらず、スクリプトで回されたら止まる値にした。
+  設定の読み書き（`/ai/settings`）は課金しないので対象外
+- 2026-09-06 監査ログは `lib/audit.ts` に1本化し、**書き込みに失敗しても操作を巻き戻さない**
+  （try/catch で握る）。監査が書けなかったせいで買い手の操作そのものが 500 になるほうが困る。
+  記録するのは SPEC §13 M7 の要所（登録・ログイン・キー変更・退会・承認/取消・AP ON/OFF）に、
+  アカウントの接続と削除・書き出し・ライセンスの発行と失効を足したもの。
+  `detail` に秘密は入れない（`ai_key_change` は provider と storeOnServer だけ、
+  `user_delete` はメールの SHA-256 だけ）
+- 2026-09-06 `daily_digest` は **`account_id` を持たないジョブ**にして毎時1本だけ積む。
+  `digest_hour` は買い手ごと、timezone はアカウントごと（SPEC §2.4）なので、
+  ジョブの中で「その買い手の先頭アカウントの timezone でいまが `digest_hour` か」を見る。
+  二重送信は `notifications.last_digest_date`（マイグレーション `0002_m7.sql` で追加）で止め、
+  **印を先に立ててからメールを送る** — 送信が失敗した日に何度も送り直すより、
+  1日ぶん落とすほうが害が小さい
+- 2026-09-06 ダイジェストは**メールだけ**で Push を出さない。急いで知る必要がなく、
+  毎朝ロック画面に通知が出るのは邪魔になる。Push は承認・取消・失敗（＝すぐ知りたいもの）だけ
+
+### Web Push の実送信（M6 から送っていた宿題）
+
+- 2026-09-06 **M7 で実装した**（`worker/src/lib/webpush.ts`、外部ライブラリなし）。
+  RFC 8292 の VAPID（ES256 JWT）と RFC 8291 の `aes128gcm` を WebCrypto だけで書いた。
+  `web-push` は node の crypto 前提で Workers にそのまま載らない
+- 鍵導出は `crypto.subtle` の HKDF（`deriveBits`）。RFC 8291 の3箇所の導出はいずれも
+  Extract と Expand をセットで使い、Extract 単体の PRK を取り出す場面が無いので、
+  HMAC で手書きせずに済む。長さは常に32バイト以下（SHA-256 の1ラウンド）で、
+  超える用途が出たら気づけるよう assert を置いた
+- ES256 の署名は `crypto.subtle.sign` が返す **raw r‖s（64バイト）をそのまま** base64url に
+  する。JWT の ES256 はこの形。`web-push` が DER を剥がしているのは node crypto の都合
+- `@cloudflare/workers-types` が ECDH の `deriveBits` の `public` を `$public` と綴っており、
+  素直に書くと型エラーになる。`ecdhAlgorithm()` ヘルパ1箇所にキャストを閉じ込めた
+- **Push に承認/取消のワンタイム URL は入れない**。通知はロック画面にも出るし、
+  押すだけで確定できるリンクを通知の中に置く必要が無い。Push はアプリのキュー画面へ
+  誘導するだけにして、実際の操作はアプリかメールのリンクで行わせる
+- 404/410 が返った購読は**その場で行を消す**（RFC 8030 §7.3）。それ以外の失敗は
+  `push_subscriptions.fail_count` を数え、5回続いたら送信の対象から外す（`0002_m7.sql`）
+- `VAPID_SUBJECT`（RFC 8292 の `sub`）は `mailto:` か `https:` でなければならない。
+  空なら `APP_ORIGIN` で代用するが、開発の `http://localhost:5173` はどちらでもないので、
+  **有効な連絡先が無いときは送らない**（例外にしない。メールは別経路で届く）
+- Service Worker の `push` / `notificationclick` ハンドラは `web/public/push-sw.js` に置き、
+  `vite-plugin-pwa` の `workbox.importScripts` で生成 SW に足す。`injectManifest` に
+  切り替えると precache の面倒を全部こちらで持つことになり、ハンドラ2つのために払う代償として重すぎる
+- テストは**暗号の往復と JWT の形まで**。実際の Push サービス（FCM / Mozilla / Apple）へは送らない。
+  受理されるかどうかは README「既知の制限」#8 に残した
+
+### チャンク分け（M6 から送っていた宿題）
+
+- 2026-09-06 `manualChunks` で recharts（＋ d3-*）を `charts` に、react / react-dom / scheduler を
+  `react` に分け、あわせてログイン後の画面を `React.lazy` にした。
+  ログイン画面を出すだけでホームのグラフのコード（gzip 108KB）まで落とすのを避けるため。
+  結果、初回 JS は `index` 66.4KB + `react` 46.0KB = **約112KB（gzip）**。ホームに入って
+  `charts` を足しても約224KB で、300KB の目安の内側
+
+### 画面まわり
+
+- 2026-09-06 CSV のダウンロードは `<a href>` の直踏みではなく **`fetch` → Blob → `a.download`**。
+  Cookie 付きの GET でも、iOS Safari が `Content-Disposition` のファイル名を拾い損ねることがある。
+  `URL.revokeObjectURL` は10秒待ってから呼ぶ（すぐ消すと Safari がダウンロードを始める前に落ちる）
+- 2026-09-06 退会は「確認シート ＋ パスワードの再入力」の二段。セッションが盗まれていても
+  一発でデータを消せないようにする（SPEC §7.8 の「パスワード再確認」の実装）。
+  成功後は `window.location.href = "/login"` で読み込み直す — 認証はもう無いので、
+  React Query のキャッシュを持ち越さない
+- 2026-09-06 診断は「押したら走る」ミューテーションにして、開いた時点で1回だけ自動実行する。
+  6段のうち後半は実際に Threads API を叩くので、画面を開くたびに毎回走らせない

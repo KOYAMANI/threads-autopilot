@@ -45,10 +45,19 @@ export default defineConfig({
       },
       workbox: {
         // 静的資産だけ。runtimeCaching は置かない（＝API は素通し）
+        // `push-sw.js` と `legal/` は precache しない。前者は SW 自身が importScripts で
+        // 読むもので、後者はまれにしか開かない静的ページ（オフラインで要らない）
         globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
+        globIgnores: ["push-sw.js", "legal/**"],
         navigateFallback: "/index.html",
-        navigateFallbackDenylist: [/^\/api\//, /^\/a\//],
+        navigateFallbackDenylist: [/^\/api\//, /^\/a\//, /^\/legal\//],
         cleanupOutdatedCaches: true,
+        /**
+         * Push の受け口（`web/public/push-sw.js`）を生成 SW に足す（M7）。
+         * `injectManifest` に切り替えると precache の面倒を全部こちらで持つことになるので、
+         * ハンドラ2つのために `importScripts` で足すだけにする。
+         */
+        importScripts: ["/push-sw.js"],
       },
       devOptions: { enabled: false },
     }),
