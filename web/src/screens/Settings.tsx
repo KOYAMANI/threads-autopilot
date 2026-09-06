@@ -1,16 +1,31 @@
 /**
- * 設定（SPEC §12.3 Settings）。AIキー（BYOK、M5）と通知（M6）。
- * アカウント管理・リンク・診断・書き出し・退会は M7。
+ * 設定（SPEC §12.3 Settings）。M7 で全部そろった。
+ *
+ * 上から: アカウント（最大3・追加・診断・トークン延長・外す）→ AIキー（BYOK）→
+ * 通知 → リンク一覧 → ライセンス → データの書き出し → 退会。
  *
  * 「キーをこの端末にだけ保存」を **ONにしようとした時点で、保存前に確認を出す**
  * （SPEC §12.3 / DECISIONS の M3「トーストでの事後通知にしない」）:
  *   「この端末にだけ保存すると、オートパイロットは使えません…それでもよろしいですか？」
  * OK なら `localStorage.aiKey` に置き、サーバーには `storeOnServer=false` を送る。
+ *
+ * 取り返しのつかない操作（アカウントを外す・退会）は確認シートを挟む。退会だけは
+ * さらにパスワードの再入力を求める（SPEC §7.8）。
  */
 import { useEffect, useState } from "react";
-import type { AiProvider } from "@tap/shared";
+import { useNavigate } from "react-router-dom";
+import type { AccountSummary, AiProvider, DiagnoseStep } from "@tap/shared";
 import { AI_DEFAULT_MODEL } from "@tap/shared";
-import { useAccounts } from "../api/accounts";
+import {
+  downloadCsv,
+  useAccounts,
+  useDeleteAccount,
+  useDeleteUser,
+  useDiagnose,
+  useLicense,
+  useLinks,
+  useRefreshToken,
+} from "../api/accounts";
 import {
   readClientKey,
   useAiSettings,
@@ -22,6 +37,7 @@ import { useNotifications, usePutNotifications } from "../api/autopilot";
 import { ApiError } from "../api/client";
 import Sheet from "../components/Sheet";
 import { useToast } from "../components/Toast";
+import { useShell } from "../components/Shell";
 import { pushSupported, subscribePush, unsubscribePush } from "../lib/push";
 
 const PROVIDERS: Array<{ key: AiProvider; label: string; note: string }> = [
@@ -30,6 +46,218 @@ const PROVIDERS: Array<{ key: AiProvider; label: string; note: string }> = [
 ];
 
 export default function Settings() {
+  return (
+    <>
+      <h1>設定</h1>
+      <AccountsCard />
+      <AiKeyCard />
+      <NotificationCard />
+      <LinksCard />
+      <LicenseCard />
+      <ExportCard />
+      <DangerCard />
+    </>
+  );
+}
+
+/* ── アカウント（SPEC §7.1 / §12.3） ─────────────────── */
+
+function AccountsCard() {
+  const toast = useToast();
+  const navigate = useNavigate();
+  const accounts = useAccounts();
+  const remove = useDeleteAccount();
+  const [confirmRemove, setConfirmRemove] = useState<AccountSummary | null>(null);
+  const [diagFor, setDiagFor] = useState<AccountSummary | null>(null);
+
+  const list = accounts.data ?? [];
+
+  return (
+    <section className="card section">
+      <div className="section-head">
+        <h2>アカウント</h2>
+        <span className="muted">{list.length} / 3</span>
+      </div>
+
+      {accounts.isPending && <p className="muted">読み込んでいます…</p>}
+
+      {list.map((a) => (
+        <AccountRow
+          key={a.id}
+          account={a}
+          onDiagnose={() => setDiagFor(a)}
+          onRemove={() => setConfirmRemove(a)}
+        />
+      ))}
+
+      <button
+        type="button"
+        className="btn btn-sub section"
+        disabled={list.length >= 3}
+        onClick={() => navigate("/connect?add=1")}
+      >
+        {list.length >= 3 ? "つなげるのは3つまでです" : "＋ アカウントを追加"}
+      </button>
+
+      {diagFor && <DiagnoseSheet account={diagFor} onClose={() => setDiagFor(null)} />}
+
+      <Sheet
+        open={confirmRemove !== null}
+        onClose={() => setConfirmRemove(null)}
+        title={`@${confirmRemove?.username ?? ""} を外しますか？`}
+      >
+        <p>
+          このアカウントの投稿の記録・数字・キュー・学習・リンクが消えます。Threads
+          側の投稿は消えません。
+        </p>
+        <div className="section" style={{ display: "grid", gap: "calc(var(--sp) * 1.5)" }}>
+          <button
+            type="button"
+            className="btn btn-danger"
+            disabled={remove.isPending}
+            onClick={() => {
+              const target = confirmRemove;
+              if (!target) return;
+              remove.mutate(target.id, {
+                onSuccess: () => {
+                  setConfirmRemove(null);
+                  toast.show(`@${target.username} を外しました`, "ok");
+                  // 0件になったら接続画面へ（SPEC §12.1）
+                  if ((accounts.data ?? []).length <= 1) navigate("/connect");
+                },
+                onError: (e) =>
+                  toast.show(e instanceof ApiError ? e.message : "外せませんでした", "bad"),
+              });
+            }}
+          >
+            {remove.isPending ? "外しています…" : "外す"}
+          </button>
+          <button type="button" className="btn btn-sub" onClick={() => setConfirmRemove(null)}>
+            やめる
+          </button>
+        </div>
+      </Sheet>
+    </section>
+  );
+}
+
+function AccountRow({
+  account,
+  onDiagnose,
+  onRemove,
+}: {
+  account: AccountSummary;
+  onDiagnose: () => void;
+  onRemove: () => void;
+}) {
+  const toast = useToast();
+  const refresh = useRefreshToken(account.id);
+
+  const days = account.tokenExpiresInDays;
+  const tokenNote =
+    account.status === "needs_reauth"
+      ? "つなぎ直しが必要です"
+      : days === null
+        ? "短期トークン（長期化されていません）"
+        : `トークンはあと${days}日`;
+
+  return (
+    <div className="acct-row">
+      <div className="acct-head">
+        <span className="dot" style={{ background: account.color }} aria-hidden="true" />
+        <span className="acct-name">
+          <span className="t">@{account.username}</span>
+          <span className={account.status === "needs_reauth" ? "n bad" : "n"}>{tokenNote}</span>
+        </span>
+      </div>
+      <div className="acct-actions">
+        <button type="button" className="btn-quiet" onClick={onDiagnose}>
+          診断
+        </button>
+        <button
+          type="button"
+          className="btn-quiet"
+          disabled={refresh.isPending}
+          onClick={() =>
+            refresh.mutate(undefined, {
+              onSuccess: (r) => toast.show(r.message, r.refreshed ? "ok" : "bad"),
+              onError: (e) =>
+                toast.show(e instanceof ApiError ? e.message : "延長できませんでした", "bad"),
+            })
+          }
+        >
+          {refresh.isPending ? "延長中…" : "トークン延長"}
+        </button>
+        <button type="button" className="btn-quiet danger" onClick={onRemove}>
+          外す
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** 6段の点検（SPEC §7.1 `GET /accounts/:id/diagnose`）。開いた時点で1回走らせる。 */
+function DiagnoseSheet({ account, onClose }: { account: AccountSummary; onClose: () => void }) {
+  const diagnose = useDiagnose(account.id);
+  const [steps, setSteps] = useState<DiagnoseStep[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const run = diagnose.mutate;
+
+  useEffect(() => {
+    setSteps(null);
+    setError(null);
+    run(undefined, {
+      onSuccess: (s) => setSteps(s),
+      onError: (e) =>
+        setError(e instanceof ApiError ? e.message : "点検できませんでした"),
+    });
+  }, [run, account.id]);
+
+  return (
+    <Sheet open onClose={onClose} title={`@${account.username} の点検`}>
+      {steps === null && error === null && <p className="muted">点検しています…</p>}
+      {error !== null && (
+        <p className="msg msg-bad" role="status">
+          {error}
+        </p>
+      )}
+      {steps?.map((s) => (
+        <div key={s.name} className="diag-step">
+          <span className={s.ok ? "diag-mark ok" : "diag-mark bad"} aria-hidden="true">
+            {s.ok ? "✓" : "✕"}
+          </span>
+          <span className="diag-body">
+            <span className="t">{s.name}</span>
+            <span className="n">{s.detail}</span>
+          </span>
+        </div>
+      ))}
+      <div className="section" style={{ display: "grid", gap: "calc(var(--sp) * 1.5)" }}>
+        <button
+          type="button"
+          className="btn btn-sub"
+          disabled={diagnose.isPending}
+          onClick={() =>
+            run(undefined, {
+              onSuccess: (s) => setSteps(s),
+              onError: (e) =>
+                setError(e instanceof ApiError ? e.message : "点検できませんでした"),
+            })
+          }
+        >
+          {diagnose.isPending ? "点検しています…" : "もう一度点検する"}
+        </button>
+        <button type="button" className="btn btn-sub" onClick={onClose}>
+          閉じる
+        </button>
+      </div>
+    </Sheet>
+  );
+}
+
+/* ── AIキー（SPEC §7.6 / §12.3） ─────────────────────── */
+
+function AiKeyCard() {
   const toast = useToast();
   const settings = useAiSettings();
   const save = useSaveAiSettings();
@@ -110,13 +338,11 @@ export default function Settings() {
 
   return (
     <>
-      <h1>設定</h1>
-      <p className="muted" style={{ marginTop: "0.125rem" }}>
-        AIキー（買い手のキーで動きます）
-      </p>
-
       <section className="card section">
-        <h2>AIのプロバイダ</h2>
+        <div className="section-head">
+          <h2>AIのプロバイダ</h2>
+          <span className="muted">買い手のキーで動きます</span>
+        </div>
         <div className="choices" style={{ marginTop: "var(--sp)" }}>
           {PROVIDERS.map((p) => (
             <button
@@ -207,14 +433,6 @@ export default function Settings() {
             {test.isPending ? "試しています…" : "つながるか試す"}
           </button>
         </div>
-      </section>
-
-      <NotificationCard />
-
-      <section className="card section">
-        <p className="muted">
-          アカウント管理・リンク・診断・書き出し・退会は M7 で作ります。
-        </p>
       </section>
 
       <Sheet
@@ -361,9 +579,220 @@ function NotificationCard() {
                 </button>
               ))}
             </div>
+            <span className="muted" style={{ display: "block", marginTop: "var(--sp)" }}>
+              前日の投稿数・表示回数・いいね・失敗を、この時刻に1通にまとめて送ります。
+            </span>
           </label>
         </>
       )}
     </section>
+  );
+}
+
+/* ── リンク一覧（SPEC §7.5 / §12.3） ─────────────────── */
+
+function LinksCard() {
+  const { account } = useShell();
+  const links = useLinks(account?.id ?? null);
+  const list = links.data ?? [];
+
+  return (
+    <section className="card section">
+      <div className="section-head">
+        <h2>リンク</h2>
+        <span className="muted">@{account?.username ?? ""}</span>
+      </div>
+      {links.isPending && <p className="muted">読み込んでいます…</p>}
+      {!links.isPending && list.length === 0 && (
+        <p className="muted">
+          まだありません。投稿に入れたURLは、同期のときに自動で拾って並びます。
+        </p>
+      )}
+      {list.map((l) => (
+        <div key={l.id} className="link-row">
+          <span className="link-body">
+            <span className="t">{l.label}</span>
+            <span className="n">{l.url}</span>
+          </span>
+          <span className="state">{l.enabledForAp ? "自動で使う" : "使わない"}</span>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+/* ── ライセンス（SPEC §1 / §5.4） ────────────────────── */
+
+const LICENSE_LABEL: Record<string, string> = {
+  active: "有効",
+  unused: "未使用",
+  revoked: "無効（返金・退会などで停止）",
+};
+
+function LicenseCard() {
+  const license = useLicense();
+  const l = license.data;
+
+  return (
+    <section className="card section">
+      <div className="section-head">
+        <h2>ライセンス</h2>
+      </div>
+      {license.isPending && <p className="muted">読み込んでいます…</p>}
+      {l && (
+        <>
+          <div className="switch-row" aria-hidden="false">
+            <span className="body">
+              <span className="t">キー</span>
+              <span className="n">
+                安全のため末尾4桁だけ出しています。全体は購入時のメールをご確認ください
+              </span>
+            </span>
+            <span className="state num">TAP-••••-••••-{l.keyTail}</span>
+          </div>
+          <div className="switch-row" aria-checked={l.status === "active"}>
+            <span className="body">
+              <span className="t">状態</span>
+              <span className="n">
+                発行 {l.issuedAt.slice(0, 10)}
+                {l.activatedAt ? ` / 登録 ${l.activatedAt.slice(0, 10)}` : ""}
+              </span>
+            </span>
+            <span className="state">{LICENSE_LABEL[l.status] ?? l.status}</span>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+/* ── 書き出し（SPEC §7.8） ──────────────────────────── */
+
+function ExportCard() {
+  const toast = useToast();
+  const accounts = useAccounts();
+  const [busy, setBusy] = useState<string | null>(null);
+
+  return (
+    <section className="card section">
+      <div className="section-head">
+        <h2>データの書き出し</h2>
+      </div>
+      <p className="muted">
+        投稿と数字（表示回数・いいね・推定クリック・48時間後の断面）を CSV
+        で保存します。Excel でそのまま開けます。
+      </p>
+      {(accounts.data ?? []).map((a) => (
+        <button
+          key={a.id}
+          type="button"
+          className="btn btn-sub section"
+          disabled={busy !== null}
+          onClick={() => {
+            setBusy(a.id);
+            downloadCsv(a.id, a.username)
+              .then(() => toast.show("CSV を保存しました", "ok"))
+              .catch((e: unknown) =>
+                toast.show(
+                  e instanceof ApiError ? e.message : "書き出しに失敗しました",
+                  "bad",
+                ),
+              )
+              .finally(() => setBusy(null));
+          }}
+        >
+          {busy === a.id ? "書き出しています…" : `@${a.username} を CSV で保存`}
+        </button>
+      ))}
+    </section>
+  );
+}
+
+/* ── 退会（SPEC §7.8） ──────────────────────────────── */
+
+function DangerCard() {
+  const toast = useToast();
+  const navigate = useNavigate();
+  const del = useDeleteUser();
+  const [open, setOpen] = useState(false);
+  const [password, setPassword] = useState("");
+
+  return (
+    <>
+      <section className="card section">
+        <div className="section-head">
+          <h2>退会</h2>
+        </div>
+        <p className="muted">
+          アカウント・投稿の記録・数字・キュー・参考情報・AIキー・Threads
+          のトークンを全部消します。ライセンスキーも無効になり、もう使えません。取り消せません。
+        </p>
+        <button
+          type="button"
+          className="btn btn-danger section"
+          onClick={() => {
+            setPassword("");
+            setOpen(true);
+          }}
+        >
+          退会する
+        </button>
+      </section>
+
+      <Sheet open={open} onClose={() => setOpen(false)} title="本当に退会しますか？">
+        <p>
+          消したデータは戻せません。必要なら先に「データの書き出し」で CSV
+          を保存してください。
+        </p>
+        <p className="msg msg-warn section" role="status">
+          ライセンスキーも無効になります。同じキーで登録し直すことはできません。
+        </p>
+        <label className="field" htmlFor="delete-password">
+          <span>確認のため、パスワードをもう一度入力してください</span>
+          <input
+            id="delete-password"
+            className="input"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </label>
+        <div className="section" style={{ display: "grid", gap: "calc(var(--sp) * 1.5)" }}>
+          <button
+            type="button"
+            className="btn btn-danger"
+            disabled={del.isPending || password === ""}
+            onClick={() =>
+              del.mutate(password, {
+                onSuccess: () => {
+                  setOpen(false);
+                  toast.show("退会しました。ご利用ありがとうございました", "ok");
+                  // 認証はもう無いので、状態を持ち越さずに読み込み直す
+                  window.location.href = "/login";
+                },
+                onError: (e) =>
+                  toast.show(
+                    e instanceof ApiError ? e.message : "退会できませんでした",
+                    "bad",
+                  ),
+              })
+            }
+          >
+            {del.isPending ? "退会しています…" : "すべて消して退会する"}
+          </button>
+          <button
+            type="button"
+            className="btn btn-sub"
+            onClick={() => {
+              setOpen(false);
+              navigate("/app/settings");
+            }}
+          >
+            やめる
+          </button>
+        </div>
+      </Sheet>
+    </>
   );
 }

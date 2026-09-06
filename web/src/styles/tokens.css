@@ -1298,3 +1298,152 @@ button.apbar:active {
   background: var(--ap-soft);
   color: var(--ap-ink);
 }
+
+/* ── 設定のアカウント・診断・リンク（M7。SPEC §12.3） ─── */
+
+.acct-row {
+  padding: calc(var(--sp) * 1.5) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.acct-row:last-of-type {
+  border-bottom: 0;
+}
+
+.acct-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp);
+  min-width: 0;
+}
+
+.acct-name {
+  min-width: 0;
+}
+
+.acct-name > .t {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.acct-name > .n {
+  display: block;
+  font-size: 0.6875rem;
+  color: var(--ink3);
+  margin-top: 0.125rem;
+}
+
+.acct-name > .n.bad {
+  color: var(--bad);
+}
+
+/* ボタンは行の下に横並び。指の的を小さくしすぎない（44px 相当の高さを .btn-quiet で確保） */
+.acct-actions {
+  display: flex;
+  gap: calc(var(--sp) * 2);
+  margin-top: calc(var(--sp) * 0.5);
+  padding-left: calc(var(--sp) * 2.5);
+}
+
+.btn-quiet.danger {
+  color: var(--bad);
+}
+
+/* 取り返しのつかない操作。色で言い切る（確認シートは別途出す） */
+.btn-danger {
+  background: var(--bad);
+  color: #fff;
+}
+
+.diag-step {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp);
+  padding: calc(var(--sp) * 1.25) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.diag-step:last-of-type {
+  border-bottom: 0;
+}
+
+.diag-mark {
+  flex: 0 0 auto;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 0.6875rem;
+  font-weight: 700;
+}
+
+.diag-mark.ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.diag-mark.bad {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+.diag-body {
+  min-width: 0;
+}
+
+.diag-body > .t {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.diag-body > .n {
+  display: block;
+  font-size: 0.6875rem;
+  color: var(--ink3);
+  margin-top: 0.125rem;
+  overflow-wrap: anywhere;
+}
+
+.link-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp);
+  padding: calc(var(--sp) * 1.25) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.link-row:last-of-type {
+  border-bottom: 0;
+}
+
+.link-body {
+  min-width: 0;
+}
+
+.link-body > .t {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.link-body > .n {
+  display: block;
+  font-size: 0.6875rem;
+  color: var(--ink3);
+  margin-top: 0.125rem;
+  overflow-wrap: anywhere;
+}
+
+.link-row > .state {
+  flex: 0 0 auto;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 0.25rem 0.6rem;
+  border-radius: var(--r-pill);
+  background: var(--paper2);
+  color: var(--ink3);
+}

@@ -4,17 +4,24 @@
  * 選択中アカウントは `localStorage.activeAccountId`（components/Shell.tsx）。
  */
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Suspense, lazy } from "react";
 import type { ReactElement } from "react";
 import Shell from "./components/Shell";
 import { ToastProvider } from "./components/Toast";
-import Connect from "./screens/Connect";
-import Create from "./screens/Create";
-import Home from "./screens/Home";
 import Login from "./screens/Login";
-import Queue from "./screens/Queue";
-import Autopilot from "./screens/Autopilot";
-import Settings from "./screens/Settings";
 import { useMe } from "./api/auth";
+
+/**
+ * ログイン後の画面は遅延読み込みにする（M7）。ログイン画面を出すだけで
+ * ホームのグラフ（recharts、gzip で 100KB 近い）まで落とすのを避けるため。
+ * チャンクの束ね方は `vite.config.ts` の `manualChunks`。
+ */
+const Connect = lazy(() => import("./screens/Connect"));
+const Home = lazy(() => import("./screens/Home"));
+const Create = lazy(() => import("./screens/Create"));
+const Queue = lazy(() => import("./screens/Queue"));
+const Autopilot = lazy(() => import("./screens/Autopilot"));
+const Settings = lazy(() => import("./screens/Settings"));
 
 function Loading() {
   return (
@@ -52,7 +59,8 @@ function RequireLogin({ children }: { children: ReactElement }) {
 export default function App() {
   return (
     <ToastProvider>
-      <Routes>
+      <Suspense fallback={<Loading />}>
+        <Routes>
         <Route path="/login" element={<Login />} />
         {/* メールのリンクは /login?reset=<token>。/reset でも同じ画面を出す */}
         <Route path="/reset" element={<Login />} />
@@ -83,8 +91,9 @@ export default function App() {
           <Route path="*" element={<Navigate to="/app/home" replace />} />
         </Route>
 
-        <Route path="*" element={<Navigate to="/app/home" replace />} />
-      </Routes>
+          <Route path="*" element={<Navigate to="/app/home" replace />} />
+        </Routes>
+      </Suspense>
     </ToastProvider>
   );
 }

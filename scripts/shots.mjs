@@ -35,7 +35,7 @@ function argValue(name) {
 }
 
 /** 撮る画面。`before` はページ内で走らせる下ごしらえ（await できる）。 */
-const SHOTS = [
+const M6_SHOTS = [
   { name: "autopilot", path: "/app/autopilot", full: true },
   {
     name: "autopilot-learning",
@@ -49,6 +49,52 @@ const SHOTS = [
   { name: "queue", path: "/app/queue", full: true },
   { name: "settings-notifications", path: "/app/settings", full: true },
 ];
+
+/** ページ内で「見出しの文字で探して押す」小道具。文言が変わったら気づけるよう例外にする。 */
+const clickByText = `
+  const clickText = (sel, text) => {
+    const el = [...document.querySelectorAll(sel)].find((x) => (x.textContent ?? '').includes(text));
+    if (!el) throw new Error('見つかりません: ' + text);
+    el.scrollIntoView({ block: 'center' });
+    el.click();
+    return true;
+  };
+`;
+
+/** M7（SPEC §13 M7）。設定の全部と、アカウント切替。 */
+const M7_SHOTS = [
+  { name: "settings-accounts", path: "/app/settings", full: true },
+  {
+    name: "settings-diagnose",
+    path: "/app/settings",
+    before: `${clickByText} clickText('button', '診断'); await new Promise((r) => setTimeout(r, 1500));`,
+  },
+  {
+    name: "settings-license-export",
+    path: "/app/settings",
+    before: `
+      const h = [...document.querySelectorAll('h2')].find((x) => x.textContent.includes('ライセンス'));
+      h?.scrollIntoView({ block: 'start' });
+      await new Promise((r) => setTimeout(r, 500));
+    `,
+  },
+  {
+    name: "settings-delete",
+    path: "/app/settings",
+    before: `${clickByText} clickText('button', '退会する'); await new Promise((r) => setTimeout(r, 800));`,
+  },
+  {
+    // ドロワーのアカウント切替（3件が並ぶ）
+    name: "drawer",
+    path: "/app/home",
+    before: `
+      document.querySelector('button[aria-label="メニューを開く"]').click();
+      await new Promise((r) => setTimeout(r, 700));
+    `,
+  },
+];
+
+const SHOTS = prefix.startsWith("m7") ? M7_SHOTS : M6_SHOTS;
 
 /* ── CDP の最小クライアント ─────────────────────────── */
 

@@ -172,8 +172,11 @@ export function accountRoutes() {
         "SELECT color FROM accounts WHERE user_id=?",
         userId,
       );
+      // 色の比較は**大文字小文字を無視する**。`#2748E8` と `#2748e8` は同じ色なのに、
+      // 素の一致だと「使っていない色」と判定されて、見分けの付かない2つ目の青が出る
+      const used = new Set(usedColors.map((u) => u.color.trim().toLowerCase()));
       const color =
-        ACCOUNT_COLORS.find((x) => !usedColors.some((u) => u.color === x)) ?? ACCOUNT_COLORS[0]!;
+        ACCOUNT_COLORS.find((x) => !used.has(x.toLowerCase())) ?? ACCOUNT_COLORS[0]!;
       await db.run(
         `INSERT INTO accounts (id, user_id, threads_user_id, username, name, avatar_url, color,
              token_enc, token_obtained_at, token_long_lived, token_last_refresh_at, status,

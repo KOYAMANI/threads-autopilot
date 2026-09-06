@@ -35,8 +35,15 @@ export const ACCOUNT_COLUMNS =
 /** SPEC §7.1: 同一ユーザーで3件まで。 */
 export const ACCOUNT_LIMIT = 3;
 
-/** アカウントの色。接続順に割り当てる（プロトタイプ到着後に差し替える可能性あり）。 */
-export const ACCOUNT_COLORS = ["#4f7cff", "#12b886", "#e8590c"];
+/**
+ * アカウントの色。接続順に「まだ使っていない色」を割り当てる（下の `POST /accounts`）。
+ *
+ * 先頭はアクセント色（`tokens.css` の `--ap`）そのもの。M2 では近い別の青（`#4f7cff`）に
+ * していたが、`seed-demo` が作るアカウントの色がアクセント色なので、2件目に
+ * **見分けの付かない青**が割り当たっていた（M7 のブラウザ確認で踏んだ）。
+ * 完全一致にしておけば「使っていない色を選ぶ」判定が効き、3件が必ず別の色になる。
+ */
+export const ACCOUNT_COLORS = ["#2748e8", "#12b886", "#e8590c"];
 
 export async function loadAccount(db: Db, accountId: string): Promise<AccountRow | null> {
   return db.first<AccountRow>(`SELECT ${ACCOUNT_COLUMNS} FROM accounts WHERE id=?`, accountId);

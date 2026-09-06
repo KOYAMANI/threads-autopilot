@@ -74,5 +74,30 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        /**
+         * チャンク分け（SPEC §13 M7 / DECISIONS の M7 送り分）。
+         *
+         * recharts（＋依存の d3-*）はホームのグラフでしか使わないのに 300KB 近くある。
+         * 1本のバンドルに混ぜると、ログイン画面を出すだけでグラフのコードまで
+         * 落とすことになる。別チャンクにして、ホームに入ったときに初めて読ませる
+         * （画面側は `React.lazy` で分けてある。`App.tsx`）。
+         *
+         * react / react-dom も分ける。アプリのコードだけ更新したとき、
+         * ブラウザに残っている react のチャンクを使い回せるため。
+         */
+        manualChunks(id: string) {
+          if (!id.includes("node_modules")) return undefined;
+          if (/[\\/]node_modules[\\/](recharts|d3-|victory-|internmap|decimal\.js)/.test(id)) {
+            return "charts";
+          }
+          if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) {
+            return "react";
+          }
+          return undefined;
+        },
+      },
+    },
   },
 });
