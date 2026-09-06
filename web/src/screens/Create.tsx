@@ -296,7 +296,12 @@ export default function Create() {
             <span className="muted">{candidates[active]?.hook}</span>
           </div>
 
-          <div className="chips" style={{ marginTop: "var(--sp)" }}>
+          <div
+            className="chips"
+            role="group"
+            aria-label="見る案"
+            style={{ marginTop: "var(--sp)" }}
+          >
             {candidates.map((c, i) => (
               <button
                 key={c.key}

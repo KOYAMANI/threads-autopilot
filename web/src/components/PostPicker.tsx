@@ -102,7 +102,12 @@ export default function PostPicker({
             />
           </label>
 
-          <div className="chips" style={{ marginTop: "var(--sp)" }}>
+          <div
+            className="chips"
+            role="group"
+            aria-label="並べ替え"
+            style={{ marginTop: "var(--sp)" }}
+          >
             {SORTS.map((s) => (
               <button
                 key={s.key}

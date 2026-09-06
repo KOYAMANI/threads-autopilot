@@ -120,7 +120,12 @@ export default function SourceAdder({
         <span className="muted">{selected.length > 0 ? `${selected.length}件を使う` : "任意"}</span>
       </div>
 
-      <div className="chips" style={{ marginTop: "var(--sp)" }}>
+      <div
+        className="chips"
+        role="group"
+        aria-label="参考情報の足しかた"
+        style={{ marginTop: "var(--sp)" }}
+      >
         {ADDERS.map((a) => (
           <button
             key={a.type}
