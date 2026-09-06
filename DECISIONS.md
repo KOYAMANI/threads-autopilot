@@ -220,3 +220,14 @@ v1.1 の独立検証で、要求項目は全件反映されていたが、v1.1 �
 - 2026-09-06 Create（作る）は M4 では「本文＋コメント①②③ → 下書き保存 / キューに入れる」までを作る。箱1（過去投稿の picker）・箱2（参考情報）・3案生成は M5 — キューの3経路を人が触って確かめられる最小の入口が要るため。`components/PostFields.tsx` と `components/ScheduleSheet.tsx` に切り出して、キューの編集・日時変更と同じ部品を使う
 - 2026-09-06 cron の手動実行は `--test-scheduled` 無しの `wrangler dev` でも叩ける `/cdn-cgi/handler/scheduled?cron=…` を使う（`docs/qa.md` M4-0）— `/__scheduled` は `--test-scheduled` が注入する middleware が無いと Worker の未知パスとして SPA の HTML に落ちる。既に起動している開発サーバーを止めずに確認できる
 - 2026-09-06 `worker/test/accounts.test.ts` の「`POST /sync` は重複投入せず…」で、ジョブを回す `now` を `max(NOW, Date.now())` にした — `POST /sync` は**ルート経由**なので `next_run_at` を実時計で書くのに対し、`runJobs` には固定の `NOW`（`2026-09-06T00:00:00Z`）を渡していた。実時間がその瞬間を追い越した時点（＝2026-09-06 00:00 UTC 以降）から「まだ期限が来ていない」と判定されて必ず落ちる、時計依存のテストになっていた。M4 の作業中に日付が変わって顕在化した。ルート経由で積んだジョブを回すテストは、両方の遅い方を使う
+
+## M4 独立検証（2026-09-06）
+
+- 2026-09-06 `PATCH /queue/:qid` で step を 0 に戻すのは **`result_ids` が空のときだけ**にした。root が公開済みの `failed` 行（コメント段で落ちた行）を本文修正すると step 0 が root をもう1本作り、SPEC §8.3 の二重投稿防止が破れていた。あわせて `publish` の step 0 に「`result_ids` があれば root を作り直さず、投稿済みコメント数から続きの step を計算して再開する」最後の関門を置いた — step を戻す経路が今後増えても、ジョブ側で止まる
+- 2026-09-06 投稿間隔（`minGapMin`）は `posts` の最新 `posted_at` に加えて、**まだコメントを出している最中の行**（`queue.status='publishing'` かつ `result_ids` が空でない行の `updated_at`）も見る。`posts` は `done` になって初めて入るので、ツリーの1本目が出た直後に別の予約がすり抜けていた（ブラウザ確認で再現）
+- 2026-09-06 コンテナの `error_message` を `error_raw` に入れるときは `redact()` を通す。あわせて `redact()` に実トークンの形（`THAA…`）を足した（従来は `THAAdemo`＝モック用と `THQ` だけで、実運用のトークンが素通りしていた）
+- 2026-09-06 `.sheet` に `max-height: calc(100dvh - 2.5rem)` と縦方向の flex を入れ、中身は `.sheet-body`（`overflow-y:auto` / `touch-action: pan-y`）でスクロールさせる — 編集シートは本文＋コメント3つで 800px 近くなり、表示高 700px 程度の端末では見出しと本文が画面の外に出ていた。シート自体のドラッグ（`touch-action: none`）は残す
+- 2026-09-06 シートを弾いて閉じたときは、離した速度を**退場の spring**（`flickWith()`）に渡す（SPEC §12.5「弾いて閉じたとき … ＋ 離した速度を `velocity` に渡す」）。従来は戻す側にだけ velocity が渡り、閉じる側は速度なしの `SPRING_GESTURE` だった
+- 2026-09-06 キューの操作シートの「承認」は `pending_approval` に加えて **`scheduled` ＋ `approve_deadline` あり**でも出す（SPEC §7.4 の approve は「`pending_approval`→`scheduled`、または `approve_deadline` を消す」の2形。取消可モードは後者）。行を出すのは M6 だが、画面側の経路は先に開けておく
+- 2026-09-06 SPEC §12.5 が挙げる「キューのスワイプ操作」は**実装しない**。操作は行の「⋯」から開くシートに集約する（DECISIONS 2026-09-06 の M3 の項と同じ判断）— スワイプは隠れた操作で、初見の買い手には届かない。シートなら全操作が1画面に並ぶ
+- 2026-09-06 `tokens.css` の固定時間 CSS transition（`:active` の押し込み・色の変化）は SPEC §12.5 の「指で触れる要素に固定時間の transition を使わない」の例外として残す。掴んで途中で反転できる動き（Sheet / Drawer / 行展開）はすべて spring で、CSS transition が残るのは「押した瞬間に返して離したら戻る」一方向の反応だけ（apple-design §1 のサンプルと同じ形）

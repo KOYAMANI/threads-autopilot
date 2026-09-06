@@ -217,6 +217,60 @@ describe("publish（SPEC §8.3）", () => {
     expect(roots.length).toBe(1);
   });
 
+  it("step 0 に戻された行でも root を作り直さない（二重投稿の最後の関門。SPEC §8.3）", async () => {
+    const { accountId, e } = await setup("pub4b");
+    // まず root だけを1本出して、実在する ID を手に入れる
+    const seed = await insertQueue(accountId, "先に出しておく1本目の本文です。");
+    await drain(e, accountId, seed);
+    const rootId = (JSON.parse((await readQueue(seed))!.result_ids_json) as string[])[0]!;
+
+    // root は公開済みなのに step だけ 0 に戻っている行（PATCH の取りこぼし等）
+    const qid = await insertQueue(accountId, "rootは公開済みの本文です。", {
+      comments: ["残りのコメントです。"],
+      step: 0,
+      resultIds: [rootId],
+    });
+
+    await drain(e, accountId, qid);
+
+    const row = (await readQueue(qid))!;
+    expect(row.status).toBe("done");
+    const ids = JSON.parse(row.result_ids_json) as string[];
+    expect(ids.length).toBe(2);
+    expect(ids[0]).toBe(rootId); // root は作り直されていない
+  });
+
+  it("ツリーのコメント待ちの間は、別の予約が投稿間隔をすり抜けない（SPEC §8.3）", async () => {
+    const { accountId, e } = await setup("pub4c");
+    const tree = await insertQueue(accountId, "ツリーの1本目です。コメントを待ちます。", {
+      comments: ["あとから出すコメントです。"],
+    });
+    const other = await insertQueue(accountId, "同じころに出そうとする別の投稿です。");
+
+    // 1回目: 早い方（tree）の root だけ出て step 2 で待つ
+    await publishJob(makeJobContext(e, { now: NOW }), {
+      id: "j1",
+      type: "publish",
+      accountId,
+      attempts: 0,
+      state: {},
+    });
+    expect((await readQueue(tree))!.step).toBe(2);
+
+    // 1分後: もう1本は minGapMin（既定30分）に阻まれる
+    await publishJob(makeJobContext(e, { now: new Date(NOW.getTime() + 60_000) }), {
+      id: "j2",
+      type: "publish",
+      accountId,
+      attempts: 0,
+      state: {},
+    });
+    const blocked = (await readQueue(other))!;
+    expect(blocked.status).toBe("failed");
+    expect(blocked.error).toContain("分あける設定です");
+    expect(JSON.parse(blocked.result_ids_json)).toEqual([]);
+  });
+
   it("画像は コンテナ IN_PROGRESS → FINISHED → publish で done になる", async () => {
     const { accountId, e } = await setup("pub5");
     const qid = await insertQueue(accountId, "画像つきの投稿です。", {

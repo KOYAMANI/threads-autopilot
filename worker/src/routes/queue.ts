@@ -242,8 +242,12 @@ export function queueRoutes() {
     }
 
     const nowIso = new Date().toISOString();
-    // 本文を直したら、途中まで進んだ状態はリセットする（失敗からの作り直し）
-    const resetSteps = row.status === "failed" || row.status === "draft";
+    // 本文を直したら、途中まで進んだ状態はリセットする（失敗からの作り直し）。
+    // ただし **既に Threads へ出た投稿がある行（result_ids が空でない）は step を戻さない**。
+    // 戻すと step 0 が root をもう1本作ってしまう（SPEC §8.3 の二重投稿防止）。
+    // その場合は続きの step から再開する（publish-now と同じ扱い）。
+    const published = parseJsonArray(row.result_ids_json).length > 0;
+    const resetSteps = (row.status === "failed" || row.status === "draft") && !published;
     await db.run(
       `UPDATE queue SET body=?, comments_json=?, image_url=?, reply_control=?, scheduled_at=?, status=?,
          error=NULL, error_raw=NULL,

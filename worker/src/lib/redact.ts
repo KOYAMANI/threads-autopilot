@@ -13,6 +13,8 @@ const PATTERNS: Array<[RegExp, string]> = [
   // よくある API キーの見た目
   [/\bTHAAdemo[A-Za-z0-9_-]*/g, "THAAdemo***"],
   [/\bTHQ[A-Za-z0-9_-]{10,}/g, "THQ***"],
+  // 実トークン（Threads の長期・短期トークンは THAA… で始まる）
+  [/\bTHAA[A-Za-z0-9_-]{10,}/g, "THAA***"],
   [/\bsk-[A-Za-z0-9_-]{10,}/g, "sk-***"],
   [/\bre_[A-Za-z0-9_-]{10,}/g, "re_***"],
   [/\bAIza[A-Za-z0-9_-]{10,}/g, "AIza***"],

@@ -6,7 +6,7 @@
  * - 上限（開ききった位置）より上へ引くとラバーバンドで抵抗する
  * - reduced-motion では transform を動かさず opacity だけ
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { AnimatePresence, animate, motion, useMotionValue } from "motion/react";
 import type { PanInfo } from "motion/react";
@@ -28,6 +28,12 @@ export default function Sheet({
   const reduced = useReducedMotion();
   const y = useMotionValue(0);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  // 弾いて閉じたときだけ、離した速度を退場の spring に渡す（SPEC §12.5）
+  const [exitVelocity, setExitVelocity] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (open) setExitVelocity(null);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -42,6 +48,7 @@ export default function Sheet({
     const height = panelRef.current?.offsetHeight ?? 240;
     const projected = y.get() + project(info.velocity.y);
     if (projected > height * CLOSE_RATIO) {
+      setExitVelocity(info.velocity.y);
       onClose();
       return;
     }
@@ -73,7 +80,13 @@ export default function Sheet({
             initial={reduced ? { opacity: 0, y: 0 } : { y: "100%" }}
             animate={reduced ? { opacity: 1, y: 0 } : { y: 0 }}
             exit={reduced ? { opacity: 0, y: 0 } : { y: "100%" }}
-            transition={reduced ? CROSSFADE : SPRING_GESTURE}
+            transition={
+              reduced
+                ? CROSSFADE
+                : exitVelocity === null
+                  ? SPRING_GESTURE
+                  : flickWith(exitVelocity)
+            }
             drag={reduced ? false : "y"}
             dragConstraints={{ top: 0, bottom: 1000 }}
             dragElastic={{ top: 0.08, bottom: 0 }}
@@ -82,7 +95,8 @@ export default function Sheet({
           >
             <div className="sheet-grip" aria-hidden="true" />
             <h2 style={{ padding: "0 0 var(--sp)" }}>{title}</h2>
-            {children}
+            {/* 中身が画面より高いときはここだけスクロールさせる（シート自体は動かさない） */}
+            <div className="sheet-body">{children}</div>
           </motion.div>
         </>
       )}

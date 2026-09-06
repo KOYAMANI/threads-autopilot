@@ -507,8 +507,20 @@ textarea.input {
   box-shadow: var(--shadow-3);
   padding: var(--sp) calc(var(--sp) * 2) calc(var(--sp) * 3 + env(safe-area-inset-bottom, 0px));
   touch-action: none;
+  /* 中身が高くても画面からはみ出さない。はみ出す分は .sheet-body の中でスクロールする */
+  max-height: calc(100dvh - 2.5rem);
+  display: flex;
+  flex-direction: column;
   /* 開いている間しか DOM に無いので、ここが「動きが来る直前」と同じ（SPEC §12.5） */
   will-change: transform;
+}
+
+/* シートの中身。ここだけ縦スクロールを許す（シート自体のドラッグは残す） */
+.sheet-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 .sheet-grip {

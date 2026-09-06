@@ -18,6 +18,7 @@
 import { buildTags, validatePost, type PostTags } from "@tap/shared";
 import { accountToken, loadAccount, type AccountRow } from "../lib/accounts";
 import { buildUpsertChunks, type Db } from "../lib/db";
+import { redact } from "../lib/redact";
 import { enqueueJob, type JobContext, type RunningJob } from "../lib/jobs";
 import {
   findDuplicate,
@@ -179,14 +180,22 @@ export async function preflight(
     };
   }
 
-  // 投稿間隔
+  // 投稿間隔。`posts` は done になった時点で入るので、**まだコメントを出している最中の行**
+  // （`publishing` かつ root が公開済み）も見る。見ないと、ツリーの1本目が出た直後に
+  // 別の投稿がすり抜ける（`updated_at` は最後に公開できた時刻なので root 以降になる）
   if (settings.minGapMin > 0) {
     const last = await ctx.db.first<{ at: string | null }>(
       "SELECT MAX(posted_at) AS at FROM posts WHERE account_id=? AND is_reply=0 AND source<>'external'",
       account.id,
     );
-    if (last?.at) {
-      const gapMin = (nowMs - Date.parse(last.at)) / 60_000;
+    const inflight = await ctx.db.first<{ at: string | null }>(
+      "SELECT MAX(updated_at) AS at FROM queue WHERE account_id=? AND id<>? AND status='publishing' AND result_ids_json<>'[]'",
+      account.id,
+      row.id,
+    );
+    const lastAt = [last?.at, inflight?.at].filter((v): v is string => Boolean(v)).sort().pop();
+    if (lastAt) {
+      const gapMin = (nowMs - Date.parse(lastAt)) / 60_000;
       if (gapMin < settings.minGapMin) {
         return {
           ok: false,
@@ -317,6 +326,24 @@ async function runStep(
 
   /* step 0: 本文 */
   if (row.step === 0) {
+    // 既に Threads へ出ている投稿がある行で step 0 に戻っていたら、root を作り直さない
+    // （SPEC §8.3 の二重投稿防止）。step を戻す経路（PATCH 等）が増えても、ここで最後に止める
+    if (resultIds.length > 0) {
+      // resultIds[0] は root。以降は投稿済みのコメント
+      const doneComments = resultIds.length - 1;
+      if (doneComments >= comments.length) {
+        await finishQueue(ctx, account, row, resultIds);
+        return "continue";
+      }
+      await patchQueue(ctx.db, ctx, row.id, {
+        step: 2 + doneComments * (twoStep ? 3 : 1),
+        containerId: null,
+        containerPolls: 0,
+        nextStepAt: ctx.now.toISOString(),
+      });
+      return "continue";
+    }
+
     const check = validatePost(row.body, {
       comments,
       // 本文にリンクを置くかどうかはキュー側の判断（AP の link_placement は M6）。
@@ -405,7 +432,7 @@ async function runStep(
         ctx,
         row,
         "画像の下ごしらえに失敗しました",
-        status.error_message ?? String(status.status),
+        redact(status.error_message ?? String(status.status)),
       );
       return "continue";
     }
@@ -500,7 +527,7 @@ async function runStep(
         ctx,
         row,
         "コメントの下ごしらえに失敗しました",
-        status.error_message ?? String(status.status),
+        redact(status.error_message ?? String(status.status)),
       );
       return "continue";
     }

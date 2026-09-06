@@ -330,7 +330,10 @@ export default function Queue() {
                   編集
                 </button>
               )}
-              {selected.status === "pending_approval" && (
+              {/* 承認は2形ある（SPEC §7.4）: pending_approval → scheduled と、
+                  取消可モード（scheduled ＋ approve_deadline）の締切を消す方 */}
+              {(selected.status === "pending_approval" ||
+                (selected.status === "scheduled" && selected.approveDeadline)) && (
                 <button
                   type="button"
                   className="menu-item"

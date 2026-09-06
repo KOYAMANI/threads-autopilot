@@ -339,6 +339,42 @@ describe("PATCH /api/accounts/:id/queue/:qid（SPEC §7.4）", () => {
     expect(await countRows("jobs", "account_id=? AND type='publish'", accountId)).toBe(1);
   });
 
+  it("root が公開済みの failed を編集しても step を 0 に戻さない（SPEC §8.3 の二重投稿防止）", async () => {
+    const { cookie, accountId } = await setup("qpatch4");
+    const qid = await insertQueue(accountId, "コメント段で失敗した投稿です。", {
+      status: "failed",
+      step: 2,
+      resultIds: ["17800000000000000001"],
+      comments: ["直したいコメントです。"],
+    });
+
+    const res = await api("PATCH", `/api/accounts/${accountId}/queue/${qid}`, {
+      cookie,
+      body: { comments: ["直したコメントです。"] },
+    });
+    expect(res.status).toBe(200);
+    const row = (await readQueue(qid))!;
+    expect(row.step).toBe(2); // 0 に戻すと step 0 が root をもう1本作る
+    expect(JSON.parse(row.result_ids_json)).toEqual(["17800000000000000001"]);
+  });
+
+  it("まだ公開していない failed の編集は step を 0 に戻す（作り直し）", async () => {
+    const { cookie, accountId } = await setup("qpatch5");
+    const qid = await insertQueue(accountId, "リンクが多すぎて失敗した投稿です。", {
+      status: "failed",
+      step: 0,
+      resultIds: [],
+    });
+    await testDb().run("UPDATE queue SET step=1 WHERE id=?", qid);
+
+    const res = await api("PATCH", `/api/accounts/${accountId}/queue/${qid}`, {
+      cookie,
+      body: { body: "直した本文です。" },
+    });
+    expect(res.status).toBe(200);
+    expect((await readQueue(qid))!.step).toBe(0);
+  });
+
   it("日時が無いまま予約にはできない（SPEC §7.4）", async () => {
     const { cookie, accountId } = await setup("qpatch3");
     const qid = await insertQueue(accountId, "日時のない下書きです。");
