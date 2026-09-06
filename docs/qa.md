@@ -589,3 +589,181 @@ curl -s -b $J -X POST $B/accounts/$AID/queue $H \
 | 実サイトからの本文抽出の当たり外れ | M5-5（実キー） |
 | 画像の添付（`image_url`） | M6 以降 |
 | オートパイロットからの生成（`ap_plan`。型・枠・ネタ源はサーバーが選ぶ） | M6 |
+
+---
+
+## M6 オートパイロットと通知
+
+### M6-0. 準備
+
+M5 と同じ（`.dev.vars` に `THREADS_MOCK=1` / `AI_MOCK=1`、worker は `wrangler dev`、web は
+`npm run dev:web`）。デモは `demo@example.com` / `password1234`、`@demo_yama`。
+AIキーは**サーバー保存**にしておく（端末保存だとオートパイロットをオンにできない。SPEC §7.7）。
+
+cron の手動実行（M4-0 と同じ入口）:
+
+```bash
+curl "http://127.0.0.1:8787/cdn-cgi/handler/scheduled?cron=0+*+*+*+*"     # 毎時: insights_recent / ap_plan / ap_notify
+curl "http://127.0.0.1:8787/cdn-cgi/handler/scheduled?cron=*/5+*+*+*+*"   # 5分: runJobs（publish）
+curl "http://127.0.0.1:8787/cdn-cgi/handler/scheduled?cron=0+18+*+*+*"    # 日次: full_sync ほか + ap_score
+```
+
+毎時の cron は**投入**と**実行**の両方を回す。1回で終わらなかったぶんは `jobs` に
+`pending` で残るので、続けて5分の cron を叩くと消化される。
+
+メールは `RESEND_API_KEY` が空のとき送らず、DEV ビルドでは worker のコンソールに
+`[email:dummy] to=… template=…` として本文がそのまま出る（承認/取消の URL もここで読める）。
+
+### M6-1. ビルドとテスト
+
+| # | 手順 | 期待 | 種別 |
+|---|---|---|---|
+| 1-1 | `npm run typecheck` | エラー0（shared / worker / web / scripts） | 自動 |
+| 1-2 | `npm test` | shared 85件・worker 338件すべて green | 自動 |
+| 1-3 | `npm run build` | `web/dist/` に加えて `manifest.webmanifest` と `sw.js` が出る（PWA v1.3.0 / precache 15件） | 手動 |
+| 1-4 | `npm run check:bundle` | 本番エントリ・一時エントリの両方でモック識別子が0件 | 自動 |
+
+### M6-2. オートパイロットをオンにする（SPEC §7.7 / §12.3）
+
+スクリーンショットは `docs/screenshots/m6-*.png`。
+
+| # | 手順 | 期待 | 画像 |
+|---|---|---|---|
+| 2-1 | 自動タブを開く | 「止まっています」→ 頻度 → いつ出すか → どの型で書くか → 何から書くか → リンク → 承認方式 → 上限 → 分かったこと → したこと の順 | m6-autopilot |
+| 2-2 | ネタ源のチップを全部オフにする | 「いまはオンにできません。参考情報が1件もありません…」が**その場で**出る（設定を引き直している） | — |
+| 2-3 | その状態で [オンにする] | 同じ文言がトーストで出る。オンにならない | — |
+| 2-4 | 設定でAIキーを「この端末にだけ保存」にしてから自動タブ | 「AIキーがサーバーに保存されていません…」 | — |
+| 2-5 | アカウントを `needs_reauth` にする | 「このアカウントは再接続が必要です」 | — |
+| 2-6 | ライセンスを `revoked` にする | 「ライセンスが無効になっています」 | — |
+| 2-7 | 4つとも満たして [オンにする] | 「オンにしました」。ApBar が「次の下書きを準備しています」に変わる。`ap_log` に1行 | — |
+| 2-8 | 頻度・時間帯・型・リンク・承認方式・上限を触る | 押すたびに保存される（`PUT /autopilot`）。再読み込みしても残る | m6-autopilot |
+| 2-9 | 「使わない言葉」に文字を入れて欄の外をタップ | 「使わない言葉を保存しました」 | — |
+
+### M6-3. 下書きができる（`ap_plan`。SPEC §9.4）
+
+| # | 手順 | 期待 |
+|---|---|---|
+| 3-1 | 承認方式を「取消可」・4時間前にして毎時の cron | `queue` に `source='autopilot'` `status='scheduled'` が1件。`approve_deadline = scheduled_at − 4時間` |
+| 3-2 | キュー画面の予約タブ | その行に「自動」のタグと「あと◯日◯時間で自動的に出ます（取り消せます）」 |
+| 3-3 | ApBar | 「次は 9/11 21:00。9/11 17:00 まで取り消せます」（アカウントの timezone で組み立てる） |
+| 3-4 | もう一度、続けて毎時の cron を叩く | **増えない**。未消化の自動下書きは在庫として数える（SPEC §9.4-2） |
+| 3-5 | 承認方式を「毎回承認する」にして cron | `status='pending_approval'`、`approve_deadline` は NULL |
+| 3-6 | 承認方式を「全部おまかせ」にして cron | `status='scheduled'`、`approve_deadline` は NULL |
+| 3-7 | `ap_log` | 「9/11 21:00の下書きを作りました（呼びかけ型 / ネタ源: ◯◯）」 |
+| 3-8 | リンクの置き場所が「コメントに置く」のとき本文 | 本文に URL が入らず、コメント①の末尾にリンクが付く |
+
+### M6-4. 通知と、メールからの承認/取消（SPEC §9.5 / §7.9 / §10.5）
+
+`approve_deadline` を過ぎるまで通知は出ない。手で確かめるときは行の `approve_deadline` を
+過去にずらしてから毎時の cron を叩く:
+
+```bash
+npx wrangler d1 execute threads-autopilot --local \
+  --command "UPDATE queue SET approve_deadline='2026-01-01T00:00:00.000Z' WHERE source='autopilot' AND status='scheduled'"
+curl "http://127.0.0.1:8787/cdn-cgi/handler/scheduled?cron=0+*+*+*+*"
+# worker のコンソールに [email:dummy] … 本文の中に {APP_ORIGIN}/a/<token> が出る
+```
+
+| # | 手順 | 期待 |
+|---|---|---|
+| 4-1 | 締切前に cron | 送らない（`notified_at` は NULL のまま） |
+| 4-2 | 締切後に cron | 件名「◯/◯ ◯◯:◯◯ に投稿します（取り消せます）」。本文に取消のURLだけ（承認リンクは出さない） |
+| 4-3 | 承認方式が「毎回承認する」のとき | 件名「…の下書きを承認してください」。承認と取消の**両方**のURL |
+| 4-4 | もう一度 cron | 送らない（`notified_at` が入っている） |
+| 4-5 | 設定 → 通知 → 「メールで知らせる」をオフ | 送らない。行には印だけ付いて、毎時見に行かない |
+| 4-6 | メール本文の URL を **Cookie なし**で GET | 確認画面（HTML）。ボタンは1つ、同じURLへの POST フォーム。まだ状態は変わらない |
+| 4-7 | 同じ URL に POST | 「取り消しました」。`queue.status='cancelled'`、`ap_log` に「メールのリンクから取り消しました」、`audit_log` に `queue.cancel.email` |
+| 4-8 | もう一度 POST | 「この操作はすでに完了しています」（エラーにしない） |
+| 4-9 | すでに `done` の行のトークンで POST | 「もう投稿されています」。`action_token_used_at` は **NULL のまま**（消費しない） |
+| 4-10 | 署名を1文字書き換えて POST | 「リンクの有効期限が切れています」（どこで落ちたかは出さない） |
+| 4-11 | 同じIPから1分に21回 | 21回目が 429「しばらく待ってからお試しください」 |
+
+curl でなぞる場合（トークンはメール本文からコピーする）:
+
+```bash
+T='<メール本文の /a/ 以降>'
+curl -s "http://127.0.0.1:8787/a/$T"        | grep -oE '<h1>[^<]*</h1>|method="post"'
+curl -s -X POST "http://127.0.0.1:8787/a/$T" | grep -oE '<h1>[^<]*</h1>'   # → 取り消しました
+curl -s -X POST "http://127.0.0.1:8787/a/$T" | grep -oE '<h1>[^<]*</h1>'   # → この操作はすでに完了しています
+```
+
+Cookie を一切送っていないことが要件（セッションは `SameSite=Strict` なので、メールからの
+遷移には付かない。SPEC §7.9）。`curl` は既定で Cookie を送らないので、そのままで確認になる。
+
+### M6-5. 期限後に投稿される / 取り消したら出ない
+
+| # | 手順 | 期待 |
+|---|---|---|
+| 5-1 | 自動の行の `scheduled_at` を過去にして5分の cron | `publishing` を経て `done`。`result_ids` が入る。ツリーのコメントは `commentDelaySec`（既定120秒）後の実行で付くので、cron を2〜3回叩く |
+| 5-2 | 取り消してから同じことをする | `cancelled` のまま。`result_ids` は空 |
+| 5-3 | 投稿に失敗させる（本文を500文字超にする等） | `failed` になり、`publish_failed` のメールが出る。自動の行なら `ap_log` に残り `consecutive_failures` が増える |
+| 5-4 | 失敗を3回続ける | `autopilot.enabled=0` になり `ap_stopped` のメール。画面の「したこと」に「3回続けて失敗したので…」 |
+
+### M6-6. 採点と学習（`ap_score`。SPEC §9.2 / §12.3）
+
+| # | 手順 | 期待 | 画像 |
+|---|---|---|---|
+| 6-1 | 日次の cron | `post_metrics_history` に `checkpoint='48h'` の行がある投稿だけ採点される。48h 行の無い投稿には `tags_json.scored` が付かない | — |
+| 6-2 | 自動タブの「分かったこと」 | 「型別」と「枠別」の2つ。列は 型/枠｜平均表示回数｜いいね率｜本数 | m6-autopilot-learning |
+| 6-3 | `n < 10` の行 | 3列とも「集計中（あと◯本）」。数字は出さない | m6-autopilot-learning |
+| 6-4 | `n >= 10` の行 | 「平日 21時台 / 3,100 / 2.9% / 12」のように出る。**倍率・おすすめ・予測は出ない** | m6-autopilot-learning |
+| 6-5 | 表の下の1行 | 「投稿から48時間後の数字をもとに集計しています。ホームの表示回数（最新値）とは一致しません。AIは本文を書くだけで、この集計には関わりません」 | m6-autopilot-learning |
+| 6-6 | 分布の母数が10本未満のアカウント | 採点そのものを見送る（`scored` を付けず、次の日次で拾い直す） | — |
+
+### M6-7. 通知設定と PWA（SPEC §7.8 / §12.4）
+
+| # | 手順 | 期待 | 画像 |
+|---|---|---|---|
+| 7-1 | 設定 → 通知 | メール（既定オン）・プッシュ（既定オフ）・まとめて知らせる時刻（既定8時） | m6-settings-notifications |
+| 7-2 | `VAPID_PUBLIC_KEY` が未設定のとき | プッシュのスイッチが押せず、「サーバーに鍵が設定されていないので、いまは使えません」 | m6-settings-notifications |
+| 7-3 | 鍵を入れてプッシュをオン | 通知の許可を求め、許可されたら `push_subscriptions` に1行（`json` は暗号化済みで、endpoint が平文で読めない）。断られたら設定は変わらない | — |
+| 7-4 | 同じ端末でもう一度オン | 行は増えない（`user_id` + endpoint から決まる id） | — |
+| 7-5 | `npm run build` → `web/dist/manifest.webmanifest` | `name` が「Threads オートパイロット」、`display: standalone`、飛行機のアイコン3枚（192 / 512 / maskable 512） | — |
+| 7-6 | `web/dist/sw.js` | precache は静的資産15件だけ。`registerRoute` は SPA のフォールバック1本で、`denylist:[/^\/api\//,/^\/a\//]`。`runtimeCaching` は無い（＝API はキャッシュしない） | — |
+
+`sw.js` の中身を機械的に確かめる:
+
+```bash
+node -e '
+const s=require("fs").readFileSync("web/dist/sw.js","utf8");
+const urls=[...(s.match(/precacheAndRoute\(\[(.*?)\],/s)?.[1]??"").matchAll(/url:"([^"]+)"/g)].map(x=>x[1]);
+console.log("precache:", urls.length, "API を含む:", urls.some(u=>u.startsWith("/api")||u.includes("/a/")));
+console.log(s.match(/denylist:\[[^\]]*\]/)?.[0]);
+'
+```
+
+アイコンを作り直すときは `npm run make:icons`（`scripts/make-icons.mjs`。画像変換の依存を
+足さないよう、Node の zlib だけで PNG を書いている）。
+スクリーンショットの取り直しは `node scripts/shots.mjs m6`（ヘッドレス Chrome を CDP で動かす）。
+
+### M6-8. 自動テストで担保していること
+
+`shared/test/autopilot.test.ts`（27件）と `worker/test/autopilot.test.ts`（40件）:
+
+- `percentile` / `scorePost`（null の項は分母からも外す・carry と ctr の上限・
+  `weights='followers'` で ctr が効かない）/ `pickHook`（ローテーションと fixed）/
+  `postsForDay`（合計が必ず `perWeek` になる）/ `toLearningAggregate`（`n<10` は null）
+- ON にできない4条件それぞれで `PUT` が 409 を返し、理由が日本語で付く
+- 48h 行のある投稿だけ採点され、`learning` が4次元で増える。2回走らせても n が増えない。
+  母数10未満は見送る。48h 行を後から入れると次の日次で採点される
+- 承認方式ごとの `status` と `approve_deadline`。すでに足りていれば作らない。
+  先の日に置かれた下書きも在庫として数える（毎時走らせても積み上がらない）
+- `needs_reauth` / ライセンス `revoked` では計画しない。3連続失敗で自動停止＋メール
+- `link_placement='comment'` の本文URLで AP のキューが `validatePost` に弾かれ、
+  手で書いた投稿（`manual`）は通る
+- `/a/:token`: GET は消費しない・POST は1回だけ成立し2回目は「すでに完了しています」・
+  `publishing|done` は遷移も消費もしない・期限切れと壊れた署名・1分20回のレート制限
+- 計画 → 通知 → 期限後に投稿されるまでの一巡（時刻を進める）と、取り消したら出ないこと
+- `/notifications` の既定値と更新、Push 購読の暗号化・重複しないこと
+
+`worker/test/jobs.test.ts`: 台帳（`jobs` テーブル）の予算が尽きても、すでに終えた
+ジョブの結果を巻き添えにせず打ち切ること（M6 で毎時の投入が3倍になって踏んだ回帰）。
+
+### M6-9. 自動テストで担保していないこと（M6 の残り）
+
+| 項目 | いつ |
+|---|---|
+| Web Push の実送信（VAPID の JWT 署名と aes128gcm 暗号化） | M7（DECISIONS.md 2026-09-06） |
+| 実キーでの `ap_plan` の生成品質 | 実キーが用意できた時点 |
+| 実端末（iOS / Android）でのホーム画面追加と通知の受信 | M7 |
+| `digest_hour`（まとめて知らせる時刻）にもとづく配信 | M7（いまは設定値を持つだけ） |

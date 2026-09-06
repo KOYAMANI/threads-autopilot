@@ -40,7 +40,7 @@ import { findDuplicate, publishSettings } from "../lib/queue";
 import { sendEmail } from "../lib/email";
 import { notifyTargets } from "../lib/notify";
 
-/** 計画する先（SPEC §9.4-2「今後24時間」）。 */
+/** 計画する先（SPEC §9.4-2「今後24時間」）。枠の候補は §9.3 が7日先まで出す。 */
 export const PLAN_HORIZON_MS = 24 * 3_600_000;
 /** 同じネタ源を再び使えるようになるまで（SPEC §9.4-3）。 */
 export const SOURCE_REUSE_DAYS = 7;
@@ -328,8 +328,12 @@ async function planOne(
 /* ── 何本足りないか（SPEC §9.4-2） ───────────────────── */
 
 /**
- * 今後24時間で作るべき本数。`per_week/7` の日割りから、すでにある自動下書き
- * （`pending_approval|scheduled`）を差し引く。
+ * 今後24時間で作るべき本数。`per_week/7` の日割りから、**まだ出ていない自動下書き**
+ * （`source='autopilot'` の `pending_approval|scheduled`）を差し引く（SPEC §9.4-2）。
+ *
+ * 差し引くのは「24時間以内のぶん」ではなく**未消化の全部**。枠が埋まっていて先の日に
+ * 置かれた下書きを数え落とすと、毎時それを無視してもう1本作り、どんどん先へ積み上がる
+ * （ブラウザ確認で踏んだ）。`daily_limit` は枠の側で効くので、在庫で止めるのが正しい。
  */
 export async function neededCount(
   db: Db,
@@ -343,13 +347,11 @@ export async function neededCount(
     ).getDay(),
   );
   const want = postsForDay(ap.per_week, dow);
-  const until = new Date(now.getTime() + PLAN_HORIZON_MS).toISOString();
   const have = await db.first<{ n: number }>(
     `SELECT COUNT(*) AS n FROM queue
        WHERE account_id=? AND source='autopilot' AND status IN ('pending_approval','scheduled')
-         AND scheduled_at IS NOT NULL AND scheduled_at<=?`,
+         AND scheduled_at IS NOT NULL`,
     account.id,
-    until,
   );
   return Math.max(0, Math.min(MAX_PLANNED_PER_RUN, want - (have?.n ?? 0)));
 }

@@ -121,6 +121,9 @@ export default function Autopilot() {
               patchSource.mutate(
                 { id, enabledForAp: enabled },
                 {
+                  // ネタ源が0件になると ON にできなくなる（SPEC §7.7）。
+                  // 判定はサーバー側なので、設定そのものを引き直して警告文を追いつかせる
+                  onSuccess: () => void ap.refetch(),
                   onError: (e) =>
                     toast.show(e instanceof ApiError ? e.message : "保存できませんでした", "bad"),
                 },

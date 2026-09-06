@@ -406,6 +406,34 @@ describe("ap_plan（SPEC §9.4）", () => {
     expect(await countQueue(f.accountId)).toBe(1);
   });
 
+  it("先の日に置かれた下書きも在庫として数える（毎時走らせても積み上がらない）", async () => {
+    const f = await fixture("plan4b");
+    await enableAp(f, { perWeek: 7, dailyLimit: 1 });
+    // 直近7日を手動の予約で埋めて、自動の枠が先の日にしか取れない状態を作る
+    const db = testDb();
+    for (let d = 0; d < 6; d++) {
+      await db.run(
+        `INSERT INTO queue (id, account_id, status, scheduled_at, body, comments_json, reply_control,
+            source, step, container_polls, result_ids_json, attempts, tags_json, source_ids_json,
+            created_at, updated_at)
+          VALUES (?,?, 'scheduled', ?, ?, '[]', 'everyone', 'manual', 0, 0, '[]', 0, '{}', '[]', ?, ?)`,
+        crypto.randomUUID(),
+        f.accountId,
+        new Date(NOW.getTime() + (d + 1) * 86_400_000).toISOString(),
+        `手動の予約 ${d}`,
+        NOW.toISOString(),
+        NOW.toISOString(),
+      );
+    }
+    // 毎時のつもりで6回まわす。1本作ったら、あとは在庫があるので作らない
+    for (let h = 0; h < 6; h++) {
+      await withAiMock(() =>
+        planAccount(makeJobContext(env, { now: new Date(NOW.getTime() + h * 3_600_000) }), f.accountId),
+      );
+    }
+    expect(await countQueue(f.accountId)).toBe(1);
+  });
+
   it("オフのアカウントは計画しない", async () => {
     const f = await fixture("plan5");
     const res = await withAiMock(() => planAccount(makeJobContext(env, { now: NOW }), f.accountId));

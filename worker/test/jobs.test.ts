@@ -8,7 +8,8 @@ import {
   STALE_RUNNING_MIN,
   type JobHandler,
 } from "../src/lib/jobs";
-import { BudgetExceeded } from "../src/lib/budget";
+import { BudgetExceeded, createBudget } from "../src/lib/budget";
+import { createDb } from "../src/lib/db";
 import { insertAccount, registerUser, testDb } from "./helpers";
 import { resetMock } from "../src/mock/threads";
 
@@ -17,6 +18,11 @@ const NOW = new Date("2026-09-06T00:00:00.000Z");
 beforeEach(() => {
   resetMock();
 });
+
+async function countAllJobs(): Promise<number> {
+  const row = await testDb().first<{ n: number }>("SELECT COUNT(*) AS n FROM jobs");
+  return row?.n ?? 0;
+}
 
 async function jobRow(id: string) {
   return testDb().first<{
@@ -137,6 +143,60 @@ describe("ジョブ基盤（SPEC §8.1）", () => {
     const id = (await enqueueJob(ctx, "publish", { accountId }))!;
     await runJobs(ctx, {});
     expect((await jobRow(id))?.status).toBe("done");
+  });
+});
+
+/* ── 台帳（jobs テーブル）側の予算切れ（M6 で踏んだ回帰） ── */
+
+describe("台帳の予算が尽きたとき（SPEC §8.1）", () => {
+  it("すでに終えたジョブの結果を巻き添えにせず、打ち切って次回に回す", async () => {
+    const u = await registerUser();
+    const accountId = await insertAccount({ userId: u.userId });
+    const ctx = makeJobContext(env, { now: NOW });
+    const ids: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      const id = await enqueueJob(ctx, "cleanup", { accountId, force: true });
+      ids.push(id!);
+    }
+
+    // 台帳の予算を絞る。runJobs は1本あたり3クエリ（拾う・押さえる・畳む）使うので、
+    // 8クエリ = stale の巻き戻し1 + 2本ぶん(6) + 3本目の SELECT で尽きる
+    const tight = makeJobContext(env, { now: NOW });
+    tight.sys = createDb(env.DB, createBudget({ dbQueries: 8, subrequests: 0, timeMs: 1e9 }));
+
+    const noop: JobHandler = async () => {};
+    const res = await runJobs(tight, { cleanup: noop });
+
+    expect(res.exhausted).toBe(true);
+    expect(res.done).toBeGreaterThan(0); // 終えたぶんは done のまま残る
+    const done = await testDb().first<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM jobs WHERE account_id=? AND status='done'",
+      accountId,
+    );
+    expect(done!.n).toBe(res.done);
+    // 残りは pending のまま。次の5分で続きから
+    const pending = await testDb().first<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM jobs WHERE account_id=? AND status IN ('pending','running')",
+      accountId,
+    );
+    expect(pending!.n).toBe(ids.length - res.done);
+  });
+
+  it("cron の投入が予算切れになっても投げず、積めたぶんは残る", async () => {
+    const u = await registerUser();
+    await insertAccount({ userId: u.userId });
+    const before = await countAllJobs();
+
+    // 毎時は1アカウントあたり3本（insights_recent / ap_plan / ap_notify）。1本の投入に
+    // 2クエリ（重複確認＋INSERT）使うので、アカウント一覧の1クエリと合わせて途中で尽きる。
+    // どのアカウントに当たるかはテストの実行順で変わるので、件数は全体で見る
+    const ctx = makeJobContext(env, { now: NOW });
+    ctx.sys = createDb(env.DB, createBudget({ dbQueries: 3, subrequests: 0, timeMs: 1e9 }));
+
+    await expect(enqueueForCron(ctx, "0 * * * *")).resolves.toBeUndefined(); // 投げない
+    const after = await countAllJobs();
+    expect(after).toBeGreaterThan(before); // 積めたぶんは消えない
+    expect(after - before).toBeLessThan(3); // 予算どおり途中で止まっている
   });
 });
 

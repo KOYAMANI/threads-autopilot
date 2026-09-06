@@ -90,8 +90,14 @@ export type JobHandler = (ctx: JobContext, job: RunningJob) => Promise<void>;
  * 再開できないので、台帳だけは別の予算で数える。SPEC §2.5 / §8.1 が
  * 「Paid の実測上限は1呼び出し1,000クエリ、既定800は余裕を200残した値」としており、
  * この枠はその200の内側に収まる。
+ *
+ * 内訳: `runJobs` は1本あたり3クエリ（拾う SELECT・押さえる UPDATE・畳む UPDATE）使うので
+ * `MAX_JOBS_PER_RUN` × 3 が下限。残りが `enqueueForCron` の投入（1本あたり
+ * 重複確認の SELECT ＋ INSERT の2クエリ）に回る。M6 で毎時の投入が
+ * アカウントあたり1本から3本（`insights_recent` / `ap_plan` / `ap_notify`）に増えたので、
+ * 150 のままだと `runJobs` のループだけで使い切って cron 全体が落ちていた。
  */
-export const JOB_BOOKKEEPING_QUERIES = 150;
+export const JOB_BOOKKEEPING_QUERIES = 190;
 
 function systemDb(env: Env): Db {
   return createDb(
@@ -204,6 +210,16 @@ export const WEEKLY_UTC_DAY = 0;
  * 5分ごとの cron は投入せず `runJobs()` だけを回す。
  */
 export async function enqueueForCron(ctx: JobContext, cron: string): Promise<void> {
+  try {
+    await enqueueForCronInner(ctx, cron);
+  } catch (e) {
+    // 台帳の予算切れで投入しきれなかっただけ。積めたぶんは `runJobs` に回し、
+    // 残りは次の cron が積む（同じ `type+account_id` は重複投入されない）
+    if (!isBudgetExceeded(e)) throw e;
+  }
+}
+
+async function enqueueForCronInner(ctx: JobContext, cron: string): Promise<void> {
   if (cron === CRON_5MIN) {
     // SPEC §8.2 は「runJobs() のみ」だが、publish（§8.3）を動かす入口はここしかない。
     // 出番のあるアカウントにだけ publish を積む。重複投入はしないので、同じアカウントの
@@ -282,8 +298,12 @@ const BACKOFF_MIN = [1, 2, 4, 8];
 export const MAX_JOB_ATTEMPTS = 5;
 /** running のまま放置されたジョブを pending に戻すまで（SPEC §8.1） */
 export const STALE_RUNNING_MIN = 10;
-/** 1回の runJobs で扱うジョブの本数の上限（暴走ガード） */
-export const MAX_JOBS_PER_RUN = 50;
+/**
+ * 1回の runJobs で扱うジョブの本数の上限（暴走ガード）。
+ * 台帳の予算（`JOB_BOOKKEEPING_QUERIES`）は1本あたり3クエリなので、
+ * ここを増やすときは向こうも一緒に上げる。
+ */
+export const MAX_JOBS_PER_RUN = 40;
 
 export type RunJobsResult = {
   processed: number;
@@ -330,19 +350,37 @@ export async function runJobs(
       break;
     }
 
-    const row = await ctx.sys.first<JobRow>(
-      "SELECT id, type, account_id, state_json, status, priority, next_run_at, attempts FROM jobs WHERE status='pending' AND next_run_at<=? ORDER BY priority ASC, next_run_at ASC LIMIT 1",
-      nowIso,
-    );
+    // 台帳の読み書き自体が予算切れになることもある（ジョブの本数が多いとき）。
+    // その場合も「打ち切って次回」に倒す — ここで throw すると、この呼び出しで
+    // すでに終わらせたジョブの結果まで巻き添えで捨てることになる（M6 で実際に踏んだ）
+    let row: JobRow | null;
+    try {
+      row = await ctx.sys.first<JobRow>(
+        "SELECT id, type, account_id, state_json, status, priority, next_run_at, attempts FROM jobs WHERE status='pending' AND next_run_at<=? ORDER BY priority ASC, next_run_at ASC LIMIT 1",
+        nowIso,
+      );
+    } catch (e) {
+      if (!isBudgetExceeded(e)) throw e;
+      result.exhausted = true;
+      break;
+    }
     if (!row) break;
 
     // 取り合いを避けるため status='pending' 付きで押さえる
-    const claim = await ctx.sys.run(
-      "UPDATE jobs SET status='running', updated_at=? WHERE id=? AND status='pending'",
-      nowIso,
-      row.id,
-    );
-    if (claim.changes === 0) continue;
+    let claimed = false;
+    try {
+      const claim = await ctx.sys.run(
+        "UPDATE jobs SET status='running', updated_at=? WHERE id=? AND status='pending'",
+        nowIso,
+        row.id,
+      );
+      claimed = claim.changes > 0;
+    } catch (e) {
+      if (!isBudgetExceeded(e)) throw e;
+      result.exhausted = true;
+      break;
+    }
+    if (!claimed) continue;
 
     const job: RunningJob = {
       id: row.id,
