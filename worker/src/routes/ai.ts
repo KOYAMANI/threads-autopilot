@@ -25,12 +25,36 @@ import {
   systemPrompt,
   type PromptConstraints,
 } from "../lib/ai";
+import { audit } from "../lib/audit";
 import { decrypt, encrypt } from "../lib/crypto";
+import { RATE_LIMITS, aiKey, rateAllow, rateRecord } from "../lib/rate";
 import type { Db } from "../lib/db";
 import type { Env } from "../env";
 import { SOURCE_SELECT, type SourceRow } from "./sources";
 
 const PROVIDERS = ["gemini", "openrouter"] as const;
+
+/** `/ai/test` `/ai/generate` `/ai/revise` の回数制限（1分10回、`ai:<user_id>`）。 */
+async function aiRateLimit(
+  c: { get: (k: "db" | "userId") => any },
+  next: () => Promise<void>,
+): Promise<Response | void> {
+  const db = c.get("db");
+  const userId = c.get("userId") as string | null;
+  if (!userId) return next();
+  const key = aiKey(userId);
+  const now = new Date();
+  const allowed = await rateAllow(db, key, RATE_LIMITS.ai.limit, RATE_LIMITS.ai.windowMin, now);
+  await rateRecord(db, key, now);
+  if (!allowed) {
+    return fail(
+      "RATE_LIMITED",
+      "少し早すぎます。1分ほど空けてからもう一度お試しください",
+      429,
+    );
+  }
+  return next();
+}
 
 /** 文体の見本に使う本数（SPEC §10.2）。 */
 const TEMPLATE_COUNT = 3;
@@ -206,6 +230,15 @@ async function constraintsFor(db: Db, account: AccountRow): Promise<PromptConstr
 export function aiRoutes() {
   const r = new Hono<AppEnv>();
 
+  /**
+   * AI を実際に呼ぶ3経路だけ回数制限をかける（M7。SPEC §5.1 の `rate_events` を流用）。
+   * 1リクエスト = 買い手の AI キーの課金1回なので、無制限にはしない。
+   * 設定の読み書き（`/settings`）は課金しないので対象外。
+   */
+  r.use("/test", aiRateLimit);
+  r.use("/generate", aiRateLimit);
+  r.use("/revise", aiRateLimit);
+
   /* ── 設定（SPEC §7.6） ───────────────────────────── */
 
   r.get("/settings", async (c) => {
@@ -252,6 +285,12 @@ export function aiRoutes() {
     );
 
     const next = await loadSettings(db, userId);
+    // キーの変更は監査に残す（SPEC §13 M7「キー変更」）。**キーそのものは書かない**
+    await audit(db, userId, "ai_key_change", {
+      provider: input.provider,
+      storeOnServer: input.storeOnServer,
+      keyReplaced: Boolean(input.key && input.key !== ""),
+    });
     return c.json(ok(toSummary(next)));
   });
 

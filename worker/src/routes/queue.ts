@@ -16,6 +16,7 @@ import {
   type SuggestSlotResponse,
 } from "@tap/shared";
 import { fail, type AppEnv } from "../app";
+import { audit } from "../lib/audit";
 import { loadOwnedAccount } from "../lib/accounts";
 import { recentAutoTags } from "../lib/autopilot";
 import { jobContextFrom } from "../lib/jobs";
@@ -313,6 +314,7 @@ export function queueRoutes() {
       account.id,
     );
     await schedulePublish(c, account.id, row.scheduled_at);
+    await audit(db, c.get("userId")!, "queue.approve", { accountId: account.id, queueId: row.id });
     const next = (await loadRow(db, account.id, row.id))!;
     return c.json(ok({ item: await itemOf(db, account.id, next) }));
   });
@@ -344,6 +346,7 @@ export function queueRoutes() {
       "予約を取り消しました",
       row.id,
     );
+    await audit(db, c.get("userId")!, "queue.cancel", { accountId: account.id, queueId: row.id });
     const next = (await loadRow(db, account.id, row.id))!;
     return c.json(ok({ item: await itemOf(db, account.id, next) }));
   });

@@ -13,6 +13,7 @@ import type {
 } from "@tap/shared";
 import { ok } from "@tap/shared";
 import { fail, type AppEnv } from "../app";
+import { audit } from "../lib/audit";
 import type { Db } from "../lib/db";
 import { hashPassword, sha256Hex, verifyPassword } from "../lib/crypto";
 import { sendEmail } from "../lib/email";
@@ -326,6 +327,10 @@ export function authRoutes() {
     const nowIso = now.toISOString();
     await db.run("UPDATE users SET last_login_at=? WHERE id=?", nowIso, user.id);
     const session = await createSession(db, user.id, c.req.header("User-Agent") ?? null, now);
+    // SPEC §13 M7「ログイン」を監査に残す。UA は端末の見分けがつく程度に切る
+    await audit(db, user.id, "login", {
+      ua: (c.req.header("User-Agent") ?? "").slice(0, 120),
+    }, now);
 
     return new Response(
       JSON.stringify(ok({ user: toUserSummary({ ...user, last_login_at: nowIso }) })),

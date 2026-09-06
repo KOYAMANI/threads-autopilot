@@ -489,3 +489,20 @@ export type PushSubscribeRequest = {
 };
 
 export type PushSubscribeResponse = { id: string };
+
+/* ── ライセンス・退会・書き出し（SPEC §7.8 / §13 M7） ── */
+
+/** 設定画面に出すライセンス。**キー全体は返さない**（末尾4桁と状態だけ）。 */
+export type LicenseSummary = {
+  /** キーの末尾4桁。`TAP-XXXX-XXXX-ABCD` の `ABCD` */
+  keyTail: string;
+  status: "unused" | "active" | "revoked";
+  issuedAt: string;
+  activatedAt: string | null;
+};
+
+export type LicenseResponse = { license: LicenseSummary };
+
+/** `DELETE /api/users/me`。パスワードをもう一度確かめる（SPEC §7.8）。 */
+export type DeleteUserRequest = { password: string };
+export type DeleteUserResponse = { deleted: true };

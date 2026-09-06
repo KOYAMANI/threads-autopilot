@@ -13,6 +13,7 @@ import { fullSyncJob } from "./sync";
 import { apPlanJob } from "./plan";
 import { apNotifyJob } from "./notify";
 import { apScoreJob } from "./score";
+import { dailyDigestJob } from "./digest";
 
 export const HANDLERS: Partial<Record<JobType, JobHandler>> = {
   publish: publishJob,
@@ -29,4 +30,5 @@ export const HANDLERS: Partial<Record<JobType, JobHandler>> = {
   ap_plan: apPlanJob,
   ap_notify: apNotifyJob,
   ap_score: apScoreJob,
+  daily_digest: dailyDigestJob,
 };

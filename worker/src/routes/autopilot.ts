@@ -24,6 +24,7 @@ import {
 } from "@tap/shared";
 import { fail, type AppEnv } from "../app";
 import { loadOwnedAccount } from "../lib/accounts";
+import { audit } from "../lib/audit";
 import {
   AUTOPILOT_SELECT,
   BLOCKER_MESSAGE,
@@ -285,6 +286,10 @@ export function autopilotRoutes() {
         input.enabled ? "plan" : "stopped",
         input.enabled ? "オートパイロットをオンにしました" : "オートパイロットをオフにしました",
       );
+      // SPEC §13 M7「AP ON/OFF」を監査に残す
+      await audit(db, c.get("userId")!, input.enabled ? "autopilot.on" : "autopilot.off", {
+        accountId: account.id,
+      });
     }
 
     return c.json(ok(toResponse(next, blockers)));

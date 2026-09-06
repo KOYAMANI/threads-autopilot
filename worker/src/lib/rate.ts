@@ -6,6 +6,7 @@
  * | ログイン                   | login:<email 小文字>  | 失敗だけ（成功で消す）    | 10分に10回  |
  * | パスワード再設定の要求      | forgot:<email 小文字> | 全リクエスト             | 10分に3回   |
  * | メールからの承認/取消(§7.9) | action:<ip>          | 全リクエスト（GET/POST） | 1分に20回   |
+ * | AI 呼び出し（M7）          | ai:<user_id>         | 全リクエスト             | 1分に10回   |
  *
  * 窓の外の行は cleanup ジョブ（SPEC §8.7、1日）が消す。
  */
@@ -15,6 +16,15 @@ export const RATE_LIMITS = {
   login: { limit: 10, windowMin: 10 },
   forgot: { limit: 3, windowMin: 10 },
   action: { limit: 20, windowMin: 1 },
+  /**
+   * AI 呼び出し（`/ai/generate` `/ai/revise` `/ai/test`、M7 で追加）。1分に10回。
+   *
+   * SPEC には窓が書かれていないが、ここだけ無制限だと 1 リクエスト = 買い手の
+   * AI キーの課金 1 回になる。画面から出せるのは「3案」ボタンの連打くらいなので、
+   * 手が滑った程度では当たらず、スクリプトで回されたら止まる値にする。
+   * キーは `ai:<user_id>`（IP ではなく本人。認証済みの経路なので）。
+   */
+  ai: { limit: 10, windowMin: 1 },
 } as const;
 
 export function loginKey(email: string): string {
@@ -25,6 +35,9 @@ export function forgotKey(email: string): string {
 }
 export function actionKey(ip: string): string {
   return `action:${ip}`;
+}
+export function aiKey(userId: string): string {
+  return `ai:${userId}`;
 }
 
 /** 窓の中の件数。 */

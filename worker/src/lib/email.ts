@@ -12,7 +12,11 @@ export type EmailTemplate =
   | "publish_failed"
   | "token_expiring"
   | "needs_reauth"
-  | "ap_stopped";
+  | "ap_stopped"
+  /** 退会の完了（SPEC §7.8）。宛先の行はもう消えているので直接送る */
+  | "account_deleted"
+  /** 日次ダイジェスト（SPEC §4 `notifications.digest_hour`、M7） */
+  | "daily_digest";
 
 export type SentEmail = {
   to: string;
@@ -57,6 +61,9 @@ export type TemplateVars = {
   token_expiring: { username: string; days: string; appOrigin: string };
   needs_reauth: { username: string; appOrigin: string };
   ap_stopped: { username: string; reason: string; appOrigin: string };
+  account_deleted: { appOrigin: string };
+  /** `lines` は「@user 2本 / 表示 1,200 / いいね 30」を改行で連ねたもの */
+  daily_digest: { date: string; lines: string; failures: string; appOrigin: string };
 };
 
 /** 本文を読みやすい長さに切る（メールに投稿の全文を貼らない）。 */
@@ -179,6 +186,36 @@ function render(template: EmailTemplate, vars: Record<string, string>): Rendered
           `3回続けて失敗したためです。最後の理由: ${vars.reason ?? ""}`,
           "",
           "原因を直したら、自動の画面からもう一度オンにしてください。",
+          "",
+          vars.appOrigin ?? "",
+        ].join("\n"),
+      };
+
+    case "account_deleted":
+      return {
+        subject: "【Threads オートパイロット】退会が完了しました",
+        text: [
+          "退会の手続きが終わりました。",
+          "",
+          "投稿の記録・数字・キュー・参考情報・AIキー・Threadsのトークンは、すべて消えました。",
+          "ライセンスキーも無効になっています。もう一度使うことはできません。",
+          "",
+          "ご利用ありがとうございました。",
+          "",
+          vars.appOrigin ?? "",
+        ].join("\n"),
+      };
+
+    case "daily_digest":
+      return {
+        subject: `【Threads オートパイロット】${vars.date ?? ""} のまとめ`,
+        text: [
+          `${vars.date ?? ""} の結果です。`,
+          "",
+          vars.lines && vars.lines !== "" ? vars.lines : "投稿はありませんでした。",
+          ...(vars.failures && vars.failures !== "" ? ["", "失敗:", vars.failures] : []),
+          "",
+          "くわしくはアプリのホームで見られます。",
           "",
           vars.appOrigin ?? "",
         ].join("\n"),

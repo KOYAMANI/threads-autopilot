@@ -26,6 +26,8 @@ import { sourceRoutes } from "./routes/sources";
 import { aiRoutes } from "./routes/ai";
 import { autopilotRoutes } from "./routes/autopilot";
 import { notificationRoutes, pushRoutes } from "./routes/notifications";
+import { exportRoutes } from "./routes/export";
+import { userRoutes } from "./routes/users";
 
 export type Vars = {
   db: Db;
@@ -106,6 +108,8 @@ export function createApp() {
   app.route("/ai", aiRoutes());
   app.route("/notifications", notificationRoutes());
   app.route("/push", pushRoutes());
+  app.route("/export", exportRoutes());
+  app.route("/users", userRoutes());
 
   app.notFound(() => fail("NOT_FOUND", "見つかりませんでした", 404));
 

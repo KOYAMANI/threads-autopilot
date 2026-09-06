@@ -35,6 +35,7 @@ export const JOB_TYPES = [
   "ap_plan",
   "ap_notify",
   "ap_score",
+  "daily_digest",
 ] as const;
 
 export type JobType = (typeof JOB_TYPES)[number];
@@ -55,6 +56,8 @@ export const JOB_PRIORITY: Record<JobType, number> = {
   insights_old: 8,
   demographics: 8,
   ap_score: 7,
+  // 日次ダイジェスト（M7）。急がないので採点のあと
+  daily_digest: 8,
   cleanup: 9,
 };
 
@@ -239,6 +242,9 @@ async function enqueueForCronInner(ctx: JobContext, cron: string): Promise<void>
       await enqueueJob(ctx, "ap_plan", { accountId: a.id });
       await enqueueJob(ctx, "ap_notify", { accountId: a.id });
     }
+    // 日次ダイジェスト（M7）。買い手ごとの `digest_hour` はジョブの中で見るので、
+    // 毎時1本だけ積む（アカウント単位ではない）
+    await enqueueJob(ctx, "daily_digest");
     return;
   }
 
