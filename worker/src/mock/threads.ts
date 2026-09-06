@@ -296,7 +296,7 @@ export function mockCall(req: MockRequest): unknown {
       throw mockError(4, "Application request limit reached");
     }
     const replyToId = p.reply_to_id ?? null;
-    if (replyToId && !store.posts.some((x) => x.id === replyToId)) {
+    if (replyToId && !ensureKnownPost(store, replyToId, now)) {
       throw mockError(100, "Invalid parameter: reply_to_id not found");
     }
     const id = `${store.user.id}${String(9000 + store.seq++)}`;
@@ -403,14 +403,14 @@ export function mockCall(req: MockRequest): unknown {
     const sub = idMatch[3];
 
     if (sub === "insights" && req.method === "GET") {
-      const post = store.posts.find((x) => x.id === id);
+      const post = ensureKnownPost(store, id, now);
       if (!post) throw mockError(100, "Object with ID does not exist");
       const metrics = (p.metric ?? "views,likes,replies,reposts,quotes,shares").split(",");
       return insightsData(post, now, metrics);
     }
 
     if (sub === "repost" && req.method === "POST") {
-      const post = store.posts.find((x) => x.id === id);
+      const post = ensureKnownPost(store, id, now);
       if (!post) throw mockError(100, "Object with ID does not exist");
       const newId = `${store.user.id}${String(9000 + store.seq++)}`;
       return { id: newId };
@@ -432,7 +432,7 @@ export function mockCall(req: MockRequest): unknown {
           ? { id, status: "FINISHED" }
           : { id, status: "IN_PROGRESS" };
       }
-      const post = store.posts.find((x) => x.id === id);
+      const post = ensureKnownPost(store, id, now);
       if (post) return { ...post, status: "PUBLISHED" };
       throw mockError(100, "Object with ID does not exist");
     }
@@ -461,6 +461,31 @@ function publish(
     media_url: null,
     link_attachment_url: null,
   });
+}
+
+/**
+ * このストアが自分で発番したはずの ID を、消えていたら作り直す。
+ *
+ * モックの投稿はメモリ（＝Worker の isolate）にしか無い（SPEC §11）。`wrangler dev` は
+ * ファイル変更やアイドルで isolate を捨てるので、5分ごとの cron をまたぐ処理
+ * （ツリーのコメントは `commentDelaySec` 既定120秒あとの実行になる。SPEC §8.3）では
+ * 前の実行で公開した投稿が消えていて `reply_to_id not found` になる。実 API では
+ * 起こらない、モックだけの偽の失敗なので、ここで埋め戻す。
+ *
+ * 埋め戻すのは**このストアの発番規則に合う ID だけ**（`<user_id>` ＋ 4桁以上の数字）。
+ * 取り違えた ID や空文字はこれまでどおりエラーになるので、`reply_to_id` を渡し忘れた
+ * 実装の間違いは検出できる。
+ */
+function ensureKnownPost(store: MockStore, id: string, now: number): MockPost | undefined {
+  const found = store.posts.find((x) => x.id === id);
+  if (found) return found;
+  const m = new RegExp(`^${store.user.id}(\\d{4,})$`).exec(id);
+  if (!m) return undefined;
+  // 発番カウンタを追い越しておく（同じ ID を二度出さない）
+  const n = Number(m[1]);
+  if (Number.isFinite(n) && n >= 9000) store.seq = Math.max(store.seq, n - 9000 + 1);
+  publish(store, id, "（前の実行で公開した投稿）", null, now);
+  return store.posts.find((x) => x.id === id);
 }
 
 function page(posts: MockPost[], p: Params, store: MockStore) {

@@ -202,3 +202,21 @@ v1.1 の独立検証で、要求項目は全件反映されていたが、v1.1 �
 - 2026-09-06 ApBar は `GET /accounts/:id/autopilot/next`（SPEC §7.7）が M6 なので、いまはプレースホルダの文言だけを出す。M6 で `next` を読んで差し替える
 - 2026-09-06 アイコンは SPEC §2.2 が挙げる `lucide-react` を入れず、`web/src/components/Icons.tsx` のインライン SVG 9個で足りる範囲に留めた — 依存を1つ減らし、`currentColor` と `stroke-width` を揃えるため。必要になったら差し替えられる
 - 2026-09-06 `web/dist` の JS が約 750KB（gzip 225KB）になっている。ほとんどが recharts。SPA なので初回だけの読み込みだが、M7 の仕上げで `manualChunks` による分割を検討する
+
+## M4 実装で決めたこと
+
+- 2026-09-06 コンテナ待ちの上限で失敗にするとき、`container_polls` に**上限値そのもの**（10）を書いてから `failed` にする（引き継ぎ時の実装は9のまま残っていた）— SPEC §8.3 が「IN_PROGRESS なら container_polls+=1 …（10回で failed）」としており、「10回見た結果の失敗」が行に残らないと、あとから原因を読み解けない。step 1（画像）と phase 1（3ステップ方式のコメント）の両方で揃えた
+- 2026-09-06 5分ごとの cron は「`runJobs()` のみ」（SPEC §8.2）だが、`publish` を積む入口が他に無いので `enqueueForCron()` の5分の枝で `enqueuePendingPublishes()` を呼ぶ。出番のあるキュー（`scheduled` で時刻到来、または途中まで進んだ `publishing`）を持つアカウントにだけ積む — 同じ `type+account_id` は重複投入されない（§8.1）ので publish は常に1本になり、2本が並走して `publishing` の行を両方が拾いコメントを二重投稿する事故が起きない
+- 2026-09-06 `publish` ジョブは1回の実行の最後に自分を積み直さない。続きは次の5分の cron が拾う — 積み直すと「1本だけ」の保証が崩れる。代わりに、予約が入った・早まったとき（`POST /queue`, `PATCH`, `approve`, `publish-now`）はルート側から `enqueuePublish()` で前倒しし、待たせない
+- 2026-09-06 手動のキュー（`source='manual'`）では `validatePost()` を `linkPlacement:'body'` で呼ぶ。本文にリンクを置くこと自体は許し、見るのは空・500文字・リンク5本・NGワードだけにする — 「リンクはコメントに置く」（`link_placement`）はオートパイロットの設定（SPEC §9.6）であって、手で書いた投稿に押し付けるものではない。M6 で AP 経由のキューにだけ `linkPlacement` を効かせる
+- 2026-09-06 **`validatePost()` のリンク本数は「重複を除いた数」**（`extractUrls()` が重複を除くため。SPEC §8.5）。一方 Threads（とモック）は本文中の出現回数で数える。同じURLを2回書くと画面は通って投稿時に `LINK_LIMIT_EXCEEDED` で失敗する。どちらが正かは実 API でしか決まらないので、`scripts/smoke.ts`（SPEC §14）の確認項目として残し、M4 では実装を変えない — 失敗しても `failed` に日本語＋原文が残って作り直せる（壊れない側の食い違い）。`docs/qa.md` M4-3 に、失敗タブの確認材料としての作り方も書いた
+- 2026-09-06 `mock/threads.ts` に「自分が発番したはずの ID を、消えていたら作り直す」`ensureKnownPost()` を足した — モックの投稿はメモリ（Worker の isolate）にしか無い（SPEC §11）。`wrangler dev` はファイル変更やアイドルで isolate を捨てるので、コメントを120秒後に出すツリー投稿（§8.3）は次の cron で `reply_to_id not found` になる。実 API では起こらないモックだけの偽の失敗なので埋め戻す。埋め戻すのは `<user_id>` ＋4桁以上の数字という**このストアの発番規則に合う ID だけ**なので、`reply_to_id` を渡し忘れた実装の間違いはこれまでどおり検出できる
+- 2026-09-06 `queue` の直前チェック（SPEC §8.3）で「1日の投稿上限」は `queue` の `done|publishing` の件数で数え、「投稿間隔」は `posts` の `source<>'external'` の最新 `posted_at` で見る — 上限は「このアプリが今日出した本数」、間隔は「実際に出た時刻」が知りたいものなので、見る先が違う
+- 2026-09-06 画面のタブ「予約 / 下書き / 投稿済 / 失敗」（design-v0.2 §3-5）に7つの `queue.status` を割り当てる: 予約＝`scheduled|pending_approval|publishing`、下書き＝`draft`、投稿済＝`done`、失敗＝`failed|cancelled` — `publishing` と `pending_approval` に独立したタブを与えると、いま出ようとしているものが見つからなくなる。行のタグで状態は区別できる
+- 2026-09-06 「数字を見る」は行の展開に割り当てる（投稿詳細画面は作らない）— SPEC §12.1 に投稿詳細のルートが無く、ホームの行展開と同じ操作にすると学ぶことが増えない。操作シートの「数字を見る」はその行を開いてシートを閉じる
+- 2026-09-06 失敗の表示は、開いたパネルで日本語の理由から「（Threadsからの返答: …）」を落とし、原文を「Threads からの返答: …」の行に分けて出す — `threadsReason()`（SPEC §6.2）が理由の末尾に原文を足すので、そのまま出すと `error` と `error_raw` で同じ文字列が二度並ぶ
+- 2026-09-06 日時の入力（`datetime-local`）は端末のタイムゾーンではなく**アカウントの timezone** の壁時計として読む（`web/src/lib/format.ts` の `fromDateTimeLocal`）。そのために `shared/src/slot.ts` の `zonedHourToUtcMs` を分つきの `zonedTimeToUtcMs` に分け、時だけの版はその薄い包みにした — SPEC §2.4 が「表示はアカウントの timezone」としており、入力もそこに合わせないと海外から触ったときに1日ずれる
+- 2026-09-06 `approve_deadline` の残り時間は client で 30 秒ごとに数え直す（SPEC §12.3）。サーバーに聞き直さない
+- 2026-09-06 Create（作る）は M4 では「本文＋コメント①②③ → 下書き保存 / キューに入れる」までを作る。箱1（過去投稿の picker）・箱2（参考情報）・3案生成は M5 — キューの3経路を人が触って確かめられる最小の入口が要るため。`components/PostFields.tsx` と `components/ScheduleSheet.tsx` に切り出して、キューの編集・日時変更と同じ部品を使う
+- 2026-09-06 cron の手動実行は `--test-scheduled` 無しの `wrangler dev` でも叩ける `/cdn-cgi/handler/scheduled?cron=…` を使う（`docs/qa.md` M4-0）— `/__scheduled` は `--test-scheduled` が注入する middleware が無いと Worker の未知パスとして SPA の HTML に落ちる。既に起動している開発サーバーを止めずに確認できる
+- 2026-09-06 `worker/test/accounts.test.ts` の「`POST /sync` は重複投入せず…」で、ジョブを回す `now` を `max(NOW, Date.now())` にした — `POST /sync` は**ルート経由**なので `next_run_at` を実時計で書くのに対し、`runJobs` には固定の `NOW`（`2026-09-06T00:00:00Z`）を渡していた。実時間がその瞬間を追い越した時点（＝2026-09-06 00:00 UTC 以降）から「まだ期限が来ていない」と判定されて必ず落ちる、時計依存のテストになっていた。M4 の作業中に日付が変わって顕在化した。ルート経由で積んだジョブを回すテストは、両方の遅い方を使う

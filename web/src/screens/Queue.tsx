@@ -70,6 +70,14 @@ function useNow(intervalMs = 30_000): number {
   return now;
 }
 
+/**
+ * `threadsReason()`（SPEC §6.2）は日本語の理由の末尾に「（Threadsからの返答: #code message）」
+ * を足す。開いたパネルでは原文を別の行に出すので、ここでその部分を落として二度書きにしない。
+ */
+function withoutRaw(message: string): string {
+  return message.replace(/（Threadsからの返答:[^）]*）\s*$/, "").trim();
+}
+
 const STATUS_LABEL: Record<string, string> = {
   draft: "下書き",
   pending_approval: "承認待ち",
@@ -595,8 +603,10 @@ function QueueRow({
 
             {item.status === "failed" && (
               <div className="err-box">
-                <p className="err-msg">{item.error ?? "投稿できませんでした"}</p>
-                {item.errorRaw && <p className="err-raw num">{item.errorRaw}</p>}
+                <p className="err-msg">{withoutRaw(item.error ?? "投稿できませんでした")}</p>
+                {item.errorRaw && (
+                  <p className="err-raw num">Threads からの返答: {item.errorRaw}</p>
+                )}
                 <p className="muted" style={{ marginTop: "calc(var(--sp) * 0.5)" }}>
                   本文を直してから「もう一度ためす」を押すと、出せたところの続きから進みます。
                 </p>

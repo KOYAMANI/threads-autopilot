@@ -781,6 +781,11 @@ a.menu-item {
   white-space: nowrap;
 }
 
+.child > .num {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .row-actions {
   display: flex;
   flex-wrap: wrap;
@@ -879,8 +884,9 @@ a.menu-item {
 
 /* ── キュー（SPEC §12.3 / design-v0.2 §3-5） ────────── */
 
-/* 入力の見出し行（ラベル＋文字数カウンタ） */
-.field-head {
+/* 入力の見出し行（ラベル＋文字数カウンタ）。
+   `.field > span` の display:block より詳細度を上げる必要がある */
+.field > .field-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -986,10 +992,17 @@ a.menu-item {
   color: var(--bad);
 }
 
+/* たたんだ行では2行で切る（全文と原文は開いたパネルに出す） */
 .row-error {
   margin-top: calc(var(--sp) * 0.75);
   font-size: 0.75rem;
+  line-height: 1.5;
   color: var(--bad);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .row-note {

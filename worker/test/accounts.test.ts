@@ -243,7 +243,11 @@ describe("sync / diagnose / patch（SPEC §7.1）", () => {
     const running = await api("GET", `/api/accounts/${accountId}/sync`, { cookie: u.cookie });
     expect(running.body.data).toEqual({ running: true, progress: 0, total: SYNC_TOTAL_PAGES });
 
-    await runJobs(makeJobContext(env, { now: NOW }));
+    // `POST /sync` はルート経由なので `next_run_at` を**実時計**で書く。ジョブを回す側の
+    // `now` が実時計より前だと「まだ期限が来ていない」と判定されて進まない（固定の NOW を
+    // そのまま渡すと、実時間が NOW を追い越した日から落ちる）。両方の遅い方を使う
+    const runAt = new Date(Math.max(NOW.getTime(), Date.now()));
+    await runJobs(makeJobContext(env, { now: runAt }));
     const done = await api("GET", `/api/accounts/${accountId}/sync`, { cookie: u.cookie });
     expect(done.body.data).toEqual({
       running: false,
