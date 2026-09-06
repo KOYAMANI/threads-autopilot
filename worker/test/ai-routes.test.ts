@@ -4,7 +4,9 @@
  */
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
+import { classifyHook } from "@tap/shared";
 import { api, insertAccount, mockToken, registerUser, testDb } from "./helpers";
+import { topTemplates } from "../src/routes/ai";
 import { resetMock } from "../src/mock/threads";
 
 beforeEach(() => {
@@ -344,5 +346,61 @@ describe("POST /api/ai/revise（SPEC §7.6）", () => {
       }),
     );
     expect(res.status).toBe(400);
+  });
+});
+
+/* ── 文体の見本（SPEC §10.2「型が重ならないように上位3本」） ── */
+
+describe("topTemplates（SPEC §10.2）", () => {
+  it("表示回数の上位から、型が重ならないように3本だけ選ぶ", async () => {
+    const { userId } = await registerUser();
+    const accountId = await insertAccount({ userId, token: mockToken("tpl1") });
+    const db = testDb();
+    // views 降順で 警告型 / 警告型 / 疑問型 / 数字型 / 体験談型。
+    // 型が重なる2本目を飛ばして 警告型・疑問型・数字型 の3本になるはず
+    const rows: Array<[string, string, number]> = [
+      ["p1", "これは危険です。やめてください。", 500],
+      ["p2", "注意してください。損をします。", 400],
+      ["p3", "本当にそれでいいですか？", 300],
+      ["p4", "3つのコツを置いておきます", 200],
+      ["p5", "私がやってみて分かったこと", 100],
+    ];
+    for (const [id, text, views] of rows) {
+      await db.run(
+        `INSERT INTO posts (account_id, id, root_id, is_reply, text, posted_at, views, tags_json, source)
+           VALUES (?,?,?,0,?,?,?,'{}','external')`,
+        accountId,
+        id,
+        id,
+        text,
+        new Date().toISOString(),
+        views,
+      );
+    }
+    const got = await topTemplates(db, accountId);
+    expect(got).toHaveLength(3);
+    expect(got.map(classifyHook)).toEqual(["警告型", "疑問型", "数字型"]);
+    expect(new Set(got.map(classifyHook)).size).toBe(3);
+  });
+
+  it("返信と削除済みは見本にしない", async () => {
+    const { userId } = await registerUser();
+    const accountId = await insertAccount({ userId, token: mockToken("tpl2") });
+    const db = testDb();
+    await db.run(
+      `INSERT INTO posts (account_id, id, root_id, is_reply, text, posted_at, views, tags_json, source)
+         VALUES (?,'r1','p1',1,'これは返信です。',?,999,'{}','external'),
+                (?,'d1','d1',0,'これは削除済みです。',?,998,'{}','external'),
+                (?,'k1','k1',0,'これは残る本文です。',?,10,'{}','external')`,
+      accountId,
+      new Date().toISOString(),
+      accountId,
+      new Date().toISOString(),
+      accountId,
+      new Date().toISOString(),
+    );
+    await db.run("UPDATE posts SET deleted=1 WHERE account_id=? AND id='d1'", accountId);
+    const got = await topTemplates(db, accountId);
+    expect(got).toEqual(["これは残る本文です。"]);
   });
 });

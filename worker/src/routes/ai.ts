@@ -151,7 +151,7 @@ function hookOf(row: PostTextRow): string {
 }
 
 /** 指定が無いときの文体の見本。型が重ならないように上位から3本（SPEC §10.2）。 */
-async function topTemplates(db: Db, accountId: string): Promise<string[]> {
+export async function topTemplates(db: Db, accountId: string): Promise<string[]> {
   const rows = await db.all<PostTextRow>(
     `SELECT id, text, tags_json, views FROM posts
        WHERE account_id=? AND is_reply=0 AND deleted=0 AND text<>''

@@ -148,7 +148,95 @@ async function readCapped(res: Response): Promise<string> {
   return out;
 }
 
+/* ── 取りに行ってよい URL か（SSRF 対策） ─────────────── */
+
+/**
+ * 参考情報の `url` はユーザーが自由に入れられる。Worker はインターネット側にいるが、
+ * `localhost` やプライベートIP、`file:` を渡されて内部に取りに行く形（SSRF）を作らない。
+ * 名前解決の結果までは Workers から見られないので、URL の形で判定できる範囲を全部弾く。
+ */
+export const BLOCKED_URL_MESSAGE =
+  "このURLは取得できません。公開されている記事のURLを入力してください";
+
+/** ドット4つの IPv4 なら各オクテットを返す。違えば null。 */
+function ipv4Octets(host: string): number[] | null {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!m) return null;
+  const parts = m.slice(1, 5).map((s) => Number.parseInt(s, 10));
+  return parts.every((n) => n >= 0 && n <= 255) ? parts : null;
+}
+
+/** 公開インターネット上に無い IPv4 か（ループバック・私設・リンクローカル・共有・予約）。 */
+function isPrivateIpv4(octets: number[]): boolean {
+  const [a = 0, b = 0] = octets;
+  if (a === 0 || a === 10 || a === 127) return true; // 0/8, 10/8, 127/8
+  if (a === 169 && b === 254) return true; // 169.254/16 リンクローカル（メタデータ）
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16/12
+  if (a === 192 && b === 168) return true; // 192.168/16
+  if (a === 100 && b >= 64 && b <= 127) return true; // 100.64/10 CGNAT
+  if (a === 192 && b === 0) return true; // 192.0.0/24, 192.0.2/24
+  if (a === 198 && (b === 18 || b === 19)) return true; // 198.18/15 ベンチマーク
+  if (a >= 224) return true; // 224/4 マルチキャスト, 240/4 予約
+  return false;
+}
+
+/** `[...]` を外した IPv6 リテラルが公開インターネット上に無いか。 */
+function isPrivateIpv6(host: string): boolean {
+  const h = host.replace(/^\[|\]$/g, "").toLowerCase().split("%")[0] ?? "";
+  if (h === "::1" || h === "::" || h === "") return true;
+  if (/^f[cd]/.test(h)) return true; // fc00::/7 ユニークローカル
+  if (/^fe[89ab]/.test(h)) return true; // fe80::/10 リンクローカル
+  // IPv4 射影は IPv4 側の判定に回す。`URL` は `::ffff:127.0.0.1` を
+  // `::ffff:7f00:1` に正規化するので、点表記と16進表記の両方を見る
+  const dotted = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(h);
+  if (dotted?.[1]) {
+    const o = ipv4Octets(dotted[1]);
+    return o ? isPrivateIpv4(o) : true;
+  }
+  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(h);
+  if (hex) {
+    const hi = Number.parseInt(hex[1]!, 16);
+    const lo = Number.parseInt(hex[2]!, 16);
+    return isPrivateIpv4([hi >> 8, hi & 0xff, lo >> 8, lo & 0xff]);
+  }
+  return false;
+}
+
+const BLOCKED_HOST_SUFFIX = [".localhost", ".local", ".internal", ".home.arpa"];
+
+/**
+ * 取りに行ってよい `http`/`https` の URL なら正規化して返す。
+ * ダメなら `ExtractError`。リダイレクト先も毎回これを通す。
+ */
+export function assertFetchableUrl(input: string): URL {
+  let u: URL;
+  try {
+    u = new URL(input.trim());
+  } catch {
+    throw new ExtractError(BLOCKED_URL_MESSAGE);
+  }
+  // `file:` `data:` `gopher:` `ftp:` などは全部落とす
+  if (u.protocol !== "http:" && u.protocol !== "https:") {
+    throw new ExtractError(BLOCKED_URL_MESSAGE);
+  }
+  const host = u.hostname.toLowerCase().replace(/\.$/, "");
+  if (host === "" || host === "localhost") throw new ExtractError(BLOCKED_URL_MESSAGE);
+  if (BLOCKED_HOST_SUFFIX.some((s) => host.endsWith(s))) {
+    throw new ExtractError(BLOCKED_URL_MESSAGE);
+  }
+  const octets = ipv4Octets(host);
+  if (octets) {
+    if (isPrivateIpv4(octets)) throw new ExtractError(BLOCKED_URL_MESSAGE);
+  } else if (host.includes(":") || u.hostname.startsWith("[")) {
+    if (isPrivateIpv6(u.hostname)) throw new ExtractError(BLOCKED_URL_MESSAGE);
+  }
+  return u;
+}
+
 export type ExtractedUrl = { title: string; content: string; url: string };
+
+/** リダイレクトを自分で追う回数の上限。1ホップごとに `assertFetchableUrl` を通す。 */
+const MAX_REDIRECTS = 3;
 
 /** 記事URLから本文を取る（SPEC §10.4）。失敗は `ExtractError`。 */
 export async function extractUrlSource(
@@ -156,17 +244,26 @@ export async function extractUrlSource(
   options: ExtractOptions = {},
 ): Promise<ExtractedUrl> {
   const doFetch = options.fetchImpl ?? fetch;
+  // 入口で弾く。`redirect: "follow"` だと 302 で localhost に飛ばされても気づけないので、
+  // リダイレクトは手で追い、毎ホップ同じ検査をかける。
+  let target = assertFetchableUrl(url);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   let res: Response;
   try {
-    res = await doFetch(url, {
-      headers: { "User-Agent": BROWSER_UA, Accept: "text/html,application/xhtml+xml" },
-      signal: controller.signal,
-      redirect: "follow",
-    });
-  } catch {
-    throw new ExtractError();
+    for (let hop = 0; ; hop++) {
+      res = await doFetch(target.toString(), {
+        headers: { "User-Agent": BROWSER_UA, Accept: "text/html,application/xhtml+xml" },
+        signal: controller.signal,
+        redirect: "manual",
+      });
+      const location = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
+      if (!location) break;
+      if (hop >= MAX_REDIRECTS) throw new ExtractError();
+      target = assertFetchableUrl(new URL(location, target).toString());
+    }
+  } catch (e) {
+    throw e instanceof ExtractError ? e : new ExtractError();
   } finally {
     clearTimeout(timer);
   }
