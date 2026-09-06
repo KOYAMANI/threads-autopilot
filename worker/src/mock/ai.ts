@@ -9,18 +9,18 @@
  */
 
 /** プロンプトから「型を変えて3案」「この型で1案」の数を読む。 */
-function requestedCount(user: string): number {
+function mockRequestedCount(user: string): number {
   const m = /型を変えて(\d+)案/.exec(user) ?? /この型で(\d+)案/.exec(user);
   const n = m ? Number.parseInt(m[1] ?? "3", 10) : 3;
   return Math.min(5, Math.max(1, Number.isFinite(n) ? n : 3));
 }
 
 /** オートパイロットの生成（SPEC §10.3）は型が1つに固定されている。その型名を読む。 */
-function fixedHookOf(user: string): string | null {
+function mockFixedHookOf(user: string): string | null {
   return /型は「(.+?)」に固定/.exec(user)?.[1] ?? null;
 }
 
-function firstSection(user: string, heading: string): string {
+function mockFirstSection(user: string, heading: string): string {
   const re = new RegExp(`# ${heading}\\n([\\s\\S]*?)(?:\\n\\n# |$)`);
   return (re.exec(user)?.[1] ?? "").trim();
 }
@@ -29,12 +29,12 @@ function firstSection(user: string, heading: string): string {
  * 指示だけを取る。`buildRevisePrompt` は `# 指示` の後ろに見出しなしの一文
  * （「この1案だけを直して…」）を足すので、空行までで切る。
  */
-function instructionOf(user: string): string {
-  return firstSection(user, "指示").split("\n\n")[0]!.trim();
+function mockInstructionOf(user: string): string {
+  return mockFirstSection(user, "指示").split("\n\n")[0]!.trim();
 }
 
 /** 前回のモック注記を消す。何度直しても本文が積み上がらないようにする。 */
-function stripMockNote(body: string): string {
+function mockStripNote(body: string): string {
   return body
     .split("\n")
     .filter((line) => !/^（.*を反映しました）$/.test(line.trim()))
@@ -43,9 +43,15 @@ function stripMockNote(body: string): string {
     .trim();
 }
 
-/** 参考情報の見出し（`## タイトル`）を1つ拾って basis に使う。 */
-function sourceTitle(user: string): string {
-  const block = firstSection(user, "参考情報（ここに無いことを事実として書かない）");
+/**
+ * 参考情報の見出し（`## タイトル`）を1つ拾って basis に使う。
+ *
+ * 名前は `mock` 始まりで揃えてある。`scripts/check-bundle.sh` はこの識別子が本番バンドルに
+ * 0件であることでモックの混入を見るので、本番コード側と名前がぶつかると検査が壊れる
+ * （実際、`jobs/plan.ts` の `sourceTitle` とぶつかって誤検知した）。
+ */
+function mockSourceTitle(user: string): string {
+  const block = mockFirstSection(user, "参考情報（ここに無いことを事実として書かない）");
   const m = /^## (.+)$/m.exec(block);
   return m?.[1]?.trim() ?? "指示";
 }
@@ -75,7 +81,7 @@ export default function aiMockCall(input: MockAiInput): string {
   // revise は1案だけ返す（直前の案の本文の先頭に指示を織り込んだ体で差し替える）
   const isRevise = input.user.includes("# 直前の案");
   if (isRevise) {
-    const instruction = instructionOf(input.user);
+    const instruction = mockInstructionOf(input.user);
     let prev: { hook?: string; body?: string; comments?: string[] } = {};
     const block = /# 直前の案\n([\s\S]*?)(?:\n\n# |$)/.exec(input.user)?.[1] ?? "";
     try {
@@ -83,7 +89,7 @@ export default function aiMockCall(input: MockAiInput): string {
     } catch {
       prev = {};
     }
-    const lines = stripMockNote(prev.body ?? MOCK_BODIES[0]!).split("\n");
+    const lines = mockStripNote(prev.body ?? MOCK_BODIES[0]!).split("\n");
     const head = lines[0] ?? "";
     const rest = lines.slice(1).join("\n").trim();
     return JSON.stringify({
@@ -98,9 +104,9 @@ export default function aiMockCall(input: MockAiInput): string {
     });
   }
 
-  const n = requestedCount(input.user);
-  const basisFrom = sourceTitle(input.user);
-  const fixed = fixedHookOf(input.user);
+  const n = mockRequestedCount(input.user);
+  const basisFrom = mockSourceTitle(input.user);
+  const fixed = mockFixedHookOf(input.user);
   // オートパイロットは同じ枠に同じ本文が並ぶと重複判定（SPEC §8.3）で全部落ちるので、
   // ネタ源の名前で本文をずらす。乱数は使わない（同じ入力からは同じ本文）。
   const offset = fixed

@@ -5,6 +5,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   AccountSummary,
+  LinkSummary,
   ConnectAccountRequest,
   ConnectAccountResponse,
   DashboardPeriod,
@@ -66,5 +67,15 @@ export function useAccounts(enabled = true) {
     queryKey: ["accounts", "list", null] as const,
     enabled,
     queryFn: async () => (await api.get<{ accounts: AccountSummary[] }>("/accounts")).accounts,
+  });
+}
+
+/** アカウントのリンク一覧（SPEC §7.5）。オートパイロットの「リンク」設定で本数を出す。 */
+export function useLinks(accountId: string | null) {
+  return useQuery({
+    queryKey: accountKey(accountId ?? "-", "links"),
+    enabled: Boolean(accountId),
+    queryFn: async () =>
+      (await api.get<{ links: LinkSummary[] }>(`/accounts/${accountId}/links`)).links,
   });
 }

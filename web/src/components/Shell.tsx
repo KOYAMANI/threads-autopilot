@@ -46,7 +46,7 @@ export default function Shell() {
         onAccountTap={() => setDrawerOpen(true)}
         onAdd={() => navigate("/connect?add=1")}
       />
-      <ApBar enabled={Boolean(active?.autopilotEnabled)} />
+      <ApBar accountId={active?.id ?? null} enabled={Boolean(active?.autopilotEnabled)} />
 
       <motion.main
         key={pathname}

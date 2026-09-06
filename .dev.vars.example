@@ -20,7 +20,15 @@ RESEND_API_KEY=
 # 差出人アドレス（未設定なら noreply@example.com）
 MAIL_FROM=
 
-# Web Push（M6。M1 では未使用）
+# Web Push の鍵ペア（SPEC §7.8 / §12.4）。
+# 未設定なら設定画面のプッシュのスイッチが無効になり、購読の登録もできない（メールだけになる）。
+# 生成（どちらか）:
+#   npx web-push generate-vapid-keys
+#   openssl ecparam -name prime256v1 -genkey -noout -out vapid.pem \
+#     && openssl ec -in vapid.pem -pubout -outform DER | tail -c 65 | base64 | tr '+/' '-_' | tr -d '=\n'   # 公開鍵
+#     && openssl ec -in vapid.pem -outform DER | tail -c +8 | head -c 32 | base64 | tr '+/' '-_' | tr -d '=\n' # 秘密鍵
+# 公開鍵はブラウザに渡すので秘密ではない。秘密鍵は wrangler secret put で入れる。
+# 実際の送信は M7（DECISIONS.md 2026-09-06）。M6 は購読の登録・解除までを作る。
 VAPID_PUBLIC_KEY=
 VAPID_PRIVATE_KEY=
 

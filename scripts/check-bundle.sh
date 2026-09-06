@@ -32,7 +32,8 @@ trap cleanup EXIT
 # mock/threads.ts にしか無い識別子
 MARKERS=(SEED_TEXTS "Unsupported mock path" MockThreadsError mockCall callMock seedStore storeFor metricsFor resetMock "mock/threads")
 # mock/ai.ts にしか無い識別子（M5）
-MARKERS+=(MOCK_BODIES MOCK_COMMENTS MOCK_HOOKS aiMockCall requestedCount sourceTitle instructionOf stripMockNote fixedHookOf "mock/ai")
+# mock/ai.ts の識別子は `mock` 始まりで揃えてある（本番コードの名前とぶつかると誤検知するため）
+MARKERS+=(MOCK_BODIES MOCK_COMMENTS MOCK_HOOKS aiMockCall mockRequestedCount mockSourceTitle mockInstructionOf mockStripNote mockFixedHookOf mockFirstSection "mock/ai")
 
 # env の名前（THREADS_MOCK / AI_MOCK）はマーカーに入れない。
 # `shouldUseMock()` `mockAvailable()`（/api/health の表示用）は `DEV` 経由で書いてあり、

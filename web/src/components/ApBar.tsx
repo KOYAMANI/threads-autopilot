@@ -1,21 +1,39 @@
 /**
- * ApBar（オートパイロット帯。SPEC §12.2）。
+ * ApBar（オートパイロット帯。SPEC §12.2 / §7.7）。
  *
- * 本来は `GET /accounts/:id/autopilot/next`（SPEC §7.7）と連動して次の自動投稿を出すが、
- * オートパイロットは M6 なのでいまはプレースホルダの文言だけを出す。
- * M6 で `next` を読んで「9/6 21:00 に出ます（警告型）／取り消す」に差し替える。
+ * `GET /accounts/:id/autopilot/next` の1行をそのまま出す。文言はサーバー側で作る
+ * （「次は 9/7 21:00。17:00 まで取り消せます」）— アカウントの timezone で組み立てる
+ * 必要があり、端末の時計で作ると海外から触ったときにずれるため（SPEC §2.4）。
+ *
+ * 押すとオートパイロットの画面へ行く。帯そのものは操作しない。
  */
+import { useNavigate } from "react-router-dom";
+import { useApNext } from "../api/autopilot";
 import { PlaneIcon } from "./Icons";
 
-export default function ApBar({ enabled }: { enabled: boolean }) {
+export default function ApBar({
+  accountId,
+  enabled,
+}: {
+  accountId: string | null;
+  enabled: boolean;
+}) {
+  const navigate = useNavigate();
+  const next = useApNext(accountId);
+
+  // 読み込み中は、アカウント一覧が持っている enabled だけで暫定の文言を出す。
+  // 空欄にすると帯の高さが変わって画面が跳ねる
+  const text = next.data?.summary ?? (enabled ? "次の下書きを確かめています" : "オートパイロットはオフです");
+
   return (
-    <div className="chrome apbar" role="status">
+    <button
+      type="button"
+      className="chrome apbar"
+      onClick={() => navigate("/app/autopilot")}
+      aria-label={`オートパイロット: ${text}`}
+    >
       <PlaneIcon size={14} />
-      <span>
-        {enabled
-          ? "オートパイロットは M6 で動きます"
-          : "オートパイロットはまだオフです（設定は M6）"}
-      </span>
-    </div>
+      <span>{text}</span>
+    </button>
   );
 }

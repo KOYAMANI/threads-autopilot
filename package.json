@@ -21,7 +21,8 @@
     "seed:demo": "tsx scripts/seed-demo.ts",
     "licenses": "tsx scripts/make-licenses.ts",
     "smoke": "tsx scripts/smoke.ts",
-    "clean": "rm -rf node_modules */node_modules web/dist .wrangler *.tsbuildinfo"
+    "clean": "rm -rf node_modules */node_modules web/dist .wrangler *.tsbuildinfo",
+    "make:icons": "node scripts/make-icons.mjs"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",

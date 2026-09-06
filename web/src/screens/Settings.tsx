@@ -1,6 +1,6 @@
 /**
- * 設定（SPEC §12.3 Settings）。M5 では **AIキー（BYOK）の部分だけ**を作る。
- * アカウント管理・通知・リンク・診断・書き出し・退会は M7。
+ * 設定（SPEC §12.3 Settings）。AIキー（BYOK、M5）と通知（M6）。
+ * アカウント管理・リンク・診断・書き出し・退会は M7。
  *
  * 「キーをこの端末にだけ保存」を **ONにしようとした時点で、保存前に確認を出す**
  * （SPEC §12.3 / DECISIONS の M3「トーストでの事後通知にしない」）:
@@ -18,9 +18,11 @@ import {
   useTestAi,
   writeClientKey,
 } from "../api/ai";
+import { useNotifications, usePutNotifications } from "../api/autopilot";
 import { ApiError } from "../api/client";
 import Sheet from "../components/Sheet";
 import { useToast } from "../components/Toast";
+import { pushSupported, subscribePush, unsubscribePush } from "../lib/push";
 
 const PROVIDERS: Array<{ key: AiProvider; label: string; note: string }> = [
   { key: "gemini", label: "Gemini", note: "無料枠あり。YouTube の動画をそのまま読めます" },
@@ -207,9 +209,11 @@ export default function Settings() {
         </div>
       </section>
 
+      <NotificationCard />
+
       <section className="card section">
         <p className="muted">
-          アカウント管理・通知・リンク・診断・書き出し・退会は M7 で作ります。
+          アカウント管理・リンク・診断・書き出し・退会は M7 で作ります。
         </p>
       </section>
 
@@ -241,5 +245,125 @@ export default function Settings() {
         </div>
       </Sheet>
     </>
+  );
+}
+
+/* ── 通知（SPEC §7.8 / §10.5） ──────────────────────── */
+
+const DIGEST_HOURS = [7, 8, 9, 12, 18, 21];
+
+function NotificationCard() {
+  const toast = useToast();
+  const notifications = useNotifications();
+  const put = usePutNotifications();
+  const settings = notifications.data?.notifications ?? null;
+  const vapid = notifications.data?.vapidPublicKey ?? null;
+
+  const [pushBusy, setPushBusy] = useState(false);
+
+  const patch = (body: Parameters<typeof put.mutate>[0], ok: string) => {
+    put.mutate(body, {
+      onSuccess: () => toast.show(ok, "ok"),
+      onError: (e) =>
+        toast.show(e instanceof ApiError ? e.message : "保存できませんでした", "bad"),
+    });
+  };
+
+  /**
+   * プッシュは「設定の値」だけでなく **端末の購読**も切り替える（SPEC §7.8）。
+   * 許可が下りなかったら設定は変えない（オンに見えて届かない状態を作らない）。
+   */
+  const togglePush = async (currentlyOn: boolean) => {
+    if (!vapid) return;
+    setPushBusy(true);
+    try {
+      const res = currentlyOn ? await unsubscribePush() : await subscribePush(vapid);
+      if (!res.ok) {
+        toast.show(res.message, "bad");
+        return;
+      }
+      patch(
+        { pushEnabled: !currentlyOn },
+        currentlyOn ? "プッシュを止めました" : "この端末に通知します",
+      );
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  return (
+    <section className="card section">
+      <div className="section-head">
+        <h2>通知</h2>
+      </div>
+
+      {notifications.isPending && <p className="muted">読み込んでいます…</p>}
+
+      {settings && (
+        <>
+          <button
+            type="button"
+            role="switch"
+            className="switch-row"
+            aria-checked={settings.emailEnabled}
+            disabled={put.isPending}
+            onClick={() =>
+              patch(
+                { emailEnabled: !settings.emailEnabled },
+                settings.emailEnabled ? "メールを止めました" : "メールを送ります",
+              )
+            }
+          >
+            <span className="body">
+              <span className="t">メールで知らせる</span>
+              <span className="n">
+                自動投稿の下書き・投稿の失敗・トークンの期限。承認と取消のリンクが付きます
+              </span>
+            </span>
+            <span className="state">{settings.emailEnabled ? "オン" : "オフ"}</span>
+          </button>
+
+          <button
+            type="button"
+            role="switch"
+            className="switch-row"
+            aria-checked={settings.pushEnabled}
+            disabled={put.isPending || pushBusy || !vapid || !pushSupported()}
+            onClick={() => void togglePush(settings.pushEnabled)}
+          >
+            <span className="body">
+              <span className="t">この端末に通知する（プッシュ）</span>
+              <span className="n">
+                {!vapid
+                  ? "サーバーに鍵が設定されていないので、いまは使えません"
+                  : !pushSupported()
+                    ? "この端末では通知を使えません"
+                    : "ホーム画面に追加した端末に届きます"}
+              </span>
+            </span>
+            <span className="state">{settings.pushEnabled ? "オン" : "オフ"}</span>
+          </button>
+
+          <label className="field section">
+            <span>まとめて知らせる時刻</span>
+            <div className="chips" role="radiogroup" aria-label="通知の時刻">
+              {DIGEST_HOURS.map((h) => (
+                <button
+                  key={h}
+                  type="button"
+                  role="radio"
+                  className="chip"
+                  aria-checked={settings.digestHour === h}
+                  aria-pressed={settings.digestHour === h}
+                  onClick={() => patch({ digestHour: h }, `${h}時に知らせます`)}
+                >
+                  {h}時
+                </button>
+              ))}
+            </div>
+          </label>
+        </>
+      )}
+    </section>
   );
 }
