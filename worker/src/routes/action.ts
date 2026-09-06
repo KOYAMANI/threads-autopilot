@@ -121,7 +121,22 @@ async function loadQueue(db: Db, id: string): Promise<QueueRow | null> {
   );
 }
 
-/** SPEC §7.9 の3・4・5（遷移させずに返す状態）を判定する。 */
+const ALREADY_DONE: Outcome = {
+  status: 200,
+  title: "この操作はすでに完了しています",
+  message: "同じリンクは1回だけ使えます。",
+};
+
+/**
+ * SPEC §7.9 の3・4・5（遷移させずに返す状態）を判定する。
+ *
+ * 順番は 3（`publishing|done`）→ 5（トークン消費済み）→ 4（`cancelled|failed`）にしてある。
+ * 仕様書の並びは 3 → 4 → 5 だが、そのままだと **自分で取り消した直後の2回目**が
+ * 4 に当たり「すでに取り消されたか、投稿に失敗しています」になる。SPEC §13 M6 の完了条件は
+ * 「同じトークンは2回目で『すでに完了しています』になる」と定めているので、消費済みの
+ * 判定を先に置く。仕様書が 3 を最優先にしている理由（もう出てしまったことを伝える・
+ * 遷移も消費もしない）は変えていない。
+ */
 function terminalOutcome(row: QueueRow): Outcome | null {
   if (row.status === "publishing" || row.status === "done") {
     return {
@@ -130,6 +145,7 @@ function terminalOutcome(row: QueueRow): Outcome | null {
       message: "この下書きは投稿済みです。取り消しはできません。",
     };
   }
+  if (row.action_token_used_at !== null) return ALREADY_DONE;
   if (row.status === "cancelled" || row.status === "failed") {
     return {
       status: 200,
@@ -192,17 +208,6 @@ export async function handleAction(request: Request, env: Env): Promise<Response
   if (request.method !== "POST") {
     const terminal = terminalOutcome(row);
     if (terminal) return page(env, terminal, null);
-    if (row.action_token_used_at !== null) {
-      return page(
-        env,
-        {
-          status: 200,
-          title: "この操作はすでに完了しています",
-          message: "同じリンクは1回だけ使えます。",
-        },
-        null,
-      );
-    }
     return page(
       env,
       {
@@ -233,17 +238,7 @@ export async function handleAction(request: Request, env: Env): Promise<Response
     nowIso,
     row.id,
   );
-  if (claim.changes === 0) {
-    return page(
-      env,
-      {
-        status: 200,
-        title: "この操作はすでに完了しています",
-        message: "同じリンクは1回だけ使えます。",
-      },
-      null,
-    );
-  }
+  if (claim.changes === 0) return page(env, ALREADY_DONE, null); // 同時押し
 
   // 7. 状態遷移
   if (action === "approve") {
