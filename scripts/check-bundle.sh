@@ -32,7 +32,13 @@ trap cleanup EXIT
 # mock/threads.ts にしか無い識別子
 MARKERS=(SEED_TEXTS "Unsupported mock path" MockThreadsError mockCall callMock seedStore storeFor metricsFor resetMock "mock/threads")
 # mock/ai.ts にしか無い識別子（M5）
-MARKERS+=(MOCK_BODIES MOCK_COMMENTS MOCK_HOOKS aiMockCall requestedCount sourceTitle "mock/ai")
+MARKERS+=(MOCK_BODIES MOCK_COMMENTS MOCK_HOOKS aiMockCall requestedCount sourceTitle instructionOf stripMockNote "mock/ai")
+
+# env の名前（THREADS_MOCK / AI_MOCK）はマーカーに入れない。
+# `shouldUseMock()` `mockAvailable()`（/api/health の表示用）は `DEV` 経由で書いてあり、
+# 本番バンドルにも関数ごと残る。残るのは **名前と false 判定だけ** で mock/ の中身ではない。
+# ここで見たいのは「モックの実装が入っていないこと」なので、判定は mock/*.ts にしか
+# 無い識別子で行う（上の2行）。env 名を足すと、この正常な残りで必ず落ちる。
 
 # $1=ラベル $2=エントリ（空なら wrangler.toml の main） $3=出力ディレクトリ
 check_entry() {

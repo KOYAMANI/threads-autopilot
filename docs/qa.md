@@ -441,3 +441,151 @@ curl "http://127.0.0.1:8787/cdn-cgi/handler/scheduled?cron=*/5+*+*+*+*"
 | 画像投稿（`image_url`）の実 API での挙動 | 同上。UI からの画像添付は M5 以降 |
 | `pending_approval` / `approve_deadline` の実運用（作るのはオートパイロット） | M6 |
 | 承認・取消のメール導線（`/a/:token`） | M6 |
+
+---
+
+## M5 作る（AI）
+
+### M5-0. 準備
+
+M4 と同じ（web は `npm run dev:web`、worker は `wrangler dev`）。M5 は AI を叩くので
+`.dev.vars` に `AI_MOCK=1` を足してから worker を起動する。
+
+```bash
+# .dev.vars（SPEC §11。`__DEV__=false` の本番ビルドでは効かない）
+THREADS_MOCK=1
+AI_MOCK=1
+```
+
+`AI_MOCK=1` のとき `lib/ai.ts` の `generateRaw()` は外に出ず、`mock/ai.ts` の固定 JSON を
+返す。乱数は使っていないので、同じ操作からは常に同じ3案が出る。`/api/health` の `mock`
+は Threads 側のフラグなので、AI モックが効いているかは「生成が0msで返って
+`案A/案B/案C` が出るか」で見る。
+
+デモの前提: `demo@example.com` / `password1234` でログイン、`@demo_yama`、AIキーは
+サーバー保存（設定画面で `AIza…` を1回保存しておく）。
+
+### M5-1. ビルドとテスト
+
+| # | 手順 | 期待 | 種別 |
+|---|---|---|---|
+| 1-1 | `npm run typecheck` | エラー0（shared / worker / web / scripts） | 自動 |
+| 1-2 | `npm test` | shared 58件・worker 257件すべて green | 自動 |
+| 1-3 | `npm run build` | `web/dist/` が出る（約 794KB / gzip 236KB） | 手動 |
+| 1-4 | `npm run check:bundle` | 本番エントリ・一時エントリの両方で、Threads・AI 両方のモック識別子が0件 | 自動 |
+
+### M5-2. Create の一本道（SPEC §12.3 / design-v0.2 §3-4）
+
+スクリーンショットは `docs/screenshots/m5-*.png`。
+
+| # | 手順 | 期待 | 画像 |
+|---|---|---|---|
+| 2-1 | 作る画面を開く | 箱1「自分の投稿から」・箱2「参考情報」・指示・[生成する（3案）] の順に並ぶ。結果はまだ無く、「自分で書く」に素の入力欄が出る | m5-04 |
+| 2-2 | 箱1の「選ぶ」 | 過去投稿が並ぶ。既定は表示回数の降順 | m5-05 |
+| 2-3 | 「本文で探す」にキーワード | 本文一致だけに絞られる（`GET /accounts/:id/posts?q=`） | — |
+| 2-4 | 指標チップ（新しい順 / 表示回数 / いいね / クリック） | 並びが変わる。押したチップだけ `aria-pressed=true` | m5-05 |
+| 2-5 | 「型として使う」で2本以上タップ | 複数選択できる。閉じると「文体の見本に N 本を選んでいます」 | m5-05 |
+| 2-6 | 「リライト元にする」に切り替え | 選択が1本に絞られ、別の1本を押すと入れ替わる | — |
+| 2-7 | 箱2の「＋テキスト貼付」→本文→追加 | プールに残り、追加したものは自動で選択状態になる | m5-06 |
+| 2-8 | 「＋ファイル」で .txt / .md | ブラウザで読んで `content` として送る。ファイル名がタイトルになる | — |
+| 2-9 | 2MB超のファイル / .pdf | 「ファイルは2MBまでです」「.txt か .md を選んでください」（送信前に止まる。SPEC §10.4） | — |
+| 2-10 | 指示を書いて [生成する（3案）] | 案A/案B/案C のタブ、根拠（`basis`）、本文＋コメント①②③ | m5-07 |
+| 2-11 | 案B / 案C を押す | 本文とコメントがその案に入れ替わる | — |
+| 2-12 | 本文を手で直してから「指示で直す」 | **画面で直した本文**を下敷きに直る。ラベルが「指示で直す（1回目）」→「（2回目）」と増える（会話履歴を保持） | m5-08 |
+| 2-13 | [キューに入れる] | シートに 今すぐ / 日時を指定 / おすすめの枠。おすすめは `GET /queue/suggest-slot` の結果と理由が出る（M4 の ScheduleSheet を再利用） | m5-09 |
+| 2-14 | 日時を指定して予約 | キュー画面へ移動し、その日の欄が増える。行には `origin_post_id` と `source_ids` が付く（SPEC §7.4） | — |
+| 2-15 | [下書きに保存] | 下書きタブに入る | — |
+| 2-16 | ホームの行 →「リライト」 | 作る画面が `location.state.preset` を受け、モード=リライト元・その1本が選択済み・本文に流し込み済み | — |
+| 2-17 | ホームの行 →「これを型にして作る」 | モード=型として使う・その1本が選択済み。**本文は空のまま** | — |
+
+**文字数カウンタについて**: 日本語は1文字が3と数えられる（`bodyLength()` は
+「コードポイント数と UTF-8 バイト数の厳しい方」。SPEC §6.3）。77文字の本文が
+`213 / 500` と出るのは、実測で数え方が確定するまでの意図した挙動（M4-6 の残り項目）。
+
+### M5-3. AIキーの置き場（SPEC §12.3 Settings / §7.6）
+
+| # | 手順 | 期待 | 画像 |
+|---|---|---|---|
+| 3-1 | 設定画面 | プロバイダ（Gemini / OpenRouter）、モデル、APIキー、「つながるか試す」 | m5-01 |
+| 3-2 | 「つながるか試す」 | `つながりました（gemini-2.5-flash / ◯ms）`（`POST /ai/test`） | m5-03 |
+| 3-3 | 「キーをこの端末にだけ保存」を押す | **保存する前に**シートが出る:「この端末にだけ保存すると、オートパイロットは使えません…それでもよろしいですか？」。ONのアカウントがあればその一覧も付く | m5-02 |
+| 3-4 | キー未入力のまま「この端末にだけ保存する」 | 「この端末に保存するキーを入力してください」。保存しない | — |
+| 3-5 | キーを入れて「この端末にだけ保存する」 | `localStorage.aiKey` に入る。`GET /ai/settings` は `hasKey=false` `storeOnServer=false` `autopilotAvailable=false`。DB の `key_enc` は NULL | — |
+| 3-6 | そのまま作る画面で生成 | 通る（`clientKey` を付けて送っている）。同じリクエストを `clientKey` 無しで叩くと `AI_KEY_REQUIRED` | — |
+| 3-7 | `localStorage.aiKey` を消して作る画面 | 生成ボタンの代わりに「AIキーがまだ設定されていません」＋[設定でキーを登録する]（design-v0.2 §3-4） | — |
+| 3-8 | 設定でサーバー保存に戻して保存 | `localStorage.aiKey` が消える。表示が「いまはサーバーに保存しています。オートパイロットが使えます。」に戻る | — |
+
+### M5-4. API だけで一本道をなぞる（画面を使わない確認）
+
+```bash
+J=/tmp/tap-cookies.txt; B=http://127.0.0.1:8787/api
+AID=33333333-3333-4333-8333-333333333333
+H='-H content-type:application/json -H X-Requested-With:fetch'   # CSRF（SPEC §5.1）
+
+curl -s -c $J -X POST $B/auth/login $H \
+  -d '{"email":"demo@example.com","password":"password1234"}'
+
+# 箱1: 指標で並べ替えた過去投稿
+curl -s -b $J "$B/accounts/$AID/posts?q=&sort=views&limit=3"
+
+# 箱2: 参考情報をプールに足す
+curl -s -b $J -X POST $B/sources $H \
+  -d '{"type":"text","title":"下書き運用メモ","content":"毎晩3本の下書きをためる。"}'
+
+# 生成（3案）→ 直す → キューへ
+curl -s -b $J -X POST $B/ai/generate $H \
+  -d '{"accountId":"'$AID'","picks":["9000000000000111"],"pickMode":"template",
+       "sourceIds":["<上で返った id>"],"instruction":"初心者向けに","n":3}'
+curl -s -b $J -X POST $B/ai/revise $H \
+  -d '{"accountId":"'$AID'","candidate":{...案A...},"instruction":"1行目を短く","history":[]}'
+curl -s -b $J -X POST $B/accounts/$AID/queue $H \
+  -d '{"status":"scheduled","scheduledAt":"2026-09-09T12:00:00.000Z","body":"…",
+       "comments":["…"],"originPostId":"9000000000000111","sourceIds":["…"]}'
+```
+
+`AI_MOCK=1` なら `/ai/generate` は `candidates` を3件返し、`/ai/revise` は1件だけ返す。
+`history` を積んで2回目を投げても、直前の案の本文が下敷きになる。
+
+### M5-5. 実キーでの疎通（SPEC §13 M5 の完了条件。キーが用意できた時点で行う）
+
+**モックを切ってから行う。** `.dev.vars` の `AI_MOCK` を `0` にする（または行ごと消す）
+→ worker を起動し直す。`AI_MOCK=1` のままだと外に出ないので、何も確認できない。
+
+| # | 手順 | 期待 |
+|---|---|---|
+| 5-1 | 設定で provider=`gemini` / model=`gemini-2.5-flash` に実キーを保存 →「つながるか試す」 | `つながりました（gemini-2.5-flash / ◯◯ms）`。数百ms〜数秒 |
+| 5-2 | 箱2にテキストを1件入れて [生成する（3案）] | **JSONが返って3案が出る**。`hook` が3つとも違う。`basis` に参考情報のどこを使ったかが1文 |
+| 5-3 | 「指示で直す」を2回 | 2回目が1回目の結果を踏まえて直る（履歴が効いている） |
+| 5-4 | 箱2に **YouTube URL** を足して生成 | タイトルだけが取れて（oEmbed）、生成は通る。Gemini 側に `file_data:{file_uri}` として渡る（SPEC §10.2）。動画の中身に触れた本文が出れば経路が生きている |
+| 5-5 | provider=`openrouter` / model=`anthropic/claude-sonnet-4.6` に切り替えて 5-2 | 同じく3案。`HTTP-Referer` と `X-Title` が付く（SPEC §10.1） |
+| 5-6 | OpenRouter のまま YouTube のソースを選んで生成 | `notes` に「文字起こしを貼ってください」が出る（動画は読めない。SPEC §10.2） |
+| 5-7 | 箱2に **記事URL** を足す | サーバーが本文を抽出（SPEC §10.4）。取れなければ「本文を貼ってください」（`EXTRACT_FAILED`） |
+| 5-8 | わざと壊れたキーで生成 | `AI_FAILED`「AIの呼び出しに失敗しました（401）」がトーストに出て、画面は壊れない。プロバイダの生の返答は Worker のログにだけ出る（`redact()` 済み） |
+
+5-4・5-7 は外部への実 fetch を伴う（YouTube の oEmbed / 記事の取得）。モック確認では
+踏まないので、この節でだけ行う。
+
+### M5-6. 自動テストで担保していること
+
+`worker/test/ai.test.ts`・`worker/test/ai-routes.test.ts`・`worker/test/extract.test.ts`:
+
+- `GET/PUT /ai/settings`: キー本体は応答に出ない。端末保存に切り替えると `key_enc` が
+  NULL になり `autopilotAvailable=false`。モデルだけ変えたときはキーを消さない
+- `POST /ai/generate`: 端末保存のときは `clientKey` を付ければ通り、付けないと
+  `AI_KEY_REQUIRED`。**`clientKey` はサーバーに残らない**（`key_enc` が NULL のまま）
+- `POST /ai/revise`: 1案だけ返り `key` は元のまま。指示が空なら 400
+- 他人の `accountId` は 404
+- `buildContext`: 参考情報は各3,000文字・合計9,000文字で切る。OpenRouter × YouTube は
+  `notes` に文字起こしの案内
+- `lib/extract.ts`: `<article>` → `<main>` → `<p>` の優先順、`script/style/nav/footer` の
+  除去、50,000文字での切り詰め、YouTube の3形式（`v=` / `youtu.be/` / `shorts/`）の正規化
+
+### M5-7. 自動テストで担保していないこと（M5 の残り）
+
+| 項目 | いつ |
+|---|---|
+| 実キーでの JSON 出力・3案（Gemini / OpenRouter の両方） | M5-5（実キー） |
+| YouTube URL の Gemini 経路（`file_data`） | M5-5（実キー） |
+| 実サイトからの本文抽出の当たり外れ | M5-5（実キー） |
+| 画像の添付（`image_url`） | M6 以降 |
+| オートパイロットからの生成（`ap_plan`。型・枠・ネタ源はサーバーが選ぶ） | M6 |
