@@ -54,3 +54,11 @@ GitHub Actionsはpush/PRの型・テスト・ビルド・モック除去検査�
 参考:
 - https://developers.cloudflare.com/workers/wrangler/environments/
 - https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+
+## 今回の公開確認
+
+ステージングURL: https://threads-autopilot-staging.yama-threads-apps.workers.dev
+
+独立した3つのSecretsを生成・登録し、DBマイグレーション適用済み。healthのenvironment=staging、専用ログイン成功、接続アカウント0件、本番アカウントIDへのアクセス404、未指定のThreads接続409を確認した。ログイン情報はローカルの非公開設定フォルダ（staging-owner.json）に保存し、Gitには含めていない。ステージングではメールを停止しているのでメール経由のパスワードリセットは未検証・利用不可。
+
+本番環境へのデプロイはこの作業では行っていない。GitHubはKOYAMANIでのログイン待ちのため、remote・push・Actionsの実稼働は未完了。

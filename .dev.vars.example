@@ -42,3 +42,11 @@ VAPID_SUBJECT=
 #   AI_MOCK=1      … AI 呼び出しのモック（固定 JSON を返す。M5 の画面確認用）
 THREADS_MOCK=1
 AI_MOCK=1
+
+# Google OAuth: leave empty until a Web application OAuth client is configured.
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+
+# Optional: shared Threads OAuth application (server-side only)
+THREADS_APP_ID=
+THREADS_APP_SECRET=

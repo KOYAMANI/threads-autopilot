@@ -4,6 +4,7 @@ import { BrowserRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { installSessionBoundary } from "./lib/session-boundary";
 import App from "./App";
+import EnvironmentNotice from "./components/EnvironmentNotice";
 import "./styles/tokens.css";
 import "./styles/workspace.css";
 
@@ -26,6 +27,7 @@ createRoot(root).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
+        <EnvironmentNotice />
         <App />
       </BrowserRouter>
     </QueryClientProvider>

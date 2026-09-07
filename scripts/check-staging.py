@@ -6,6 +6,8 @@ ROOT=Path(__file__).resolve().parent.parent
 stage=tomllib.loads((ROOT/"wrangler.staging.toml").read_text())
 prod=tomllib.loads((ROOT/"wrangler.production.toml").read_text())
 checks={
+ "bindings":len(stage.get("d1_databases",[]))==1 and stage["d1_databases"][0]["binding"]=="DB" and len(stage["queues"]["producers"])==len(stage["queues"]["consumers"])==1 and stage["queues"]["producers"][0]["binding"]=="JOB_QUEUE",
+ "free-plan":stage["vars"].get("WORKERS_PLAN")=="free",
  "worker":stage["name"]=="threads-autopilot-staging" and stage["name"]!=prod["name"],
  "database":stage["d1_databases"][0]["database_id"]=="dcce5294-b2de-4c72-9a81-5dc6f6d2e00a" and stage["d1_databases"][0]["database_id"]!=prod["d1_databases"][0]["database_id"],
  "queue":stage["queues"]["producers"][0]["queue"]==stage["queues"]["consumers"][0]["queue"]=="threads-autopilot-staging-jobs",
