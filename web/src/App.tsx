@@ -40,7 +40,7 @@ function RequireAuth({ children }: { children: ReactElement }) {
   if (isError || !data) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
-  if (data.accounts.length === 0) return <Navigate to="/connect" replace />;
+  if (data.accounts.length === 0 && !["/app/home", "/app/settings"].includes(location.pathname)) return <Navigate to="/connect" replace />;
   return children;
 }
 

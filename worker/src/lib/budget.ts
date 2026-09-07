@@ -102,8 +102,8 @@ export function createBudget(options: BudgetOptions = {}): Budget {
 /** env の三値から予算を作る（ジョブ・リクエストの入口で1回だけ呼ぶ）。 */
 export function budgetFromEnv(env: Env, options: Pick<BudgetOptions, "now"> = {}): Budget {
   return createBudget({
-    subrequests: envInt(env.MAX_SUBREQUESTS, 300),
-    dbQueries: envInt(env.MAX_DB_QUERIES, 800),
+    subrequests: Math.min(envInt(env.MAX_SUBREQUESTS, 300), env.WORKERS_PLAN === "free" ? 20 : 300),
+    dbQueries: Math.min(envInt(env.MAX_DB_QUERIES, 800), env.WORKERS_PLAN === "free" ? 32 : 800),
     timeMs: envInt(env.JOB_TIME_BUDGET_MS, 20000),
     now: options.now,
   });

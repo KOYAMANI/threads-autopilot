@@ -11,6 +11,7 @@
  * ダイジェストは**メールだけ**。承認・取消のように急ぐものではないので Push は出さない
  * （Push は `ap_notify` の側。DECISIONS 2026-09-06）。
  */
+import { BudgetExceeded } from "../lib/budget";
 import type { JobContext, RunningJob } from "../lib/jobs";
 import { sendEmail } from "../lib/email";
 import { notifyTargetForUser } from "../lib/notify";
@@ -181,6 +182,8 @@ export async function runDigest(ctx: JobContext): Promise<DigestSummary> {
       continue;
     }
 
+    // Reserve all DB work before setting the delivery marker. Retry must not skip an unsent user.
+    if (ctx.budget.dbQueries.remaining < 4) throw new BudgetExceeded("dbQueries", ctx.budget.dbQueries.used + 4, ctx.budget.dbQueries.limit);
     // 印を先に立てる。メールが失敗しても、その日ぶんを何度も送り直さない
     await ctx.db.run(
       `INSERT INTO notifications (user_id, email_enabled, push_enabled, digest_hour, last_digest_date, updated_at)

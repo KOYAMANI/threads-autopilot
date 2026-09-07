@@ -34,14 +34,17 @@ export const HOOK_TYPES = [
 export class AiError extends Error {
   readonly code: "AI_BAD_OUTPUT" | "AI_FAILED" | "AI_KEY_REQUIRED";
   readonly raw: string | null;
+  readonly retryable: boolean;
   constructor(
     code: "AI_BAD_OUTPUT" | "AI_FAILED" | "AI_KEY_REQUIRED",
     message: string,
     raw: string | null = null,
+    retryable = true,
   ) {
     super(message);
     this.name = "AiError";
     this.code = code;
+    this.retryable = retryable;
     this.raw = raw === null ? null : redact(raw).slice(0, 500);
   }
 }
@@ -313,6 +316,7 @@ async function callOnce(
   try {
     const res = await doFetch(plan.url, { ...plan.init, signal: controller.signal });
     const text = await res.text();
+    if (res.status === 429) throw new AiError("AI_FAILED", "AIサービスの利用制限に達しました。時間を置くか、プロバイダーの利用枠をご確認ください", null, false);
     if (!res.ok) {
       throw new AiError(
         "AI_FAILED",
@@ -355,7 +359,7 @@ export async function callAi(input: AiCallInput, options: AiCallOptions = {}): P
     } catch (e) {
       if (!(e instanceof AiError)) throw e;
       last = e;
-      if (e.code === "AI_KEY_REQUIRED") break;
+      if (e.code === "AI_KEY_REQUIRED" || !e.retryable) break;
     }
   }
   throw last ?? new AiError("AI_FAILED", "AIの呼び出しに失敗しました");

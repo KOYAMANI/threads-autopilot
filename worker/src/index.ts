@@ -6,8 +6,9 @@
  */
 import type { Env } from "./env";
 import { createApp } from "./app";
-import { createJobContext, enqueueForCron, runJobs } from "./lib/jobs";
+import { createJobContext, createSchedulerContext, enqueueForCron, runJobs, dispatchJobs } from "./lib/jobs";
 import { redact } from "./lib/redact";
+import { enqueueSheetSyncs } from "./jobs/sheets";
 import { handleAction } from "./routes/action";
 
 const app = createApp();
@@ -23,6 +24,7 @@ export default {
     // GET|POST /a/:token（メールからの承認/取消、SPEC §7.9）。
     // Cookie を読まない専用経路なので Hono（/api の CSRF・セッション）には載せない。
     if (url.pathname.startsWith("/a/")) {
+      if (env.MAINTENANCE_MODE === "1") return new Response("メンテナンス中です", {status:503,headers:{"Cache-Control":"no-store"}});
       return handleAction(request, env);
     }
 
@@ -30,13 +32,35 @@ export default {
     return new Response("Not Found", { status: 404 });
   },
 
+  async queue(batch: MessageBatch<{jobId:string}>, env: Env): Promise<void> {
+    if (env.MAINTENANCE_MODE === "1") { for (const message of batch.messages) message.ack(); return; }
+    // Small configured batches keep total CPU/DB budget bounded per invocation.
+    let handled = false;
+    for (const message of batch.messages) {
+      if (env.WORKERS_PLAN === "free" && handled) { message.retry({delaySeconds:60}); continue; }
+      handled = true;
+      if (typeof message.body?.jobId !== "string") { message.ack(); continue; }
+      try {
+        const result = await runJobs(createJobContext(env), undefined, message.body.jobId);
+        // Budget checkpoints are successful slices, not retries of failed work.
+        // Send a fresh message so long imports do not hit the queue retry limit.
+        if (result.deferred && env.JOB_QUEUE) await env.JOB_QUEUE.send(message.body, {delaySeconds: 1});
+        message.ack();
+      }
+      catch { message.retry({delaySeconds:60}); }
+    }
+  },
+
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    if (env.MAINTENANCE_MODE === "1") return;
     ctx.waitUntil(
       (async () => {
         try {
-          const jobCtx = createJobContext(env);
+          const jobCtx = createSchedulerContext(env);
           await enqueueForCron(jobCtx, event.cron);
-          await runJobs(jobCtx);
+          await enqueueSheetSyncs(jobCtx);
+          if (env.JOB_QUEUE) await dispatchJobs(jobCtx);
+          else if (env.WORKERS_PLAN !== "free") await runJobs(jobCtx);
         } catch (e) {
           console.error(`[cron] ${event.cron} failed: ${redact(String(e))}`);
         }

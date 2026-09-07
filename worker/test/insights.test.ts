@@ -48,6 +48,8 @@ describe("insights ジョブ（SPEC §8.4）", () => {
     await enqueueJob(ctx, "full_sync", { accountId });
     await runJobs(ctx);
     const db = testDb();
+    // Initial sync now fetches analytics too. Reset those checkpoints for this isolated time-travel fixture.
+    await db.run("DELETE FROM post_metrics_history WHERE account_id=?", accountId);
     // 経過時間を制御するため、投稿日時をそろえて取得済み印を消す
     await db.run(
       "UPDATE posts SET posted_at=?, metrics_fetched_at=NULL, views=0, likes=0 WHERE account_id=?",

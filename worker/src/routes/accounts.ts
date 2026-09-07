@@ -2,7 +2,7 @@
  * アカウント（SPEC §7.1）。
  * すべて `accounts.user_id` が本人かを確かめてから触る。
  */
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { ok, type ConnectAccountResponse, type DiagnoseStep } from "@tap/shared";
 import { fail, type AppEnv } from "../app";
@@ -19,11 +19,12 @@ import {
 } from "../lib/accounts";
 import { audit } from "../lib/audit";
 import { encrypt } from "../lib/crypto";
-import { enqueueJob, jobContextFrom } from "../lib/jobs";
+import { enqueueAccountSync, jobContextFrom, SYNC_JOB_TYPES } from "../lib/jobs";
 import { refreshAccountToken, remainingDays } from "../jobs/maintenance";
 import { SYNC_TOTAL_PAGES } from "../jobs/sync";
 import {
   exchangeToken,
+  refreshLongLivedToken,
   getDailyViews,
   getLinkClicks,
   getPostInsights,
@@ -99,135 +100,7 @@ export function accountRoutes() {
       return fail("BAD_REQUEST", "トークンを貼り付けてください", 400);
     }
     const { token, app_secret: appSecret } = parsed.data;
-    const db = c.get("db");
-    const userId = c.get("userId")!;
-    const now = new Date();
-    const options: CallOptions = { budget: c.get("budget"), env: c.env };
-
-    // 接続確認
-    const profile = await getProfile(token, options);
-    if (!profile?.id) {
-      return fail("THREADS_ERROR", "Threadsのアカウント情報を取得できませんでした", 502);
-    }
-
-    const existing = await db.first<AccountRow>(
-      `SELECT ${ACCOUNT_COLUMNS} FROM accounts WHERE user_id=? AND threads_user_id=?`,
-      userId,
-      profile.id,
-    );
-
-    if (!existing) {
-      const countRow = await db.first<{ n: number }>(
-        "SELECT COUNT(*) AS n FROM accounts WHERE user_id=?",
-        userId,
-      );
-      if ((countRow?.n ?? 0) >= ACCOUNT_LIMIT) {
-        return fail(
-          "ACCOUNT_LIMIT",
-          `つなげるアカウントは${ACCOUNT_LIMIT}つまでです。設定から1つ外してください`,
-          400,
-        );
-      }
-    }
-
-    // 長期化（App Secret は保存しない。SPEC §6.3）
-    let finalToken = token;
-    let longLived = false;
-    let secretIgnored = false;
-    if (appSecret) {
-      try {
-        const res = await exchangeToken(token, appSecret, options);
-        if (res?.access_token) {
-          finalToken = res.access_token;
-          longLived = true;
-        } else {
-          secretIgnored = true;
-        }
-      } catch {
-        // 長期化に失敗しても接続自体は成立する。短期のまま保存し、画面に知らせる
-        secretIgnored = true;
-      }
-    }
-
-    const nowIso = now.toISOString();
-    const tokenEnc = await encrypt(finalToken, c.env.ENC_KEY);
-    let accountId: string;
-
-    if (existing) {
-      accountId = existing.id;
-      await db.run(
-        `UPDATE accounts SET username=?, name=?, avatar_url=?, token_enc=?, token_obtained_at=?,
-             token_long_lived=?, token_last_refresh_at=NULL, status='ok'
-           WHERE id=?`,
-        profile.username ?? existing.username,
-        profile.name ?? null,
-        profile.threads_profile_picture_url ?? null,
-        tokenEnc,
-        nowIso,
-        longLived ? 1 : 0,
-        accountId,
-      );
-    } else {
-      accountId = crypto.randomUUID();
-      const usedColors = await db.all<{ color: string }>(
-        "SELECT color FROM accounts WHERE user_id=?",
-        userId,
-      );
-      // 色の比較は**大文字小文字を無視する**。`#2748E8` と `#2748e8` は同じ色なのに、
-      // 素の一致だと「使っていない色」と判定されて、見分けの付かない2つ目の青が出る
-      const used = new Set(usedColors.map((u) => u.color.trim().toLowerCase()));
-      const color =
-        ACCOUNT_COLORS.find((x) => !used.has(x.toLowerCase())) ?? ACCOUNT_COLORS[0]!;
-      await db.run(
-        `INSERT INTO accounts (id, user_id, threads_user_id, username, name, avatar_url, color,
-             token_enc, token_obtained_at, token_long_lived, token_last_refresh_at, status,
-             timezone, settings_json, last_full_sync_at, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,NULL,'ok',?, '{}', NULL, ?)`,
-        accountId,
-        userId,
-        profile.id,
-        profile.username ?? profile.id,
-        profile.name ?? null,
-        profile.threads_profile_picture_url ?? null,
-        color,
-        tokenEnc,
-        nowIso,
-        longLived ? 1 : 0,
-        c.env.DEFAULT_TZ || "Asia/Tokyo",
-        nowIso,
-      );
-      await db.run(
-        `INSERT INTO autopilot (account_id, updated_at) VALUES (?,?)
-           ON CONFLICT(account_id) DO NOTHING`,
-        accountId,
-        nowIso,
-      );
-    }
-
-    // 接続を監査に残す（docs/qa.md M7-7）。**トークンは書かない** — 長期化できたかと
-    // つなぎ直しかどうかだけ
-    await audit(
-      db,
-      userId,
-      "account_connect",
-      { accountId, longLived, reconnect: Boolean(existing) },
-      now,
-    );
-
-    // 接続直後に full_sync（SPEC §7.1）
-    const jobCtx = jobContextFrom(c.env, db, c.get("budget"), now);
-    await enqueueJob(jobCtx, "full_sync", { accountId });
-
-    const saved = (await db.first<AccountRow>(
-      `SELECT ${ACCOUNT_COLUMNS} FROM accounts WHERE id=?`,
-      accountId,
-    ))!;
-    const body: ConnectAccountResponse = {
-      account: toAccountSummary(saved, { nowMs: now.getTime() }),
-      longLived,
-      secretIgnored,
-    };
-    return c.json(ok(body), existing ? 200 : 201);
+    return connectThreadsAccount(c, token, appSecret);
   });
 
   /* ── 削除（関連データを全部消す。SPEC §7.1） ───────── */
@@ -304,7 +177,7 @@ export function accountRoutes() {
       const days = tokenExpiresInDays(account, now.getTime());
       return account.token_long_lived
         ? `長期トークン（残り約${days}日）`
-        : "短期トークン。App Secret を入れて長期化すると自動更新できます";
+        : "長期化を確認できていません。長期トークンなら「トークン延長」、短期ならApp Secretで長期化してください";
     });
 
     // 2. /me
@@ -377,8 +250,8 @@ export function accountRoutes() {
     if (!account) return fail("NOT_FOUND", "見つかりませんでした", 404);
 
     const jobCtx = jobContextFrom(c.env, db, c.get("budget"));
-    const id = await enqueueJob(jobCtx, "full_sync", { accountId: account.id });
-    return c.json(ok({ queued: id !== null }));
+    const queued = await enqueueAccountSync(jobCtx, account.id);
+    return c.json(ok({ queued }));
   });
 
   r.get("/:id/sync", async (c) => {
@@ -386,10 +259,15 @@ export function accountRoutes() {
     const account = await loadOwnedAccount(db, c.req.param("id"), c.get("userId")!);
     if (!account) return fail("NOT_FOUND", "見つかりませんでした", 404);
 
-    const job = await db.first<{ status: string; state_json: string }>(
-      "SELECT status, state_json FROM jobs WHERE type='full_sync' AND account_id=? ORDER BY created_at DESC LIMIT 1",
-      account.id,
+    const jobs = await db.all<{type:string; status:string; state_json:string; last_error:string|null; updated_at:string}>(
+      `SELECT type,status,state_json,last_error,updated_at FROM jobs WHERE account_id=? AND type IN (${SYNC_JOB_TYPES.map(()=>"?").join(",")}) ORDER BY created_at DESC`,
+      account.id, ...SYNC_JOB_TYPES,
     );
+    const latest = [...new Map(jobs.slice().reverse().map(j => [j.type,j])).values()];
+    const job = latest.find(j => j.type === "full_sync");
+    const failed = latest.find(j => j.status === "failed");
+    const running = latest.some(j => j.status === "pending" || j.status === "running");
+    const count = await db.first<{n:number}>("SELECT COUNT(*) AS n FROM posts WHERE account_id=? AND deleted=0", account.id);
     let progress = 0;
     try {
       const state = job ? (JSON.parse(job.state_json) as { pages?: number }) : {};
@@ -397,11 +275,15 @@ export function accountRoutes() {
     } catch {
       progress = 0;
     }
-    const running = job ? job.status === "pending" || job.status === "running" : false;
+
     return c.json(
       ok({
         running,
-        progress: running ? progress : SYNC_TOTAL_PAGES,
+        progress: job?.status === "done" ? SYNC_TOTAL_PAGES : progress,
+        status: failed ? "failed" : running ? "syncing" : job?.status === "done" ? "done" : "idle",
+        posts: count?.n ?? 0,
+        message: failed ? "一部の取り込みに失敗しました。診断で権限を確認して、もう一度同期してください。" : null,
+        lastSyncedAt: account.last_full_sync_at,
         total: SYNC_TOTAL_PAGES,
       }),
     );
@@ -434,4 +316,152 @@ export function accountRoutes() {
   });
 
   return r;
+}
+
+/** Used by manual tokens and the authenticated OAuth callback. */
+export async function connectThreadsAccount(c: Context<AppEnv>, token: string, appSecret?: string, verifiedLongLived = false) {
+    const db = c.get("db");
+    const userId = c.get("userId")!;
+    const now = new Date();
+    const options: CallOptions = { budget: c.get("budget"), env: c.env };
+
+    if (c.env.APP_ENV === "staging" && !c.env.STAGING_THREADS_USER_ID) {
+      return fail("STAGING_ACCOUNT_REQUIRED", "ステージング用のThreadsアカウントが未設定です。本番のトークンは入力しないでください", 409);
+    }
+    // 接続確認
+    const profile = await getProfile(token, options);
+    if (!profile?.id) {
+      return fail("THREADS_ERROR", "Threadsのアカウント情報を取得できませんでした", 502);
+    }
+
+    if (c.env.APP_ENV === "staging" && profile.id !== c.env.STAGING_THREADS_USER_ID) {
+      return fail("STAGING_ACCOUNT_REQUIRED", "ステージング専用アカウントのみ接続できます", 403);
+    }
+    const existing = await db.first<AccountRow>(
+      `SELECT ${ACCOUNT_COLUMNS} FROM accounts WHERE user_id=? AND threads_user_id=?`,
+      userId,
+      profile.id,
+    );
+
+    if (!existing) {
+      const countRow = await db.first<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM accounts WHERE user_id=?",
+        userId,
+      );
+      if ((countRow?.n ?? 0) >= ACCOUNT_LIMIT) {
+        return fail(
+          "ACCOUNT_LIMIT",
+          `つなげるアカウントは${ACCOUNT_LIMIT}つまでです。設定から1つ外してください`,
+          400,
+        );
+      }
+    }
+
+    // 長期化（App Secret は保存しない。SPEC §6.3）
+    let finalToken = token;
+    let longLived = verifiedLongLived;
+    let secretIgnored = false;
+    if (appSecret) {
+      try {
+        const res = await exchangeToken(token, appSecret, options);
+        if (res?.access_token) {
+          finalToken = res.access_token;
+          longLived = true;
+        } else {
+          secretIgnored = true;
+        }
+      } catch {
+        // 長期化に失敗しても接続自体は成立する。短期のまま保存し、画面に知らせる
+        secretIgnored = true;
+      }
+    }
+
+    if (!appSecret && !verifiedLongLived) {
+      try {
+        const refreshed = await refreshLongLivedToken(token, options);
+        if (refreshed.access_token) { finalToken = refreshed.access_token; longLived = true; }
+      } catch {
+        // Short tokens and long tokens younger than 24h cannot be refreshed.
+        // Keep the valid connection, but never claim an unverified expiry.
+      }
+    }
+    const nowIso = now.toISOString();
+    const tokenEnc = await encrypt(finalToken, c.env.ENC_KEY);
+    let accountId: string;
+
+    if (existing) {
+      accountId = existing.id;
+      await db.run(
+        `UPDATE accounts SET username=?, name=?, avatar_url=?, token_enc=?, token_obtained_at=?,
+             token_long_lived=?, token_last_refresh_at=NULL, status='ok'
+           WHERE id=?`,
+        profile.username ?? existing.username,
+        profile.name ?? null,
+        profile.threads_profile_picture_url ?? null,
+        tokenEnc,
+        nowIso,
+        longLived ? 1 : 0,
+        accountId,
+      );
+    } else {
+      accountId = crypto.randomUUID();
+      const usedColors = await db.all<{ color: string }>(
+        "SELECT color FROM accounts WHERE user_id=?",
+        userId,
+      );
+      // 色の比較は**大文字小文字を無視する**。`#2748E8` と `#2748e8` は同じ色なのに、
+      // 素の一致だと「使っていない色」と判定されて、見分けの付かない2つ目の青が出る
+      const used = new Set(usedColors.map((u) => u.color.trim().toLowerCase()));
+      const color =
+        ACCOUNT_COLORS.find((x) => !used.has(x.toLowerCase())) ?? ACCOUNT_COLORS[0]!;
+      await db.run(
+        `INSERT INTO accounts (id, user_id, threads_user_id, username, name, avatar_url, color,
+             token_enc, token_obtained_at, token_long_lived, token_last_refresh_at, status,
+             timezone, settings_json, last_full_sync_at, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,NULL,'ok',?, '{}', NULL, ?)`,
+        accountId,
+        userId,
+        profile.id,
+        profile.username ?? profile.id,
+        profile.name ?? null,
+        profile.threads_profile_picture_url ?? null,
+        color,
+        tokenEnc,
+        nowIso,
+        longLived ? 1 : 0,
+        c.env.DEFAULT_TZ || "Asia/Tokyo",
+        nowIso,
+      );
+      await db.run(
+        `INSERT INTO autopilot (account_id, updated_at) VALUES (?,?)
+           ON CONFLICT(account_id) DO NOTHING`,
+        accountId,
+        nowIso,
+      );
+    }
+
+    // 接続を監査に残す（docs/qa.md M7-7）。**トークンは書かない** — 長期化できたかと
+    // つなぎ直しかどうかだけ
+    await audit(
+      db,
+      userId,
+      "account_connect",
+      { accountId, longLived, reconnect: Boolean(existing) },
+      now,
+    );
+
+    // 接続直後に full_sync（SPEC §7.1）
+    const jobCtx = jobContextFrom(c.env, db, c.get("budget"), now);
+    await enqueueAccountSync(jobCtx, accountId);
+
+    const saved = (await db.first<AccountRow>(
+      `SELECT ${ACCOUNT_COLUMNS} FROM accounts WHERE id=?`,
+      accountId,
+    ))!;
+    const body: ConnectAccountResponse = {
+      account: toAccountSummary(saved, { nowMs: now.getTime() }),
+      longLived,
+      secretIgnored,
+    };
+    return c.json(ok(body), existing ? 200 : 201);
 }

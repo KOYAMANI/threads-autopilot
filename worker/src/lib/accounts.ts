@@ -155,6 +155,12 @@ export function tokenExpiresInDays(account: AccountRow, nowMs: number): number |
   return Math.max(0, Math.ceil((expires - nowMs) / 86_400_000));
 }
 
+export function canPublishAccount(account: AccountRow, nowMs = Date.now()): boolean {
+  if (account.status !== "ok" || !account.token_enc.trim()) return false;
+  const remaining = tokenExpiresInDays(account, nowMs);
+  return remaining === null || remaining > 0;
+}
+
 export function toAccountSummary(
   account: AccountRow,
   options: { autopilotEnabled?: boolean; nowMs?: number } = {},
@@ -167,6 +173,7 @@ export function toAccountSummary(
     avatarUrl: account.avatar_url,
     color: account.color,
     status: (account.status as AccountSummary["status"]) ?? "ok",
+    canPublish: canPublishAccount(account, nowMs),
     timezone: account.timezone,
     tokenExpiresInDays: tokenExpiresInDays(account, nowMs),
     longLived: Boolean(account.token_long_lived),

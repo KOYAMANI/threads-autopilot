@@ -102,7 +102,7 @@ export async function pushToUser(
   env: Env,
   db: Db,
   userId: string,
-  payload: PushPayload,
+  _payload: PushPayload,
 ): Promise<{ sent: number; removed: number }> {
   const publicKey = (env.VAPID_PUBLIC_KEY ?? "").trim();
   const privateKey = (env.VAPID_PRIVATE_KEY ?? "").trim();
@@ -115,9 +115,11 @@ export async function pushToUser(
   if (!settings || settings.push_enabled !== 1) return { sent: 0, removed: 0 };
 
   const rows = await db.all<{ id: string; json: string; fail_count: number }>(
-    "SELECT id, json, fail_count FROM push_subscriptions WHERE user_id=? AND fail_count<? LIMIT 10",
+    "SELECT id, json, fail_count FROM push_subscriptions WHERE user_id=? AND fail_count<? AND session_id IN (SELECT id FROM sessions WHERE expires_at>? AND user_id=?) LIMIT 10",
     userId,
     PUSH_MAX_FAILURES,
+    new Date().toISOString(),
+    userId,
   );
   if (rows.length === 0) return { sent: 0, removed: 0 };
 
@@ -146,7 +148,7 @@ export async function pushToUser(
       removed++;
       continue;
     }
-    const res = await sendPush({ publicKey, privateKey }, sub, payload, subject);
+    const res = await sendPush({ publicKey, privateKey }, sub, {title:"Threads オートパイロット",body:"アプリに新しいお知らせがあります。ログインして確認してください。",url:"/app/queue"}, subject);
     if (res.ok) {
       sent++;
       if (row.fail_count > 0) {

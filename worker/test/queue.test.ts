@@ -607,3 +607,44 @@ describe("POST /api/accounts/:id/posts/:postId/repost（SPEC §7.3）", () => {
     expect(res.body.error.code).toBe("NOT_FOUND");
   });
 });
+
+
+describe("Threads connection required for publishing", () => {
+  it("exposes connected readiness consistently through session and account APIs", async () => {
+    const { cookie } = await setup("ready");
+    const me = await api("GET", "/api/auth/me", { cookie });
+    const list = await api("GET", "/api/accounts", { cookie });
+    expect(me.body.data.accounts[0].canPublish).toBe(true);
+    expect(list.body.data.accounts[0].canPublish).toBe(true);
+    expect(me.body.data.accounts[0]).not.toHaveProperty("token_enc");
+  });
+
+  it.each(["needs_reauth", "disabled", "missing", "expired"])("blocks every scheduling path for %s but keeps drafts editable", async (reason) => {
+    const { cookie, accountId } = await setup("connection-" + reason);
+    const db = testDb();
+    if (reason === "missing") await db.run("UPDATE accounts SET token_enc='' WHERE id=?", accountId);
+    else if (reason === "expired") await db.run("UPDATE accounts SET token_long_lived=1, token_obtained_at='2020-01-01T00:00:00Z' WHERE id=?", accountId);
+    else await db.run("UPDATE accounts SET status=? WHERE id=?", reason, accountId);
+    const me = await api("GET", "/api/auth/me", { cookie });
+    expect(me.body.data.accounts[0].canPublish).toBe(false);
+    expect(me.body.data.accounts[0]).not.toHaveProperty("token_enc");
+    const base = `/api/accounts/${accountId}/queue`;
+    const scheduledAt = new Date(Date.now() + 3600000).toISOString();
+    for (const status of ["scheduled", "now"]) {
+      expect((await api("POST", base, { cookie, body: { status, body: "テスト投稿", scheduledAt } })).status).toBe(409);
+    }
+    const created = await api("POST", base, { cookie, body: { status: "draft", body: "保存できる下書き" } });
+    expect(created.status).toBe(201);
+    const id = created.body.data.item.id;
+    expect((await api("PATCH", `${base}/${id}`, { cookie, body: { body: "編集もできる" } })).status).toBe(200);
+    expect((await api("PATCH", `${base}/${id}`, { cookie, body: { status: "scheduled", scheduledAt } })).status).toBe(409);
+    expect((await api("POST", `${base}/${id}/publish-now`, { cookie })).status).toBe(409);
+    const pending = await insertQueue(accountId, "承認待ち", { status: "pending_approval", scheduledAt });
+    expect((await api("POST", `${base}/${pending}/approve`, { cookie })).status).toBe(409);
+    expect((await readQueue(pending))?.status).toBe("pending_approval");
+    expect((await api("POST", `${base}/${pending}/cancel`, { cookie })).status).toBe(200);
+    expect((await readQueue(id))?.status).toBe("draft");
+    const summary = await api("GET", "/api/accounts", { cookie });
+    expect(summary.body.data.accounts[0].canPublish).toBe(false);
+  });
+});

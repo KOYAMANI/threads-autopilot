@@ -36,6 +36,7 @@ export const JOB_TYPES = [
   "ap_notify",
   "ap_score",
   "daily_digest",
+  "sheets_sync",
 ] as const;
 
 export type JobType = (typeof JOB_TYPES)[number];
@@ -59,6 +60,7 @@ export const JOB_PRIORITY: Record<JobType, number> = {
   // 日次ダイジェスト（M7）。急がないので採点のあと
   daily_digest: 8,
   cleanup: 9,
+  sheets_sync: 8,
 };
 
 /* ── 実行文脈 ──────────────────────────────────────── */
@@ -86,27 +88,14 @@ export type JobContext = {
 
 export type JobHandler = (ctx: JobContext, job: RunningJob) => Promise<void>;
 
-/**
- * 台帳（jobs テーブル）の読み書きに使う別予算のクエリ数。
- *
- * 作業予算（MAX_DB_QUERIES、既定800）が尽きた**あとに** `state_json` を保存できないと
- * 再開できないので、台帳だけは別の予算で数える。SPEC §2.5 / §8.1 が
- * 「Paid の実測上限は1呼び出し1,000クエリ、既定800は余裕を200残した値」としており、
- * この枠はその200の内側に収まる。
- *
- * 内訳: `runJobs` は1本あたり3クエリ（拾う SELECT・押さえる UPDATE・畳む UPDATE）使うので
- * `MAX_JOBS_PER_RUN` × 3 が下限。残りが `enqueueForCron` の投入（1本あたり
- * 重複確認の SELECT ＋ INSERT の2クエリ）に回る。M6 で毎時の投入が
- * アカウントあたり1本から3本（`insights_recent` / `ap_plan` / `ap_notify`）に増えたので、
- * 150 のままだと `runJobs` のループだけで使い切って cron 全体が落ちていた。
- */
+/** Bookkeeping reserves 190 queries alongside the 800-query work budget. Cron pages use batched INSERT SELECT. */
 export const JOB_BOOKKEEPING_QUERIES = 190;
 
-function systemDb(env: Env): Db {
+function systemDb(env: Env, scheduler = false): Db {
   return createDb(
     env.DB,
     createBudget({
-      dbQueries: JOB_BOOKKEEPING_QUERIES,
+      dbQueries: env.WORKERS_PLAN === "free" ? (scheduler ? 40 : 16) : JOB_BOOKKEEPING_QUERIES,
       subrequests: 0,
       timeMs: Number.MAX_SAFE_INTEGER,
     }),
@@ -117,6 +106,13 @@ function systemDb(env: Env): Db {
 export function createJobContext(env: Env, now = new Date()): JobContext {
   const budget = budgetFromEnv(env);
   return { env, db: createDb(env.DB, budget), sys: systemDb(env), budget, now };
+}
+
+/** Cron only enqueues/dispatches. Its total free DB allowance is 8 + 40 = 48. */
+export function createSchedulerContext(env: Env, now = new Date()): JobContext {
+  if (env.WORKERS_PLAN !== "free") return createJobContext(env, now);
+  const budget = createBudget({ dbQueries: 8, subrequests: 20, timeMs: 20000 });
+  return { env, db: createDb(env.DB, budget), sys: systemDb(env, true), budget, now };
 }
 
 /** リクエスト経路（routes/*.ts）から使う。作業用 Db と予算は Hono の文脈のものを流用する。 */
@@ -139,8 +135,8 @@ export function makeJobContext(
   } = {},
 ): JobContext {
   const budget = createBudget({
-    subrequests: options.subrequests ?? envInt(env.MAX_SUBREQUESTS, 300),
-    dbQueries: options.dbQueries ?? envInt(env.MAX_DB_QUERIES, 800),
+    subrequests: options.subrequests ?? Math.min(envInt(env.MAX_SUBREQUESTS, 300), env.WORKERS_PLAN === "free" ? 20 : 300),
+    dbQueries: options.dbQueries ?? Math.min(envInt(env.MAX_DB_QUERIES, 800), env.WORKERS_PLAN === "free" ? 32 : 800),
     timeMs: options.timeMs ?? envInt(env.JOB_TIME_BUDGET_MS, 20000),
     ...(options.clock ? { now: options.clock } : {}),
   });
@@ -174,28 +170,16 @@ export async function enqueueJob(
   options: EnqueueOptions = {},
 ): Promise<string | null> {
   const accountId = options.accountId ?? null;
-  if (!options.force) {
-    const dup = await ctx.sys.first<{ id: string }>(
-      accountId === null
-        ? "SELECT id FROM jobs WHERE type=? AND account_id IS NULL AND status IN ('pending','running') LIMIT 1"
-        : "SELECT id FROM jobs WHERE type=? AND account_id=? AND status IN ('pending','running') LIMIT 1",
-      ...(accountId === null ? [type] : [type, accountId]),
-    );
-    if (dup) return null;
-  }
   const id = crypto.randomUUID();
   const nowIso = ctx.now.toISOString();
-  await ctx.sys.run(
-    "INSERT INTO jobs (id, type, account_id, state_json, status, priority, next_run_at, attempts, last_error, created_at, updated_at) VALUES (?,?,?,?, 'pending', ?,?, 0, NULL, ?,?)",
-    id,
-    type,
-    accountId,
-    JSON.stringify(options.state ?? {}),
-    options.priority ?? JOB_PRIORITY[type] ?? 5,
-    (options.nextRunAt ?? ctx.now).toISOString(),
-    nowIso,
-    nowIso,
+  const inserted = await ctx.sys.run(
+    `INSERT INTO jobs (id,type,account_id,state_json,status,priority,next_run_at,attempts,last_error,created_at,updated_at)
+     SELECT ?,?,?,?,'pending',?,?,0,NULL,?,?
+     WHERE ?=1 OR NOT EXISTS (SELECT 1 FROM jobs WHERE type=? AND account_id IS ? AND status IN ('pending','running'))`,
+    id, type, accountId, JSON.stringify(options.state ?? {}), options.priority ?? JOB_PRIORITY[type] ?? 5,
+    (options.nextRunAt ?? ctx.now).toISOString(), nowIso, nowIso, options.force ? 1 : 0, type, accountId,
   );
+  if (!inserted.changes) return null;
   return id;
 }
 
@@ -222,67 +206,73 @@ export async function enqueueForCron(ctx: JobContext, cron: string): Promise<voi
   }
 }
 
+/** Each sweep is durable. A page and its cursor commit together; every minute continues old sweeps. */
 async function enqueueForCronInner(ctx: JobContext, cron: string): Promise<void> {
-  if (cron === CRON_5MIN) {
-    // SPEC §8.2 は「runJobs() のみ」だが、publish（§8.3）を動かす入口はここしかない。
-    // 出番のあるアカウントにだけ publish を積む。重複投入はしないので、同じアカウントの
-    // publish は常に1本（並走してコメントを二重投稿することがない）
-    await enqueuePendingPublishes(ctx);
-    return;
+  const period = ctx.now.toISOString();
+  if (cron === CRON_HOURLY || cron === CRON_DAILY) {
+    const kind = cron === CRON_HOURLY ? "hourly" : "daily";
+    const stamp = kind === "hourly" ? period.slice(0, 13) : period.slice(0, 10);
+    await ctx.sys.run("INSERT OR IGNORE INTO cron_sweeps(id,kind,period) VALUES (?,?,?)", `${kind}:${stamp}`, kind, period);
   }
-
-  const accounts = await ctx.sys.all<{ id: string }>(
-    "SELECT id FROM accounts WHERE status='ok' ORDER BY created_at ASC",
+  const sweeps = await ctx.sys.all<{id:string;kind:string;period:string;cursor:string}>(
+    "SELECT id,kind,period,cursor FROM cron_sweeps WHERE done=0 ORDER BY period,id LIMIT 2",
   );
-  const weekly = ctx.now.getUTCDay() === WEEKLY_UTC_DAY;
-
-  if (cron === CRON_HOURLY) {
-    for (const a of accounts) {
-      await enqueueJob(ctx, "insights_recent", { accountId: a.id });
-      await enqueueJob(ctx, "ap_plan", { accountId: a.id });
-      await enqueueJob(ctx, "ap_notify", { accountId: a.id });
+  for (const sweep of sweeps) {
+    const accounts = await ctx.sys.all<{id:string}>("SELECT id FROM accounts WHERE status='ok' AND id>? ORDER BY id LIMIT 200", sweep.cursor);
+    const weekly = new Date(sweep.period).getUTCDay() === WEEKLY_UTC_DAY;
+    const types: JobType[] = sweep.kind === "hourly" ? ["insights_recent","ap_plan","ap_notify"] :
+      ["full_sync","insights_daily","daily_views","clicks","followers","ap_score", ...(weekly ? ["insights_old","demographics","token_refresh"] as JobType[] : [])];
+    const end = accounts.at(-1)?.id ?? sweep.cursor;
+    const statements: Array<{sql:string;params:unknown[]}> = types.map(type => ({
+      sql: `INSERT OR IGNORE INTO jobs(id,type,account_id,state_json,status,priority,next_run_at,attempts,created_at,updated_at)
+        SELECT ? || ':' || a.id,?,a.id,'{}','pending',?,?,0,?,? FROM accounts a
+        WHERE a.status='ok' AND a.id>? AND a.id<=?
+          ${ctx.env.WORKERS_PLAN === "free" && (type === "ap_plan" || type === "ap_notify") ? "AND EXISTS (SELECT 1 FROM autopilot ap WHERE ap.account_id=a.id AND ap.enabled=1)" : ""}
+          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.type=? AND j.account_id=a.id AND j.status IN ('pending','running'))`,
+      params: [`${sweep.id}:${type}`, type, JOB_PRIORITY[type], period, period, period, sweep.cursor, end, type],
+    }));
+    if (accounts.length < 200) {
+      const type: JobType = sweep.kind === "hourly" ? "daily_digest" : "cleanup";
+      statements.push({sql: `INSERT OR IGNORE INTO jobs(id,type,state_json,status,priority,next_run_at,attempts,created_at,updated_at)
+        SELECT ?,?,'{}','pending',?,?,0,?,? WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE type=? AND account_id IS NULL AND status IN ('pending','running'))`,
+        params: [`${sweep.id}:${type}`,type,JOB_PRIORITY[type],period,period,period,type]});
     }
-    // 日次ダイジェスト（M7）。買い手ごとの `digest_hour` はジョブの中で見るので、
-    // 毎時1本だけ積む（アカウント単位ではない）
-    await enqueueJob(ctx, "daily_digest");
-    return;
+    statements.push({sql:"UPDATE cron_sweeps SET cursor=?, done=? WHERE id=? AND cursor=?", params:[end, accounts.length < 200 ? 1 : 0, sweep.id,sweep.cursor]});
+    await ctx.sys.batch(statements);
   }
-
-  if (cron === CRON_DAILY) {
-    for (const a of accounts) {
-      await enqueueJob(ctx, "full_sync", { accountId: a.id });
-      await enqueueJob(ctx, "insights_daily", { accountId: a.id });
-      if (weekly) await enqueueJob(ctx, "insights_old", { accountId: a.id });
-      await enqueueJob(ctx, "daily_views", { accountId: a.id });
-      await enqueueJob(ctx, "clicks", { accountId: a.id });
-      await enqueueJob(ctx, "followers", { accountId: a.id });
-      if (weekly) await enqueueJob(ctx, "demographics", { accountId: a.id });
-      if (weekly) await enqueueJob(ctx, "token_refresh", { accountId: a.id });
-      await enqueueJob(ctx, "ap_score", { accountId: a.id });
-    }
-    await enqueueJob(ctx, "cleanup");
-  }
+  if (cron === CRON_5MIN || cron === "* * * * *") await enqueuePendingPublishes(ctx);
+  await ctx.sys.run("DELETE FROM cron_sweeps WHERE done=1 AND period<?", new Date(ctx.now.getTime()-7*86400_000).toISOString());
 }
 
-/**
- * 出番のあるキュー（`scheduled` で時刻が来たもの、または途中まで進んだ `publishing`）を
- * 持つアカウントに `publish` を積む（SPEC §8.3）。5分ごとの cron から呼ぶ。
- * 進行中のキューが次のステップを待っている間も、次の5分でここが積み直す。
- */
+/** Atomic insertion avoids concurrent cron invocations creating duplicate active publish jobs. */
 export async function enqueuePendingPublishes(ctx: JobContext): Promise<void> {
-  const nowIso = ctx.now.toISOString();
-  const rows = await ctx.sys.all<{ account_id: string }>(
-    `SELECT DISTINCT q.account_id AS account_id
-       FROM queue q JOIN accounts a ON a.id=q.account_id
-      WHERE q.status IN ('scheduled','publishing')
-        AND a.status='ok'
-        AND q.scheduled_at IS NOT NULL AND q.scheduled_at<=?
-        AND (q.next_step_at IS NULL OR q.next_step_at<=?)`,
-    nowIso,
-    nowIso,
-  );
-  for (const r of rows) {
-    await enqueueJob(ctx, "publish", { accountId: r.account_id });
+  const now = ctx.now.toISOString();
+  await ctx.sys.run(`INSERT INTO jobs(id,type,account_id,state_json,status,priority,next_run_at,attempts,created_at,updated_at)
+    SELECT lower(hex(randomblob(16))), 'publish', a.id, '{}','pending',1,?,0,?,? FROM accounts a
+    WHERE a.status='ok' AND EXISTS (SELECT 1 FROM queue q WHERE q.account_id=a.id
+      AND q.status IN ('scheduled','publishing') AND q.scheduled_at<=? AND (q.next_step_at IS NULL OR q.next_step_at<=?))
+    AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.account_id=a.id AND j.type='publish' AND j.status IN ('pending','running'))
+    ORDER BY a.id LIMIT 1000`, now,now,now,now,now);
+}
+
+/** DB is the durable outbox. A failed send becomes eligible again after its short dispatch lease. */
+export async function dispatchJobs(ctx: JobContext): Promise<void> {
+  if (!ctx.env.JOB_QUEUE) return;
+  const now = ctx.now.toISOString();
+  await ctx.sys.run("UPDATE jobs SET status='pending' WHERE status='running' AND updated_at<?", new Date(ctx.now.getTime()-STALE_RUNNING_MIN*60_000).toISOString());
+  // 10 batches of 98: below both D1's 100 bindings and Queues' 100 messages/batch.
+  // One small batch per minute would cap throughput below the work created for 1,000 users.
+  const batchSize = ctx.env.WORKERS_PLAN === "free" ? 2 : 98;
+  for (let page = 0; page < (ctx.env.WORKERS_PLAN === "free" ? 1 : 10); page++) {
+    ctx.budget.timeMs.check();
+    const ids = await ctx.sys.all<{id:string}>(`SELECT id FROM jobs WHERE status='pending' AND next_run_at<=?
+      AND (dispatched_until IS NULL OR dispatched_until<=?) ORDER BY priority,next_run_at LIMIT ${batchSize}`, now, now);
+    if (!ids.length) break;
+    const lease = new Date(ctx.now.getTime()+5*60_000).toISOString();
+    const claims = await ctx.sys.all<{id:string}>(`UPDATE jobs SET dispatched_until=? WHERE id IN (${ids.map(()=>"?").join(",")})
+      AND status='pending' AND (dispatched_until IS NULL OR dispatched_until<=?) RETURNING id`, lease,...ids.map(x=>x.id),now);
+    if (claims.length) await ctx.env.JOB_QUEUE.sendBatch(claims.map(({id})=>({body:{jobId:id}})));
+    if (ids.length < batchSize) break;
   }
 }
 
@@ -336,18 +326,21 @@ function parseState(json: string): JobState {
 export async function runJobs(
   ctx: JobContext,
   handlers: Partial<Record<string, JobHandler>> = HANDLERS,
+  onlyJobId?: string,
 ): Promise<RunJobsResult> {
   const result: RunJobsResult = { processed: 0, done: 0, deferred: 0, failed: 0, exhausted: false };
   const nowIso = ctx.now.toISOString();
 
   // クラッシュ対策: running のまま10分以上経ったものを戻す
-  await ctx.sys.run(
+  try { await ctx.sys.run(
     "UPDATE jobs SET status='pending', updated_at=? WHERE status='running' AND updated_at < ?",
     nowIso,
     new Date(ctx.now.getTime() - STALE_RUNNING_MIN * 60_000).toISOString(),
   );
 
-  for (let i = 0; i < MAX_JOBS_PER_RUN; i++) {
+  } catch (e) { if (!isBudgetExceeded(e)) throw e; return { ...result, exhausted: true }; }
+
+  for (let i = 0; i < (onlyJobId || ctx.env.WORKERS_PLAN === "free" ? 1 : MAX_JOBS_PER_RUN); i++) {
     // 予算が尽きていたらここで止める（次の5分で続きから）
     try {
       ctx.budget.timeMs.check();
@@ -362,8 +355,8 @@ export async function runJobs(
     let row: JobRow | null;
     try {
       row = await ctx.sys.first<JobRow>(
-        "SELECT id, type, account_id, state_json, status, priority, next_run_at, attempts FROM jobs WHERE status='pending' AND next_run_at<=? ORDER BY priority ASC, next_run_at ASC LIMIT 1",
-        nowIso,
+        `SELECT id, type, account_id, state_json, status, priority, next_run_at, attempts FROM jobs WHERE status='pending' AND next_run_at<=? ${onlyJobId ? "AND id=?" : ""} ORDER BY priority ASC, next_run_at ASC LIMIT 1`,
+        nowIso, ...(onlyJobId ? [onlyJobId] : []),
       );
     } catch (e) {
       if (!isBudgetExceeded(e)) throw e;
@@ -480,4 +473,27 @@ async function defer(ctx: JobContext, job: RunningJob): Promise<void> {
     nowIso,
     job.id,
   );
+}
+
+/** Wake only this account's ingestion jobs. D1 remains the outbox if Queues is unavailable. */
+export const SYNC_JOB_TYPES: JobType[] = ["full_sync", "followers", "daily_views", "insights_recent", "insights_daily", "insights_old", "clicks"];
+export async function wakeAccountSync(ctx: JobContext, accountId: string): Promise<void> {
+  if (!ctx.env.JOB_QUEUE) return;
+  const now = ctx.now.toISOString();
+  const lease = new Date(ctx.now.getTime() + 300_000).toISOString();
+  const rows = await ctx.sys.all<{id:string}>(`UPDATE jobs SET dispatched_until=?
+    WHERE account_id=? AND type IN (${SYNC_JOB_TYPES.map(()=>"?").join(",")})
+    AND status='pending' AND next_run_at<=? AND (dispatched_until IS NULL OR dispatched_until<=?) RETURNING id`,
+    lease, accountId, ...SYNC_JOB_TYPES, now, now);
+  if (!rows.length) return;
+  try { await ctx.env.JOB_QUEUE.sendBatch(rows.map(({id})=>({body:{jobId:id}}))); }
+  catch { await ctx.sys.run("UPDATE jobs SET dispatched_until=NULL WHERE account_id=? AND dispatched_until=? AND status='pending'", accountId, lease); }
+}
+export async function enqueueAccountSync(ctx: JobContext, accountId: string): Promise<boolean> {
+  let queued = false;
+  for (const type of ["full_sync", "followers", "daily_views", "clicks"] as const) {
+    if (await enqueueJob(ctx, type, {accountId})) queued = true;
+  }
+  await wakeAccountSync(ctx, accountId);
+  return queued;
 }

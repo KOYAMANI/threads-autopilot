@@ -5,6 +5,8 @@
  * - 応答は必ず {ok:true,data} / {ok:false,error:{code,message}}（SPEC §2.4）
  */
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import { rateHit } from "./lib/rate";
 import type { ApiErr } from "@tap/shared";
 import { APP_VERSION, type Env } from "./env";
 import { budgetFromEnv, type Budget } from "./lib/budget";
@@ -27,6 +29,8 @@ import { aiRoutes } from "./routes/ai";
 import { autopilotRoutes } from "./routes/autopilot";
 import { notificationRoutes, pushRoutes } from "./routes/notifications";
 import { exportRoutes } from "./routes/export";
+import { threadsOAuthRoutes } from "./routes/threads-oauth";
+import { googleRoutes } from "./routes/google";
 import { userRoutes } from "./routes/users";
 
 export type Vars = {
@@ -41,6 +45,8 @@ export type AppEnv = { Bindings: Env; Variables: Vars };
 /** 認証を要求しないパス（/api を除いた相対パス）。 */
 const PUBLIC_PATHS = new Set([
   "/health",
+  "/google/callback",
+  "/threads/oauth/callback",
   "/auth/register",
   "/auth/login",
   "/auth/forgot",
@@ -58,6 +64,15 @@ export function fail(code: string, message: string, status = 400): Response {
 
 export function createApp() {
   const app = new Hono<AppEnv>().basePath("/api");
+
+  app.use("*", async (c, next) => {
+    if (c.env.MAINTENANCE_MODE === "1" && c.req.path !== "/api/health") return fail("MAINTENANCE", "メンテナンス中です。しばらくしてからお試しください", 503);
+    c.header("Cache-Control", "no-store");
+    c.header("X-Content-Type-Options", "nosniff");
+    c.header("Referrer-Policy", "no-referrer");
+    await next();
+  });
+  app.use("*", bodyLimit({ maxSize: 1_000_000, onError: () => fail("BAD_REQUEST", "送信データが大きすぎます", 413) }));
 
   // 1リクエスト＝1予算。D1 クエリ数は lib/db.ts が自動で数える（SPEC §8.1）
   app.use("*", async (c, next) => {
@@ -86,6 +101,7 @@ export function createApp() {
       if (session) {
         c.set("userId", session.user_id);
         c.set("sessionId", session.id);
+        c.header("X-Authenticated-User", session.user_id);
       }
     }
     if (!isPublic(path) && !c.get("userId")) {
@@ -94,6 +110,19 @@ export function createApp() {
     await next();
   });
 
+  app.use("*", async (c, next) => {
+    const path = c.req.path;
+    if (/\/auth\/(login|register|forgot|reset)$/.test(path)) {
+      const ip = c.req.header("CF-Connecting-IP") ?? "local";
+      if (ip !== "local" && !(await rateHit(c.get("db"), `auth-ip:${ip}`, 60, 10))) return fail("RATE_LIMITED", "しばらく待ってからお試しください", 429);
+    } else if (c.get("userId") && !["GET", "HEAD", "OPTIONS"].includes(c.req.method)) {
+      if (!(await rateHit(c.get("db"), `write:${c.get("userId")}`, 120, 1))) return fail("RATE_LIMITED", "操作が多すぎます。少し待ってください", 429);
+    }
+    await next();
+  });
+
+  app.route("/google", googleRoutes());
+  app.route("/threads/oauth", threadsOAuthRoutes());
   app.route("/health", healthRoutes());
   app.route("/auth", authRoutes());
   app.route("/admin", adminRoutes());

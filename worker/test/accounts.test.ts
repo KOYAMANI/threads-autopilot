@@ -22,7 +22,7 @@ describe("POST /api/accounts（SPEC §7.1）", () => {
     });
     expect(res.status).toBe(201);
     expect(res.body.data.account.username).toMatch(/^demo_/);
-    expect(res.body.data.longLived).toBe(false);
+    expect(res.body.data.longLived).toBe(true);
     expect(res.body.data.secretIgnored).toBe(false);
 
     const accountId = res.body.data.account.id as string;
@@ -200,7 +200,7 @@ describe("DELETE /api/accounts/:id（SPEC §7.1）", () => {
       nowIso,
     );
     await db.run(
-      "INSERT INTO post_metrics_history (account_id, post_id, checkpoint, at, views) SELECT account_id, id, '48h', ?, 1 FROM posts WHERE account_id=? LIMIT 1",
+      "INSERT OR IGNORE INTO post_metrics_history (account_id, post_id, checkpoint, at, views) SELECT account_id, id, '48h', ?, 1 FROM posts WHERE account_id=? LIMIT 1",
       nowIso,
       accountId,
     );
@@ -241,15 +241,17 @@ describe("sync / diagnose / patch（SPEC §7.1）", () => {
     expect(second.body.data.queued).toBe(false);
 
     const running = await api("GET", `/api/accounts/${accountId}/sync`, { cookie: u.cookie });
-    expect(running.body.data).toEqual({ running: true, progress: 0, total: SYNC_TOTAL_PAGES });
+    expect(running.body.data).toMatchObject({ running: true, status: "syncing", progress: 0, total: SYNC_TOTAL_PAGES });
 
     // `POST /sync` はルート経由なので `next_run_at` を**実時計**で書く。ジョブを回す側の
     // `now` が実時計より前だと「まだ期限が来ていない」と判定されて進まない（固定の NOW を
     // そのまま渡すと、実時間が NOW を追い越した日から落ちる）。両方の遅い方を使う
     const runAt = new Date(Math.max(NOW.getTime(), Date.now()));
-    await runJobs(makeJobContext(env, { now: runAt }));
+    for (let i=0;i<5;i++) {
+      await runJobs(makeJobContext(env, { now: new Date(runAt.getTime() + i * 1000) }));
+    }
     const done = await api("GET", `/api/accounts/${accountId}/sync`, { cookie: u.cookie });
-    expect(done.body.data).toEqual({
+    expect(done.body.data).toMatchObject({
       running: false,
       progress: SYNC_TOTAL_PAGES,
       total: SYNC_TOTAL_PAGES,
@@ -292,13 +294,13 @@ describe("sync / diagnose / patch（SPEC §7.1）", () => {
     expect(bad.status).toBe(400);
   });
 
-  it("短期トークンの手動延長は日本語で断る", async () => {
+  it("有効期限未確認でもAPIが延長を受け付ければ長期トークンとして保存する", async () => {
     const u = await registerUser();
     const accountId = await insertAccount({ userId: u.userId, token: mockToken("rt1") });
     const res = await api("POST", `/api/accounts/${accountId}/refresh-token`, { cookie: u.cookie });
     expect(res.status).toBe(200);
-    expect(res.body.data.refreshed).toBe(false);
-    expect(res.body.data.message).toContain("長期トークンではない");
+    expect(res.body.data.refreshed).toBe(true);
+    expect(res.body.data.message).toContain("延長");
   });
 
   it("長期トークンは延長でき、期限が戻る", async () => {

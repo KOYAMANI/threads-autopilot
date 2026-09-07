@@ -56,6 +56,8 @@ export type AccountSummary = {
   avatarUrl: string | null;
   color: string;
   status: AccountStatus;
+  /** Server-derived readiness; absent means publishing is unavailable. */
+  canPublish?: boolean;
   timezone: string;
   tokenExpiresInDays: number | null;
   longLived: boolean;
@@ -127,7 +129,7 @@ export type DiagnoseStep = { name: string; ok: boolean; detail: string };
 export type DiagnoseResponse = { steps: DiagnoseStep[] };
 
 /** `GET /accounts/:id/sync`。progress / total はページ数（SPEC §7.1） */
-export type SyncStatus = { running: boolean; progress: number; total: number };
+export type SyncStatus = { running: boolean; progress: number; total: number; status: "idle" | "syncing" | "done" | "failed"; posts: number; message: string | null; lastSyncedAt: string | null };
 
 export type RefreshTokenResponse = {
   refreshed: boolean;
@@ -362,14 +364,18 @@ export type AiCandidate = {
   body: string;
   comments: string[];
   basis: string;
+  /** 案ごとの編集方針。 */
+  angle?: string;
 };
 
-export type AiPickMode = "template" | "rewrite";
+export type AiPickMode = "template" | "rewrite" | "information";
 
 export type AiGenerateRequest = {
   accountId: string;
   picks?: string[];
   pickMode?: AiPickMode;
+  /** 型として使う貼り付け投稿。本人の続きも含める。 */
+  referenceText?: string;
   sourceIds?: string[];
   instruction?: string;
   n?: number;
@@ -379,6 +385,7 @@ export type AiGenerateRequest = {
 
 export type AiGenerateResponse = {
   candidates: AiCandidate[];
+  analysis?: string;
   /** OpenRouter に YouTube を渡せないときなど、画面に出す案内 */
   notes: string[];
 };
@@ -386,7 +393,10 @@ export type AiGenerateResponse = {
 /** 会話履歴（SPEC §7.6 の `history`）。 */
 export type AiHistoryTurn = { role: "user" | "assistant"; text: string };
 
+export type AiGenerationContext = Omit<AiGenerateRequest, "accountId" | "clientKey" | "n">;
+
 export type AiReviseRequest = {
+  context?: AiGenerationContext;
   accountId: string;
   candidate: AiCandidate;
   instruction: string;

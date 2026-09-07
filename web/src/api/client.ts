@@ -4,6 +4,7 @@
  * - 変更系は `X-Requested-With: fetch` を付ける（SPEC §5.1 の CSRF 対策）
  * - 失敗は ApiError（error.message をそのまま画面に出す）
  */
+import { beginRequest } from "../lib/session-boundary";
 import type { ApiResponse } from "@tap/shared";
 
 export class ApiError extends Error {
@@ -18,29 +19,44 @@ export class ApiError extends Error {
   }
 }
 
+let responseOwner: string | null = null;
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = { "X-Requested-With": "fetch" };
   if (body !== undefined) headers["Content-Type"] = "application/json";
 
+  const boundary = beginRequest();
   let res: Response;
   try {
     res = await fetch(`/api${path}`, {
       method,
       headers,
       credentials: "include",
+      signal: boundary.controller.signal,
+      cache: "no-store",
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
   } catch {
+    boundary.finish();
     throw new ApiError("NETWORK", "通信に失敗しました。電波の状況をご確認ください", 0);
   }
 
   let json: unknown = null;
   try {
     json = await res.json();
+    boundary.finish();
+    if (!boundary.current()) throw new Error("session changed");
   } catch {
+    boundary.finish();
     throw new ApiError("INTERNAL", "サーバーの応答を読めませんでした", res.status);
   }
 
+  const owner = res.headers.get("X-Authenticated-User");
+  if ((owner && responseOwner && owner !== responseOwner) || (res.status === 401 && (!path.startsWith("/auth/") || (path === "/auth/me" && responseOwner)))) {
+    window.dispatchEvent(new Event("tap:unauthorized"));
+    throw new ApiError("UNAUTHORIZED", "ログイン状態が変わりました。再読み込みします", 401);
+  }
+  if (owner) responseOwner = owner;
   const payload = json as ApiResponse<T> | { ok: boolean; [k: string]: unknown };
   if (payload && typeof payload === "object" && "ok" in payload && payload.ok === false) {
     const e = (payload as { error?: { code?: string; message?: string } }).error;

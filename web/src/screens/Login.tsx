@@ -29,24 +29,30 @@ export default function Login() {
 
 function Shell({ title, lead, children }: { title: string; lead: string; children: React.ReactNode }) {
   return (
-    <main style={{ padding: "calc(var(--sp) * 4) calc(var(--sp) * 2)" }}>
+    <main className="auth-layout">
+      <aside className="auth-story"><div className="brand"><span className="brand-symbol">a</span><span>autopilot<span className="brand-sub">for Threads</span></span></div>
+        <div><p className="eyebrow">YOUR WORDS. MORE POSSIBILITIES.</p><h2>伝わる投稿を。<br />続けられる仕組みを。</h2><p>振り返る、書く、届ける。<br />あなたのThreadsを、ひとつの場所で。</p>
+        <div className="auth-flow"><span>01<b>分析する</b></span><span>02<b>投稿をつくる</b></span><span>03<b>予約する</b></span></div></div>
+        <small>Threads オートパイロット</small></aside>
+      <div className="auth-form-wrap"><div className="auth-form-inner">
       <h1 style={{ fontSize: 24 }}>{title}</h1>
       <p className="muted" style={{ marginTop: 6, marginBottom: "calc(var(--sp) * 3)" }}>
         {lead}
       </p>
-      <div className="card">{children}</div>
+      <div className="auth-form">{children}</div>
+      </div></div>
     </main>
   );
 }
 
 function AuthForm() {
-  const navigate = useNavigate();
-  const [mode, setMode] = useState<Mode>("login");
+  const [params, setParams] = useSearchParams();
+  const [mode, setMode] = useState<Mode>(params.get("mode") === "register" ? "register" : "login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [licenseKey, setLicenseKey] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(params.get("changed") === "1" ? "パスワードを変更しました。新しいパスワードでログインしてください。" : null);
 
   const login = useLogin();
   const register = useRegister();
@@ -55,6 +61,8 @@ function AuthForm() {
 
   const switchTo = (next: Mode) => {
     setMode(next);
+    setParams(next === "register" ? { mode: "register" } : {}, { replace: true });
+    setPassword("");
     setError(null);
     setNotice(null);
   };
@@ -74,7 +82,7 @@ function AuthForm() {
       } else {
         await login.mutateAsync({ email, password });
       }
-      navigate("/app/home", { replace: true });
+      // The auth hook replaces the document after clearing the previous user state.
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -83,14 +91,15 @@ function AuthForm() {
   const title = mode === "register" ? "はじめる" : mode === "forgot" ? "パスワードの再設定" : "ログイン";
   const lead =
     mode === "register"
-      ? "購入時のライセンスキーで登録します"
+      ? "管理者から届いたライセンスキーで登録します"
       : mode === "forgot"
         ? "登録したメールアドレスに再設定リンクを送ります"
         : "Threads オートパイロット";
 
   return (
     <Shell title={title} lead={lead}>
-      <form onSubmit={onSubmit} noValidate>
+      {mode === "register" && <div className="registration-guide"><strong>初回登録は、この3ステップ</strong><ol><li>管理者からライセンスキーを受け取る</li><li>メールアドレスとパスワードを登録する</li><li>自分のThreadsとAIを連携する</li></ol><p>キーは1人につき1つ。お持ちでない場合は管理者にお問い合わせください。</p></div>}
+      <form onSubmit={onSubmit}>
         <label className="field">
           <span>メールアドレス</span>
           <input
@@ -166,7 +175,7 @@ function AuthForm() {
         {mode === "login" && (
           <>
             <button className="btn btn-quiet" type="button" onClick={() => switchTo("register")}>
-              ライセンスキーで登録
+              初めての方はこちら
             </button>
             <button className="btn btn-quiet" type="button" onClick={() => switchTo("forgot")}>
               パスワードを忘れた

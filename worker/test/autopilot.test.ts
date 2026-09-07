@@ -5,7 +5,7 @@
  * AI は `AI_MOCK=1`（DEV ガード）、Threads は `THREADS_MOCK`。実キー・実 URL は使わない。
  */
 import { env } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MIN_SAMPLES_LEARNING } from "@tap/shared";
 import { api, insertAccount, mockToken, registerUser, testDb } from "./helpers";
 import { resetMock } from "../src/mock/threads";
@@ -79,10 +79,7 @@ async function enableAp(f: Fixture, patch: Record<string, unknown> = {}) {
 describe("GET/PUT /autopilot（SPEC §7.7）", () => {
   it("AIキーが端末保存なら ON にできない（理由つきで断る）", async () => {
     const f = await fixture("ap-key");
-    await api("PUT", "/api/ai/settings", {
-      cookie: f.cookie,
-      body: { provider: "gemini", storeOnServer: false },
-    });
+    await testDb().run("UPDATE ai_settings SET store_on_server=0,key_enc=NULL WHERE user_id=?",f.userId);
     const got = await api("GET", `/api/accounts/${f.accountId}/autopilot`, { cookie: f.cookie });
     expect(got.body.data.canEnable).toBe(false);
     expect(got.body.data.blockers).toContain("no_key");
@@ -217,6 +214,17 @@ describe("ap_score（SPEC §9.2）", () => {
       noHistory[0]!,
     );
     expect(un!.tags_json).not.toContain("scored");
+  });
+
+  it("query exhaustion between learning and marker cannot double-count on resume", async () => {
+    const f = await fixture("free-score");
+    await seedScorable(f.accountId, 12, {startId:91});
+    // Four setup queries + child lookup leave room for only half of the old two-write sequence.
+    await expect(scoreAccount(makeJobContext(env, {now:NOW, dbQueries:6}), f.accountId)).rejects.toThrow("budget exceeded");
+    await scoreAccount(makeJobContext(env, {now:NOW}), f.accountId);
+    const dims = await testDb().all<{n:number}>("SELECT SUM(n) n FROM learning WHERE account_id=? GROUP BY dim", f.accountId);
+    expect(dims).toHaveLength(4);
+    for (const d of dims) expect(d.n).toBe(12);
   });
 
   it("採点は48時間の1回だけ。2回走らせても n は増えない", async () => {
@@ -366,7 +374,7 @@ describe("ap_plan（SPEC §9.4）", () => {
     expect(JSON.parse(row!.tags_json).hook).toBeTruthy();
 
     const log = await testDb().first<{ message: string }>(
-      "SELECT message FROM ap_log WHERE account_id=? AND kind='plan' ORDER BY at DESC LIMIT 1",
+      "SELECT message FROM ap_log WHERE account_id=? AND kind='plan' AND message LIKE '%下書きを作りました%' ORDER BY at DESC LIMIT 1",
       f.accountId,
     );
     expect(log!.message).toContain("下書きを作りました");
@@ -639,11 +647,18 @@ async function callAction(
   method: "GET" | "POST" = "GET",
   ip = "203.0.113.9",
 ): Promise<{ status: number; html: string }> {
-  const res = await handleAction(
-    new Request(url, { method, headers: { "CF-Connecting-IP": ip } }),
-    env,
-  );
-  return { status: res.status, html: await res.text() };
+  // Token creation uses NOW; verification must observe the same test clock.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
+  try {
+    const res = await handleAction(
+      new Request(url, { method, headers: { "CF-Connecting-IP": ip } }),
+      env,
+    );
+    return { status: res.status, html: await res.text() };
+  } finally {
+    vi.useRealTimers();
+  }
 }
 
 describe("GET|POST /a/:token（SPEC §7.9）", () => {
@@ -657,6 +672,19 @@ describe("GET|POST /a/:token（SPEC §7.9）", () => {
     );
     return { f, queueId: row!.id, scheduledAt: row!.scheduled_at };
   }
+
+  it("未連携ならメール承認を拒否し、再連携後までトークンを残す", async () => {
+    const { f, queueId, scheduledAt } = await plannedQueue("act-disconnected", "manual");
+    const url = await actionUrl(env, { queueId, action: "approve", scheduledAt, nowMs: NOW.getTime() });
+    await testDb().run("UPDATE accounts SET status='needs_reauth' WHERE id=?", f.accountId);
+    const denied = await callAction(url, "POST");
+    expect(denied.status).toBe(409);
+    const row = await testDb().first<{ status: string; action_token_used_at: string | null }>("SELECT status, action_token_used_at FROM queue WHERE id=?", queueId);
+    expect(row?.status).toBe("pending_approval");
+    expect(row?.action_token_used_at).toBeNull();
+    await testDb().run("UPDATE accounts SET status='ok' WHERE id=?", f.accountId);
+    expect((await callAction(url, "POST")).status).toBe(200);
+  });
 
   it("GET は確認画面を返し、トークンを消費しない", async () => {
     const { f, queueId, scheduledAt } = await plannedQueue("act1");

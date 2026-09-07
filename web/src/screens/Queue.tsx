@@ -105,6 +105,7 @@ export default function Queue() {
 
   const tz = account?.timezone ?? "Asia/Tokyo";
   const accountId = account?.id ?? null;
+  const canPublish = account?.canPublish === true;
 
   const [tab, setTab] = useState<QueueTabKey>("scheduled");
   const [day, setDay] = useState<string | null>(null);
@@ -190,7 +191,7 @@ export default function Queue() {
   }
 
   function reschedule(pick: SchedulePick) {
-    if (!selected) return;
+    if (!selected || !canPublish) return;
     if (pick.kind === "now") {
       publishNow.mutate(selected.id, {
         onSuccess: () => {
@@ -217,9 +218,10 @@ export default function Queue() {
 
   return (
     <>
-      <div className="section-head" style={{ marginBottom: 0 }}>
+      <div className="page-heading queue-heading">
         <div>
-          <h1>キュー</h1>
+          <p className="eyebrow">PLAN YOUR NEXT CHAPTER</p><h1>下書き・予約</h1>
+          {!canPublish && <p className="msg msg-warn">設定でThreads APIを連携すると、予約・投稿できるようになります。</p>}
           <p className="muted" style={{ marginTop: "0.125rem" }}>
             @{account.username} の予約と下書き
           </p>
@@ -337,6 +339,7 @@ export default function Queue() {
                 <button
                   type="button"
                   className="menu-item"
+                  disabled={!canPublish}
                   onClick={() =>
                     approve.mutate(selected.id, {
                       onSuccess: () => {
@@ -354,6 +357,7 @@ export default function Queue() {
                 <button
                   type="button"
                   className="menu-item"
+                  disabled={!canPublish}
                   onClick={() => openSheet(selected, "schedule")}
                 >
                   {selected.scheduledAt ? "日時を変える" : "日時を決める"}
@@ -363,6 +367,7 @@ export default function Queue() {
                 <button
                   type="button"
                   className="menu-item"
+                  disabled={!canPublish}
                   onClick={() =>
                     publishNow.mutate(selected.id, {
                       onSuccess: () => {

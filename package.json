@@ -17,12 +17,17 @@
     "dev:web": "npm -w web run dev",
     "build": "npm -w web run build",
     "db:migrate": "wrangler d1 migrations apply threads-autopilot --local",
-    "db:migrate:remote": "wrangler d1 migrations apply threads-autopilot --remote",
+    "db:migrate:remote": "wrangler d1 migrations apply threads-autopilot --remote --config wrangler.production.toml",
     "seed:demo": "tsx scripts/seed-demo.ts",
     "licenses": "tsx scripts/make-licenses.ts",
     "smoke": "tsx scripts/smoke.ts",
-    "clean": "rm -rf node_modules */node_modules web/dist .wrangler *.tsbuildinfo",
-    "make:icons": "node scripts/make-icons.mjs"
+    "clean": "rm -rf node_modules */node_modules web/dist *.tsbuildinfo",
+    "make:icons": "node scripts/make-icons.mjs",
+    "check:production": "python3 scripts/check-production.py",
+    "deploy:production": "python3 scripts/check-production.py --remote && wrangler deploy --config wrangler.production.toml",
+    "check:staging": "python3 scripts/check-staging.py",
+    "db:migrate:staging": "python3 scripts/check-staging.py && wrangler d1 migrations apply threads-autopilot-staging --remote --config wrangler.staging.toml",
+    "deploy:staging": "python3 scripts/check-staging.py && wrangler deploy --config wrangler.staging.toml"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",

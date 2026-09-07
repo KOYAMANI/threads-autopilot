@@ -97,8 +97,8 @@ describe("full_sync（SPEC §8.4）", () => {
     );
 
     const ctx2 = makeJobContext(env, { now: new Date(NOW.getTime() + 3600_000) });
-    await enqueueJob(ctx2, "full_sync", { accountId, force: true });
-    await runJobs(ctx2);
+    const secondId = await enqueueJob(ctx2, "full_sync", { accountId, force: true });
+    await runJobs(ctx2, undefined, secondId!);
 
     const after = await db.first<{ n: number }>(
       "SELECT COUNT(*) AS n FROM posts WHERE account_id=?",

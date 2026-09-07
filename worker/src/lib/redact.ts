@@ -5,7 +5,7 @@
 
 const PATTERNS: Array<[RegExp, string]> = [
   // クエリに載る access_token / key / client_secret / reset（パスワード再設定トークン）
-  [/([?&](?:access_token|key|client_secret|token|reset)=)[^&\s"']+/gi, "$1***"],
+  [/([?&](?:access_token|refresh_token|code|key|client_secret|token|reset)=)[^&\s"']+/gi, "$1***"],
   // Authorization: Bearer xxx
   [/(Bearer\s+)[A-Za-z0-9._\-]+/g, "$1***"],
   // Cookie の sid
@@ -28,7 +28,7 @@ export function redact(input: string): string {
 }
 
 const SECRET_KEYS =
-  /^(token|access_token|token_enc|password|pass|pass_hash|pass_salt|key|key_enc|client_secret|secret|enc_key|session_secret|admin_secret|resend_api_key|clientkey|authorization|cookie)$/i;
+  /^(token|access_token|refresh_token|refresh_enc|verifier_enc|google_client_secret|token_enc|password|pass|pass_hash|pass_salt|key|key_enc|client_secret|secret|enc_key|session_secret|admin_secret|resend_api_key|clientkey|authorization|cookie)$/i;
 
 /** オブジェクトを丸ごとログに出すときに使う。値ごと伏せる。 */
 export function redactObject(value: unknown, depth = 0): unknown {

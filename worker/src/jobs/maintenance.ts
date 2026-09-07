@@ -41,7 +41,7 @@ export async function refreshAccountToken(
   force = false,
 ): Promise<TokenRefreshOutcome> {
   const nowMs = ctx.now.getTime();
-  if (!account.token_long_lived) return "not_long_lived";
+  if (!account.token_long_lived && !force) return "not_long_lived";
 
   const age = nowMs - Date.parse(account.token_obtained_at);
   const sinceRefresh = account.token_last_refresh_at
@@ -96,6 +96,10 @@ export async function cleanupJob(ctx: JobContext, _job: RunningJob): Promise<voi
     { sql: "DELETE FROM ap_log WHERE at < ?", params: [ago(90)] },
     { sql: "DELETE FROM jobs WHERE status='done' AND updated_at < ?", params: [ago(7)] },
     { sql: "DELETE FROM sessions WHERE expires_at < ?", params: [nowIso] },
+    { sql: "DELETE FROM google_oauth_states WHERE expires_at < ?", params: [nowIso] },
+    { sql: "DELETE FROM threads_oauth_states WHERE expires_at < ?", params: [nowIso] },
+    { sql: "DELETE FROM google_api_budget WHERE bucket < ?", params: [ago(1)] },
+    { sql: "DELETE FROM push_subscriptions WHERE session_id IS NOT NULL AND session_id NOT IN (SELECT id FROM sessions)", params: [] },
     { sql: "DELETE FROM password_resets WHERE expires_at < ?", params: [ago(7)] },
     { sql: "DELETE FROM rate_events WHERE at < ?", params: [ago(1)] },
   ]);

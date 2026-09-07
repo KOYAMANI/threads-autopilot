@@ -7,7 +7,7 @@ describe("GET /api/health（SPEC §7.8 / §11）", () => {
   it("{ok, version, mock} を返す", async () => {
     const res = await api("GET", "/api/health");
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true, version: "0.1.0", mock: true });
+    expect(res.body).toEqual({ ok: true, version: "0.1.0", mock: true, environment:"local" });
   });
 
   it("THREADS_MOCK=0 なら mock は false", () => {

@@ -17,7 +17,7 @@ import {
 } from "@tap/shared";
 import { fail, type AppEnv } from "../app";
 import { audit } from "../lib/audit";
-import { loadOwnedAccount } from "../lib/accounts";
+import { canPublishAccount, loadOwnedAccount } from "../lib/accounts";
 import { recentAutoTags } from "../lib/autopilot";
 import { jobContextFrom } from "../lib/jobs";
 import { enqueuePublish } from "../jobs/publish";
@@ -184,6 +184,7 @@ export function queueRoutes() {
     if (!account) return fail("NOT_FOUND", "見つかりませんでした", 404);
 
     const input = parsed.data;
+    if (input.status !== "draft" && !canPublishAccount(account)) return fail("CONFLICT", "Threads APIを設定で連携してから予約してください", 409);
     const comments = (input.comments ?? []).filter((t) => t.trim() !== "");
     const bad = check(input.body, comments);
     if (bad) return fail("VALIDATION", bad.message, 400);
@@ -259,6 +260,7 @@ export function queueRoutes() {
     }
     const scheduledAt = at === undefined ? row.scheduled_at : at;
     const status = input.status ?? (row.status === "failed" ? "draft" : row.status);
+    if ((status === "scheduled" || status === "pending_approval") && !canPublishAccount(account)) return fail("CONFLICT", "Threads APIを設定で連携し直してから予約してください", 409);
     if (status === "scheduled" && !scheduledAt) {
       return fail("BAD_REQUEST", "投稿する日時を指定してください", 400);
     }
@@ -302,6 +304,7 @@ export function queueRoutes() {
     if (!account) return fail("NOT_FOUND", "見つかりませんでした", 404);
     const row = await loadRow(db, account.id, c.req.param("qid"));
     if (!row) return fail("NOT_FOUND", "見つかりませんでした", 404);
+    if (!canPublishAccount(account)) return fail("CONFLICT", "Threads APIを設定で連携し直してから予約してください", 409);
     if (row.status !== "pending_approval" && row.status !== "scheduled") {
       return fail("CONFLICT", "この下書きは承認できる状態ではありません", 409);
     }
@@ -358,7 +361,8 @@ export function queueRoutes() {
     if (!account) return fail("NOT_FOUND", "見つかりませんでした", 404);
     const row = await loadRow(db, account.id, c.req.param("qid"));
     if (!row) return fail("NOT_FOUND", "見つかりませんでした", 404);
-    if (row.status === "done") return fail("CONFLICT", "もう投稿されています", 409);
+    if (!canPublishAccount(account)) return fail("CONFLICT", "Threads APIを設定で連携し直してから予約してください", 409);
+    if (row.status === "publishing" || row.status === "done") return fail("CONFLICT", "すでに投稿中または投稿済みです", 409);
 
     const bad = check(row.body, parseJsonArray(row.comments_json));
     if (bad) return fail("VALIDATION", bad.message, 400);

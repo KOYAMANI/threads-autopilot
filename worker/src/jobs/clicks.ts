@@ -10,7 +10,6 @@
  */
 import { allocateClicks, normalizeUrl } from "@tap/shared";
 import { ACCOUNT_COLUMNS, accountToken, type AccountRow } from "../lib/accounts";
-import { buildUpsertChunks } from "../lib/db";
 import type { JobContext, RunningJob } from "../lib/jobs";
 import { getLinkClicks, type CallOptions } from "../lib/threads";
 import { clickWeeks, type ClickWeek } from "../lib/time";
@@ -107,19 +106,12 @@ export async function clicksJob(ctx: JobContext, job: RunningJob): Promise<void>
     }
 
     if (byUrl.size > 0) {
-      const rows = [...byUrl].map(([url, clicks]) => [accountId, weekEnd, url, clicks, nowIso]);
-      await ctx.db.batch(
-        buildUpsertChunks(
-          "click_weeks",
-          ["account_id", "week_end", "url", "clicks", "fetched_at"],
-          rows,
-          ["account_id", "week_end", "url"],
-          [
-            // 前回より小さい値が来たら前回を残す（SPEC §8.5）
-            { column: "clicks", expr: "MAX(excluded.clicks, click_weeks.clicks)" },
-            "fetched_at",
-          ],
-        ),
+      await ctx.db.run(
+        `INSERT INTO click_weeks(account_id,week_end,url,clicks,fetched_at)
+         SELECT ?,?,key,value,? FROM json_each(?) WHERE 1
+         ON CONFLICT(account_id,week_end,url) DO UPDATE SET
+           clicks=MAX(excluded.clicks,click_weeks.clicks), fetched_at=excluded.fetched_at`,
+        accountId, weekEnd, nowIso, JSON.stringify(Object.fromEntries(byUrl)),
       );
     }
 
@@ -150,18 +142,12 @@ export async function allocateToPosts(ctx: JobContext, accountId: string): Promi
     posts.map((p) => ({ id: p.id, rootId: p.root_id, text: p.text, views: p.views })),
   );
 
-  // いったん全部 0 にしてから書き戻す（消えたリンクの値が残らないように）
-  await ctx.db.run("UPDATE posts SET clicks=0 WHERE account_id=? AND clicks<>0", accountId);
-  const entries = [...alloc.byRoot].filter(([, v]) => v > 0);
-  for (let i = 0; i < entries.length; i += 40) {
-    ctx.budget.timeMs.check();
-    await ctx.db.batch(
-      entries.slice(i, i + 40).map(([rootId, clicks]) => ({
-        sql: "UPDATE posts SET clicks=? WHERE account_id=? AND id=?",
-        params: [clicks, accountId, rootId],
-      })),
-    );
-  }
+  const values = Object.fromEntries([...alloc.byRoot].filter(([, v]) => v > 0));
+  await ctx.db.batch([
+    { sql: "UPDATE posts SET clicks=0 WHERE account_id=? AND clicks<>0", params: [accountId] },
+    { sql: `UPDATE posts SET clicks=j.value FROM json_each(?) AS j
+            WHERE posts.account_id=? AND posts.id=j.key`, params: [JSON.stringify(values), accountId] },
+  ]);
 }
 
 /** `click_weeks` の合計（正規化URLごと）。ダッシュボードからも使う。 */

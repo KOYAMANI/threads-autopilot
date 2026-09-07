@@ -63,11 +63,15 @@ export async function getSession(db: Db, id: string, now = new Date()): Promise<
 }
 
 export async function deleteSession(db: Db, id: string): Promise<void> {
-  await db.run("DELETE FROM sessions WHERE id=?", id);
+  await db.batch([
+    { sql: "DELETE FROM push_subscriptions WHERE session_id=?", params: [id] },
+    { sql: "DELETE FROM sessions WHERE id=?", params: [id] },
+  ]);
 }
 
 /** パスワード再設定・ライセンス失効で全端末ログアウトさせる（SPEC §5.1 / §5.4）。 */
 export async function deleteUserSessions(db: Db, userId: string): Promise<number> {
+  await db.run("DELETE FROM push_subscriptions WHERE user_id=?", userId);
   const res = await db.run("DELETE FROM sessions WHERE user_id=?", userId);
   return res.changes;
 }

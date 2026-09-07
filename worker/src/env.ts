@@ -1,6 +1,17 @@
 /** Worker のバインディング一式（wrangler.toml の [vars] と Secrets）。 */
 export type Env = {
+  APP_ENV?: "staging" | "production";
+  STAGING_THREADS_USER_ID?: string;
+  /** Emergency stop during database recovery. */
+  MAINTENANCE_MODE?: string;
+  /** Free pilot: bounded work per invocation. Does not change Cloudflare billing. */
+  WORKERS_PLAN?: "free" | "paid";
   DB: D1Database;
+  JOB_QUEUE?: Queue<{ jobId: string }>;
+  THREADS_APP_ID?: string;
+  THREADS_APP_SECRET?: string;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
   ASSETS?: Fetcher;
 
   // vars（SPEC §3.1）

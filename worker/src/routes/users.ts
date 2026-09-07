@@ -15,7 +15,6 @@ import { z } from "zod";
 import { ok, type LicenseSummary } from "@tap/shared";
 import { fail, type AppEnv } from "../app";
 import { ACCOUNT_CHILD_TABLES } from "../lib/accounts";
-import { audit } from "../lib/audit";
 import { sha256Hex, verifyPassword } from "../lib/crypto";
 import type { Db } from "../lib/db";
 import { sendEmail } from "../lib/email";
@@ -24,6 +23,8 @@ import { forgotKey, loginKey } from "../lib/rate";
 /** `user_id` を持つテーブル（SPEC §7.8 の表）。`users` は最後に消すのでここには入れない。 */
 export const USER_TABLES = [
   "sessions",
+  "google_connections",
+  "google_oauth_states",
   "password_resets",
   "sources",
   "ai_settings",
@@ -102,42 +103,19 @@ export function userRoutes() {
     const nowIso = new Date().toISOString();
     const email = user.email;
 
-    // 1. アカウントごとの子テーブル（SPEC §7.1 と同じ範囲）
-    for (const a of accounts) {
-      await db.batch(
-        ACCOUNT_CHILD_TABLES.map((t) => ({
-          sql: `DELETE FROM ${t} WHERE account_id=?`,
-          params: [a.id],
-        })),
-      );
-    }
-    // 2. accounts 行そのもの
-    await db.run("DELETE FROM accounts WHERE user_id=?", userId);
-    // 3. user_id を持つテーブル
-    await db.batch(
-      USER_TABLES.map((t) => ({ sql: `DELETE FROM ${t} WHERE user_id=?`, params: [userId] })),
-    );
-    // 4. キー付きの記録（rate_events）。メールから作るキーの行だけ
-    await db.run(
-      "DELETE FROM rate_events WHERE key=? OR key=?",
-      loginKey(email),
-      forgotKey(email),
-    );
-    // 5. ライセンスは行を残して失効（再利用させない。SPEC §7.8）
-    await db.run(
-      "UPDATE licenses SET status='revoked', revoked_at=?, user_id=NULL WHERE id=?",
-      nowIso,
-      user.license_id,
-    );
-    // 6. users 行
-    await db.run("DELETE FROM users WHERE id=?", userId);
-
-    // 7. 監査（メールは平文を残さずハッシュで。SPEC §7.8）
-    await audit(db, null, "user_delete", {
-      emailHash: await sha256Hex(email.trim().toLowerCase()),
-      accounts: accounts.length,
-      licenseId: user.license_id,
-    });
+    const emailHash = await sha256Hex(email.trim().toLowerCase());
+    // All related deletes commit together, with a fixed query count regardless of account count.
+    await db.batch([
+      ...ACCOUNT_CHILD_TABLES.map(t => ({ sql: `DELETE FROM ${t} WHERE account_id IN (SELECT id FROM accounts WHERE user_id=?)`, params: [userId] })),
+      { sql: "DELETE FROM accounts WHERE user_id=?", params: [userId] },
+      { sql: "DELETE FROM jobs WHERE type='sheets_sync' AND json_extract(state_json,'$.userId')=?", params: [userId] },
+      ...USER_TABLES.map(t => ({ sql: `DELETE FROM ${t} WHERE user_id=?`, params: [userId] })),
+      { sql: "DELETE FROM rate_events WHERE key=? OR key=?", params: [loginKey(email), forgotKey(email)] },
+      { sql: "UPDATE licenses SET status='revoked', revoked_at=?, user_id=NULL WHERE id=?", params: [nowIso, user.license_id] },
+      { sql: "DELETE FROM users WHERE id=?", params: [userId] },
+      { sql: "INSERT INTO audit_log(id,user_id,at,action,detail) VALUES (?,NULL,?,'user_delete',?)",
+        params: [crypto.randomUUID(), nowIso, JSON.stringify({emailHash, accounts: accounts.length, licenseId: user.license_id})] },
+    ]);
 
     // 8. 完了の通知（`notifications` はもう消えているので直接送る）
     await sendEmail(c.env, email, "account_deleted", { appOrigin: c.env.APP_ORIGIN });

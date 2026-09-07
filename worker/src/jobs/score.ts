@@ -173,31 +173,29 @@ export async function scoreAccount(
     const likeRate = V > 0 ? L / V : 0;
     const nowIso = ctx.now.toISOString();
     // 4次元を1クエリでまとめて積む（D1 のクエリ予算を食わないため。SPEC §8.1）
-    await ctx.db.run(
-      `INSERT INTO learning (account_id, dim, value, n, score_sum, views_sum, like_rate_sum, updated_at)
+    const learningSql = `INSERT INTO learning (account_id, dim, value, n, score_sum, views_sum, like_rate_sum, updated_at)
          VALUES (?,?,?,1,?,?,?,?),(?,?,?,1,?,?,?,?),(?,?,?,1,?,?,?,?),(?,?,?,1,?,?,?,?)
          ON CONFLICT(account_id, dim, value) DO UPDATE SET
            n = n + 1,
            score_sum = score_sum + excluded.score_sum,
            views_sum = views_sum + excluded.views_sum,
            like_rate_sum = like_rate_sum + excluded.like_rate_sum,
-           updated_at = excluded.updated_at`,
+           updated_at = excluded.updated_at`;
+    const learningParams = [
       accountId, "hook", hook, result.score, V, likeRate, nowIso,
       accountId, "slot", slot, result.score, V, likeRate, nowIso,
       accountId, "length", length, result.score, V, likeRate, nowIso,
       accountId, "source", sourceId, result.score, V, likeRate, nowIso,
-    );
+    ];
 
     tags.scored = true;
     tags.score = Math.round(result.score * 1000) / 1000;
     tags.hook = hook;
     tags.length = length;
-    await ctx.db.run(
-      "UPDATE posts SET tags_json=? WHERE account_id=? AND id=?",
-      JSON.stringify(tags),
-      accountId,
-      row.id,
-    );
+    await ctx.db.batch([
+      { sql: learningSql, params: learningParams },
+      { sql: "UPDATE posts SET tags_json=? WHERE account_id=? AND id=?", params: [JSON.stringify(tags), accountId, row.id] },
+    ]);
     scored++;
   }
 

@@ -6,7 +6,7 @@
  * SPEC §12.1〜12.3、動き・触感・タイポは `.claude/skills/apple-design/SKILL.md` と §12.5 に従う。
  *
  * 決めごと:
- * - 画面幅 430px を上限に中央寄せ。フォントはシステムフォント（Webフォントを足さない）
+ * - スマホは1列、PCは最大1440pxの作業画面。フォントはシステムフォント
  * - 余白は rem / em で書き、端末の文字サイズ設定を大きくしても壊れないようにする
  * - 大見出しは letter-spacing -0.02em、本文は 0。行間は大きい文字ほど詰める
  * - 動くのは transform と opacity だけ。指で触る要素の動きは CSS transition ではなく
@@ -1447,3 +1447,51 @@ button.apbar:active {
   background: var(--paper2);
   color: var(--ink3);
 }
+
+/* 投稿作成: 入力の役割と候補の違いを見渡す。 */
+.create-heading { display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-bottom:1.25rem; }
+.eyebrow { font-size:.65rem; letter-spacing:.16em; font-weight:700; color:var(--ap-ink); margin-bottom:.35rem; }
+.studio-account { font-size:.8rem; color:var(--ink2); overflow-wrap:anywhere; }
+.creation-modes { display:grid; gap:.65rem; }
+.creation-modes .choice { padding:1rem; gap:.5rem; }
+.create-workspace > div { min-width:0; }
+.create-workspace .card { padding:1.25rem; }
+.step-label { font-size:.7rem; font-weight:700; color:var(--ap); }
+.picker-help { font-size:.75rem; margin-top:.5rem; }
+.post-choice .choice-title { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; line-height:1.5; }
+.picker-pagination { display:flex; align-items:center; justify-content:space-between; gap:.5rem; margin-top:.75rem; }
+.reference-input { resize:vertical; line-height:1.8; }
+.candidate-options { display:grid; gap:.6rem; }
+.candidate-option { font:inherit; text-align:left; padding:.85rem 1rem; background:var(--paper2); border:1px solid var(--line); border-radius:var(--r-sm); cursor:pointer; display:grid; gap:.4rem; min-width:0; }
+.candidate-option strong { font-size:.8rem; }
+.candidate-option span { font-size:.75rem; color:var(--ink2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.candidate-option[aria-pressed="true"] { border-color:var(--ap); background:var(--ap-soft); }
+.analysis-card summary { cursor:pointer; font-weight:600; }
+.analysis-card p { font-size:.8rem; line-height:1.8; }
+@media (min-width: 760px) {
+  :root { --maxw:1440px; }
+  .screen { padding-left:2rem; padding-right:2rem; }
+  .screen-plain { max-width:500px; margin:0 auto; }
+  .creation-modes { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .topbar .account-chip { flex:0 1 300px; margin-left:auto; }
+  .tabs .tab { flex-direction:row; gap:.65rem; font-size:.85rem; }
+  .sheet { max-width:640px; }
+  .drawer { max-width:380px; }
+  .toast { max-width:540px; }
+}
+@media (min-width: 1100px) {
+  :root { --topbar-h:3.75rem; }
+  .app-shell .tabs { top:calc(var(--topbar-h) + var(--apbar-h)); bottom:0; left:max(0px,calc((100vw - 1440px)/2)); transform:none; width:180px; height:auto; display:flex; flex-direction:column; padding:1.5rem .8rem; border-right:1px solid var(--line); box-shadow:none; background:var(--bg); }
+  .app-shell .tabs .tab { flex:0 0 auto; justify-content:flex-start; min-height:3.3rem; padding:0 1rem; border-radius:var(--r-sm); font-size:.85rem; }
+  .app-shell .tabs .tab[aria-current="page"] { background:var(--ap-soft); font-weight:700; }
+  .app-shell .screen { padding:calc(var(--topbar-h) + var(--apbar-h) + 2rem) 2rem 3rem 212px; }
+  .create-workspace { display:grid; grid-template-columns:minmax(340px,.9fr) minmax(420px,1.1fr); gap:1.5rem; align-items:start; }
+  .create-heading h1 { font-size:2rem; }
+  .create-output { position:sticky; top:calc(var(--topbar-h) + var(--apbar-h) + 1rem); }
+  .create-output:has(.analysis-card[open]) { position:static; }
+  .topbar { padding:0 2rem; }
+}
+
+.create-workspace .btn-quiet { border:0; background:transparent; padding:.5rem .25rem; color:var(--ap-ink); font:inherit; font-size:.8rem; cursor:pointer; }
+.create-workspace .btn-quiet:disabled { opacity:.4; cursor:default; }
+.create-workspace .muted, .create-heading .muted { color:var(--ink2); }

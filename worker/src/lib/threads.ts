@@ -80,6 +80,10 @@ export async function call(
   options: CallOptions,
 ): Promise<unknown> {
   const { budget, env } = options;
+  // Staging cannot publish, repost, or delete even if a real token is accidentally configured.
+  if (env.APP_ENV === "staging" && method !== "GET") {
+    throw new ThreadsApiError({code:403, message:"ステージングではThreadsへの投稿操作を停止しています", raw:""});
+  }
   const p = path.startsWith("/") ? path : `/${path}`;
 
   // `__DEV__` は esbuild の define で置き換わるビルド時定数（worker/src/globals.d.ts）。

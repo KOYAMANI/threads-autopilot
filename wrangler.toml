@@ -28,9 +28,10 @@ database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "worker/migrations"
 
 [triggers]
-crons = ["*/5 * * * *", "0 * * * *", "0 18 * * *"]   # UTC。18:00 UTC = 03:00 JST
+crons = ["* * * * *", "0 * * * *", "0 18 * * *"]   # UTC。18:00 UTC = 03:00 JST
 
 [vars]
+MAINTENANCE_MODE = "0" # set to 1 and deploy before database recovery
 APP_ORIGIN = "http://localhost:5173"
 DEFAULT_TZ = "Asia/Tokyo"
 MAX_SUBREQUESTS = "300"
@@ -46,6 +47,7 @@ REPLY_TWO_STEP = "0"   # 1 にすると SPEC §8.3 のコメント投稿を3ス�
 VAPID_PUBLIC_KEY = ""
 # メールの差出人。**秘密ではない**ので [vars] に置く（README「本番へのデプロイ」の表と対応）。
 # 空のままなら `noreply@example.com` を使う。本番は Resend で送信を検証したドメインにする。
+GOOGLE_CLIENT_ID = "" # Google OAuth Web application client ID (not a secret)
 MAIL_FROM = ""
 
 # Push の VAPID JWT に入れる連絡先（RFC 8292 の `sub`）。mailto: か https: で始める。

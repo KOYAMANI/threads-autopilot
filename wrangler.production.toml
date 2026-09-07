@@ -1,0 +1,68 @@
+name = "threads-autopilot"
+account_id = "983c65a0c3fccb8c1a40ac8ca7e8c3d4"
+main = "worker/src/index.ts"
+compatibility_date = "2026-08-01"
+compatibility_flags = ["nodejs_compat"]
+
+# __DEV__ は本番安全側（false）を既定にする。false のとき worker/src/mock/* への
+# 動的 import が esbuild のデッドコード除去で本番バンドルから消える（SPEC §11）。
+# 開発は `npm run dev:worker`（= wrangler dev --define __DEV__:true）で true にする。
+[define]
+__DEV__ = "false"
+
+[assets]
+directory = "./web/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+# SPEC §3.1 の2つに加えて `/__scheduled` を足してある。`wrangler dev --test-scheduled` が
+# 注入する cron 手動実行の入口で、静的アセット側に取られると Worker まで届かないため。
+# 本番では `--test-scheduled` の middleware が無く、index.ts が ASSETS にそのまま渡すので
+# 挙動は追加前と変わらない（docs/qa.md M2-2）。
+run_worker_first = ["/api/*", "/a/*", "/__scheduled"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "threads-autopilot"
+# `wrangler d1 create threads-autopilot` で取得した ID に差し替える。
+# ローカル（--local / wrangler dev）は Miniflare のファイルを使うので、この値は参照されない。
+database_id = "89935cef-db44-49c9-b0aa-50cc8105a786"
+migrations_dir = "worker/migrations"
+
+[triggers]
+crons = ["* * * * *", "0 * * * *", "0 18 * * *"]   # UTC。18:00 UTC = 03:00 JST
+
+[vars]
+MAINTENANCE_MODE = "0" # set to 1 and deploy before database recovery
+APP_ORIGIN = "https://threads-autopilot.yama-threads-apps.workers.dev"
+DEFAULT_TZ = "Asia/Tokyo"
+WORKERS_PLAN = "free"
+MAX_SUBREQUESTS = "20"
+MAX_DB_QUERIES = "32"
+JOB_TIME_BUDGET_MS = "20000"
+THREADS_MOCK = "0"
+AI_MOCK = "0"
+REPLY_TWO_STEP = "0"   # 1 にすると SPEC §8.3 のコメント投稿を3ステップ方式に切り替える
+
+# Web Push の公開鍵（SPEC §7.8）。**秘密ではない**（ブラウザに渡す値）ので [vars] に置く。
+# 秘密鍵のほうは `wrangler secret put VAPID_PRIVATE_KEY`。作り方は README「本番へのデプロイ」。
+# 空のままだと設定画面のプッシュのスイッチが無効になり、通知はメールだけになる。
+VAPID_PUBLIC_KEY = ""
+# メールの差出人。**秘密ではない**ので [vars] に置く（README「本番へのデプロイ」の表と対応）。
+# 空のままなら `noreply@example.com` を使う。本番は Resend で送信を検証したドメインにする。
+GOOGLE_CLIENT_ID = "" # Google OAuth Web application client ID (not a secret)
+MAIL_FROM = "Threads オートパイロット <info@yama-threads.com>"
+
+# Push の VAPID JWT に入れる連絡先（RFC 8292 の `sub`）。mailto: か https: で始める。
+# Push サービス側が配信を止めるときの連絡先になる。空なら APP_ORIGIN を使う。
+VAPID_SUBJECT = ""
+
+# Create this queue before production deployment. See docs/production-security.md.
+[[queues.producers]]
+binding = "JOB_QUEUE"
+queue = "threads-autopilot-jobs"
+[[queues.consumers]]
+queue = "threads-autopilot-jobs"
+max_batch_size = 1
+max_batch_timeout = 1
+max_retries = 3
+max_concurrency = 1

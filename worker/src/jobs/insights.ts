@@ -12,6 +12,7 @@
  */
 import { accountToken, type AccountRow } from "../lib/accounts";
 import { ACCOUNT_COLUMNS } from "../lib/accounts";
+import { BudgetExceeded } from "../lib/budget";
 import type { JobContext, RunningJob } from "../lib/jobs";
 import { getPostInsights, type CallOptions } from "../lib/threads";
 import { DAY_MS } from "../lib/time";
@@ -31,7 +32,7 @@ export const MAX_TARGETS = 200;
 /** `[id, postedAt, metricsFetchedAt|null]` */
 type Pending = [string, string, string | null];
 
-type InsightsState = { pending?: Pending[] };
+type InsightsState = { pending?: Pending[]; initial?: boolean; startedAt?: string; fullBatch?: boolean };
 
 /** 対象の期間（SPEC §8.2: recent=3日以内 / daily=3〜60日 / old=60日超）。 */
 function windowSql(window: InsightsWindow): string {
@@ -81,6 +82,7 @@ export function insightsJob(window: InsightsWindow) {
     if (!account || account.status !== "ok") return;
 
     const state = job.state as InsightsState;
+    state.startedAt ??= ctx.now.toISOString();
     if (!state.pending) {
       const rows = await ctx.db.all<{
         id: string;
@@ -89,11 +91,14 @@ export function insightsJob(window: InsightsWindow) {
       }>(
         `SELECT id, posted_at, metrics_fetched_at FROM posts
           WHERE account_id=? AND deleted=0 AND ${windowSql(window)}
+          ${state.initial ? "AND (metrics_fetched_at IS NULL OR metrics_fetched_at < ?) AND posted_at >= ?" : ""}
           ORDER BY metrics_fetched_at IS NULL DESC, metrics_fetched_at ASC
-          LIMIT ${MAX_TARGETS}`,
+          LIMIT ${ctx.env.WORKERS_PLAN === "free" ? 50 : MAX_TARGETS}`,
         job.accountId,
         ...windowBounds(window, ctx.now),
+        ...(state.initial ? [state.startedAt, new Date(Date.parse(state.startedAt) - 90 * DAY_MS).toISOString()] : []),
       );
+      state.fullBatch = rows.length === (ctx.env.WORKERS_PLAN === "free" ? 50 : MAX_TARGETS);
       state.pending = rows.map((r) => [r.id, r.posted_at, r.metrics_fetched_at] as Pending);
     }
 
@@ -152,6 +157,10 @@ export function insightsJob(window: InsightsWindow) {
 
       // ここまで来て初めて未処理から外す（予算切れで途中終了しても取り直せる）
       state.pending.shift();
+    }
+    if (state.initial && state.fullBatch) {
+      delete state.pending;
+      throw new BudgetExceeded("subrequests", 1, 1);
     }
   };
 }

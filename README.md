@@ -19,8 +19,10 @@ Threads アカウントを「見る → 作る → 出す → 学ぶ」まで1�
 [外部] graph.threads.net / Gemini か OpenRouter / api.resend.com
 ```
 
-**本番は Cloudflare Workers Paid（月5ドル）が必須**。Free プランは1呼び出しあたりの D1 クエリが
-50 に制限されており、同期ジョブが1件も完走しません（SPEC §2.5）。
+**初回は10名程度の Cloudflare Free 試験運用**。本番設定は `WORKERS_PLAN="free"`。
+1回のDB作業32クエリ＋台帳16クエリ以内、同期は25件ごとに続きの位置を保存する。
+無料枠の上限・更新速度・公開前確認は [無料試験運用](docs/free-pilot.md) を参照。
+Workers Paidへの変更は自動では行わない。AIプロバイダの利用料は別。
 
 ---
 
@@ -91,65 +93,26 @@ npm run smoke                          # 投稿 → ツリー → insights → c
 
 ## 本番へのデプロイ
 
-はじめの1回だけ。上から順に実行する。
-
-### 1. D1 を作る
-
-```bash
-npx wrangler d1 create threads-autopilot
-```
-
-出力の `database_id` を `wrangler.toml` の `[[d1_databases]]` に貼る（いまは
-`00000000-0000-0000-0000-000000000000` というプレースホルダが入っている）。
-
-### 2. Secrets を入れる（5種）
-
-```bash
-npx wrangler secret put ENC_KEY            # openssl rand -base64 32
-npx wrangler secret put SESSION_SECRET     # openssl rand -base64 48
-npx wrangler secret put ADMIN_SECRET       # openssl rand -hex 32
-npx wrangler secret put RESEND_API_KEY     # Resend のダッシュボードから
-npx wrangler secret put VAPID_PRIVATE_KEY  # 下の作り方
-```
-
-あわせて `wrangler.toml` の `[vars]` を本番の値にする:
-
-| 変数 | 本番の値 |
-|---|---|
-| `APP_ORIGIN` | 実際のURL（例 `https://threads-autopilot.example.workers.dev`）。メールのリンクがこの値で組まれる |
-| `THREADS_MOCK` / `AI_MOCK` | `"0"`（既定のまま。`__DEV__=false` なのでモック実装自体がバンドルに入らない） |
-| `VAPID_PUBLIC_KEY` | 下で作る公開鍵。**秘密ではない**のでブラウザに渡す。`[vars]` に置いてよい |
-| `VAPID_SUBJECT` | Push サービス向けの連絡先（RFC 8292 の `sub`）。`mailto:you@example.com` のように **`mailto:` か `https:` で始める**。空だと `APP_ORIGIN` で代用するが、それが `https:` でなければ Push を送らない |
-| `MAIL_FROM` | `noreply@<自分のドメイン>`。Resend でそのドメインの送信を検証しておく |
-
-**`ENC_KEY` を失うと、預かっている Threads のトークンと AI キーを二度と復号できない。**
-必ず別の場所（パスワードマネージャ等）に控える。差し替えると全買い手が再接続になる。
-
-Web Push の鍵ペア（P-256。片方だけ差し替えると既存の購読が全部無効になるので、1回作って固定する）:
-
-```bash
-openssl ecparam -name prime256v1 -genkey -noout -out vapid.pem
-openssl ec -in vapid.pem -pubout -outform DER | tail -c 65 | base64 | tr '+/' '-_' | tr -d '=\n'   # 公開鍵
-openssl ec -in vapid.pem -outform DER | tail -c +8 | head -c 32 | base64 | tr '+/' '-_' | tr -d '=\n' # 秘密鍵
-rm vapid.pem
-```
-
-### 3. スキーマを流す
-
-```bash
-npm run db:migrate:remote
-```
-
-### 4. ビルドして上げる
+本番は **`wrangler.production.toml`** を使う。`wrangler.toml` はローカル用。
+D1・Queue・HTTPS URL・メール送信元・Worker Secretsの準備手順は [本番運用手順](docs/production-security.md) を参照。
+Google連携とPushは任意。D1だけでアプリを利用できる。
 
 ```bash
 npm run typecheck && npm test && npm run build && npm run check:bundle
-npx wrangler deploy
+npm run check:production
+# 新規DBに適用。既存DBの場合は先に非公開バックアップを取る
+npm run db:migrate:remote
+npm run deploy:production
 ```
 
-`npm run build` が `web/dist/` を作り、`wrangler deploy` がそれを Workers Static Assets として
-一緒に上げる。上げたら `https://<origin>/api/health` が `{"ok":true,"version":"…","mock":false}` を
-返すこと（`mock` が `true` なら本番なのにモックが入っている。上げ直す）。
+`check:production` はPython 3.11以上を使い、仮のDB ID・localhost・モック有効・メール送信元未設定・Queue欠落を拒否する。
+`deploy:production` はさらにCloudflare上の必須Secret名を確認してからデプロイする。鍵の値は表示しない。
+初回Secret投入時は本番用Workerと暗号鍵を準備し、全てのWrangler操作に `--config wrangler.production.toml` を付ける。
+新規の本番DBでは新しい暗号鍵・セッション署名鍵・管理鍵を使い、ローカルのテストデータ・鍵を自動移行しない。
+既存の本番DBがある場合、暗号鍵の上書きは禁止。対応する鍵を別の安全な保管先へバックアップする。
+
+WebとWorkerを一緒に公開する。公開後は `/api/health` の `mock:false`、認証・利用者分離・手動下書き保存・定期処理を確認する。
+チェックの成功だけで1,000人の負荷や実API生成品質が保証されるわけではない。
 
 ### 5. ライセンスキーを発行する
 
@@ -168,7 +131,7 @@ Cloudflare のダッシュボード（Workers → Settings → Triggers）で3�
 
 ### バックアップと復旧（D1 Time Travel）
 
-Paid プランでは直近 **30日** の任意の時点に戻せる。買い手のトークンを預かっているので、
+Free プランは直近 **7日**、Paid プランは直近 **30日** の時点に戻せる。買い手のトークンを預かっているので、
 壊したときの手順を先に用意しておく。
 
 ```bash
@@ -240,7 +203,7 @@ GAS 版から減る手間: スプレッドシートのコピー、Apps Script �
 | 8 | Web Push が実際の Push サービス（FCM / APNs 経由の Mozilla・Apple）に受理されるか | プッシュが届かない。**メールは届くので運用は回る**。暗号（aes128gcm）と JWT（ES256）の形は自動テストで往復まで確認済み | 実機（iOS はホーム画面に追加した PWA のみ）で購読して自動投稿を待つ |
 | 9 | 画像投稿（`image_url` を Threads 側が取りに来る） | 画像つき投稿が失敗する。公開URLが要る | 実トークンで画像つきを1本 |
 | 10 | リポスト（`POST /{id}/repost`） | ホームの「リポスト」が失敗する | 実トークンで1本 |
-| 11 | Cloudflare Paid の実測（1呼び出しの D1 クエリ 1,000・CPU 30秒） | 予算（`MAX_DB_QUERIES=800` 等）が実態と合っているか | 本番で投稿数千件のアカウントを同期し、`jobs.last_error` を見る |
+| 11 | Cloudflare Free の実測（D1 50クエリ/呼び出し、HTTP/Cron CPU 10ms） | 32作業＋16台帳の範囲で再開でき、CPU制限にも収まるか | 本番で投稿数千件のアカウントを同期し、`jobs.last_error` を見る |
 
 このほか、[docs/qa.md](./docs/qa.md) の各マイルストーンに「実トークンでの確認」の節がある。
 
@@ -258,3 +221,7 @@ npx wrangler deploy --dry-run --outdir /tmp/out   # 上げずにビルドだけ�
 
 画面の確認は自動テストではなく [docs/qa.md](./docs/qa.md) の手順書で行う（SPEC §14）。
 M1〜M7 を通しで見る「総合チェックリスト」が末尾にある。
+
+## 共通URL配布・Googleスプレッドシート連携（2026-09-07）
+
+本番の新しい実行構成は [docs/production-security.md](docs/production-security.md)、Google認証と同期は [docs/google-sheets.md](docs/google-sheets.md) を参照してください。本番では `wrangler.production.toml` を使います。従来の端末保存AIキーは廃止し、設定画面で本人のキーを再登録する方式に変えています。スプシはデータの定期書き出し先で、編集・予約の原本はアプリのD1です。

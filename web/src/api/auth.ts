@@ -1,6 +1,7 @@
 /** 認証まわりの React Query フック（SPEC §12.2）。 */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { MeResponse, RegisterRequest, LoginRequest } from "@tap/shared";
+import { announceSessionChange, clearPrivateState } from "../lib/session-boundary";
 import { api, ApiError } from "./client";
 
 export const meKey = ["me"] as const;
@@ -26,7 +27,7 @@ export function useLogin() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: LoginRequest) => api.post("/auth/login", body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: meKey }),
+    onSuccess: () => { clearPrivateState(); qc.clear(); announceSessionChange(); window.location.replace("/app/home"); },
   });
 }
 
@@ -34,7 +35,7 @@ export function useRegister() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: RegisterRequest) => api.post("/auth/register", body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: meKey }),
+    onSuccess: () => { clearPrivateState(); qc.clear(); announceSessionChange(); window.location.replace("/app/home"); },
   });
 }
 
@@ -42,7 +43,15 @@ export function useLogout() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api.post("/auth/logout"),
-    onSuccess: () => qc.setQueryData(meKey, null),
+    onSuccess: () => { clearPrivateState(); qc.clear(); announceSessionChange(); window.location.replace("/login"); },
+  });
+}
+
+export function useChangePassword() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { current_password: string; new_password: string }) => api.post("/auth/password", body),
+    onSuccess: () => { clearPrivateState(); qc.clear(); announceSessionChange(); window.location.replace("/login?changed=1"); },
   });
 }
 

@@ -1,12 +1,12 @@
 /**
  * ホーム（SPEC §12.3 / §7.2、design-v0.2 §3-3）。
  *
- * 期間セレクタ（7 / 2週間 / 3週間 / 1ヶ月 / 3ヶ月 / 全期間）で
- * 上段KPI・グラフ・トップ投稿・リンクがまとめて切り替わる。
+ * 期間セレクタ（7日 / 2週間 / 1ヶ月 / 3ヶ月）で
+ * 上段KPI・グラフ・トップ投稿が切り替わる。URL別クリックは累計。
  * 指標タブの並び替えは client 側（SPEC §12.3）。
  * ツリーは1投稿目に束ねて1行にし、タップで各段の数字を開く。
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import {
@@ -21,10 +21,13 @@ import {
   YAxis,
 } from "recharts";
 import type { DashboardPeriod, DashboardResponse, PostSummary } from "@tap/shared";
-import { useDashboard, useRepost } from "../api/accounts";
+import { useDashboard, useRepost, useSyncStatus, useStartSync } from "../api/accounts";
+import { useQueryClient } from "@tanstack/react-query";
+import { meKey } from "../api/auth";
 import { ApiError } from "../api/client";
 import { useShell } from "../components/Shell";
 import Sheet from "../components/Sheet";
+import Pagination, { usePagination } from "../components/Pagination";
 import { DotsIcon } from "../components/Icons";
 import { useToast } from "../components/Toast";
 import { CROSSFADE, SPRING, useReducedMotion } from "../lib/motion";
@@ -33,10 +36,8 @@ import { fmtK, fmtN, md, mdhm, pct, signed } from "../lib/format";
 const PERIODS: Array<{ value: DashboardPeriod; label: string }> = [
   { value: 7, label: "7日" },
   { value: 14, label: "2週間" },
-  { value: 21, label: "3週間" },
   { value: 30, label: "1ヶ月" },
   { value: 90, label: "3ヶ月" },
-  { value: "all", label: "全期間" },
 ];
 
 type MetricKey = "likes" | "views" | "clicks" | "replies" | "reposts" | "quotes";
@@ -60,17 +61,33 @@ export type CreatePreset = {
 export default function Home() {
   const { account } = useShell();
   const toast = useToast();
+  const navigate = useNavigate();
   const [period, setPeriod] = useState<DashboardPeriod>(30);
   const [metric, setMetric] = useState<MetricKey>("views");
 
+  const sync = useSyncStatus(account?.id ?? null);
+  const startSync = useStartSync(account?.id ?? null);
+  const qc = useQueryClient();
+  const lastSync = useRef<{accountId: string; running: boolean; stamp: string | null} | null>(null);
+  useEffect(() => {
+    if (!account || !sync.data) return;
+    const previous = lastSync.current;
+    const stamp = sync.data.lastSyncedAt;
+    if (sync.data.running || (previous?.accountId === account.id && (previous.running || previous.stamp !== stamp))) {
+      void qc.invalidateQueries({queryKey:[account.id,"dashboard"]});
+      void qc.invalidateQueries({queryKey:meKey});
+    }
+    lastSync.current = {accountId: account.id, running: sync.data.running, stamp};
+  }, [account?.id, sync.dataUpdatedAt, qc]);
+
   const tz = account?.timezone ?? "Asia/Tokyo";
-  const { data, isPending, isError, error } = useDashboard(account?.id ?? null, period);
+  const { data, isPending, isError, error, isPlaceholderData, isFetching } = useDashboard(account?.id ?? null, period);
 
   if (!account) {
-    return <p className="muted">アカウントがありません。</p>;
+    return <div className="onboarding"><p className="eyebrow">WELCOME TO YOUR WORKSPACE</p><h1>ここから、あなたのThreadsを。</h1><p className="muted">アカウントを接続して、投稿と数字をひとつの場所に。</p><div className="onboarding-grid"><section className="card"><span className="step-number">01</span><h2>Threadsを接続</h2><p>自分のアクセストークンを使って、投稿と分析データを取り込みます。</p><button className="btn" onClick={() => navigate("/connect")}>Threadsをつなぐ →</button></section><section className="card"><span className="step-number">02</span><h2>投稿環境を整える</h2><p>AIキー、ログイン情報、通知は設定から管理できます。</p><button className="btn btn-sub" onClick={() => navigate("/app/settings")}>設定を開く →</button></section></div></div>;
   }
 
-  if (isError) {
+  if (isError && !data) {
     const message = error instanceof ApiError ? error.message : "数字を読み込めませんでした";
     return (
       <p className="msg msg-bad" role="alert">
@@ -81,12 +98,8 @@ export default function Home() {
 
   return (
     <>
-      <h1>ホーム</h1>
-      <p className="muted" style={{ marginTop: "0.125rem" }}>
-        @{account.username} の数字
-      </p>
-
-      <div className="chips" role="group" aria-label="期間">
+      <div className="page-heading"><div><p className="eyebrow">YOUR THREADS, AT A GLANCE</p><h1>アナリティクス</h1><p className="muted">@{account.username} の成長と、次の投稿のヒント。</p></div><button className="btn btn-fit" onClick={() => navigate("/app/create")}>＋ 投稿をつくる</button></div>
+      <div className="dashboard-toolbar"><span className="toolbar-label"><span className="status-dot" />表示期間</span><div className="chips" role="group" aria-label="表示期間">
         {PERIODS.map((p) => (
           <button
             key={String(p.value)}
@@ -100,12 +113,17 @@ export default function Home() {
         ))}
       </div>
 
+      </div>
+      <div className="period-feedback" role="status">{isPlaceholderData ? `${PERIODS.find(p => p.value === data?.period)?.label ?? "前の期間"}のデータを表示中 · 選択した期間を読み込み中…` : isFetching && data ? "最新の数字に更新中…" : "期間内に公開した投稿を表示します。URL別クリックは累計です。"}</div>
+      {isError && data && <p className="msg msg-bad" role="alert">更新できませんでした。表示中のデータを残しています。期間を選び直してください。</p>}
+      <div className="sync-summary" role="status"><span>{sync.data?.status === "failed" ? sync.data.message : sync.data?.running ? `データを取り込み中 · ${sync.data.posts}件の投稿を保存済み。数字は順次反映します。` : sync.data?.status === "done" ? `${sync.data.posts}件の投稿を同期済み` : "接続済みです。初回のデータ同期を開始してください。"}</span><button className="btn btn-sub btn-fit" disabled={startSync.isPending} onClick={()=>startSync.mutate(undefined,{onError:e=>toast.show(e instanceof ApiError ? e.message : "同期を開始できませんでした","bad")})}>{startSync.isPending ? "同期を開始中…" : sync.data?.running ? "同期を再開" : "今すぐ同期"}</button></div>
       {isPending || !data ? (
         <p className="muted" style={{ marginTop: "calc(var(--sp) * 3)" }}>
           読み込んでいます…
         </p>
       ) : (
         <Loaded
+          key={account.id}
           data={data}
           tz={tz}
           metric={metric}
@@ -133,10 +151,14 @@ function Loaded({
   accountId: string;
   onToast: (text: string, kind?: "info" | "ok" | "bad") => void;
 }) {
+  const navigate = useNavigate();
   const sorted = useMemo(
     () => [...data.posts].sort((a, b) => (b[metric] ?? 0) - (a[metric] ?? 0)),
     [data.posts, metric],
   );
+
+  const postPaging = usePagination(sorted, `${accountId}:${data.period}:${metric}`);
+  const linkPaging = usePagination(data.links, accountId);
 
   const followerSeries = data.followers.series.map((f) => ({ x: md(f.date, tz), n: f.n }));
   const viewSeries = data.views.series.map((v) => ({ x: md(v.date, tz), v: v.v }));
@@ -173,6 +195,7 @@ function Loaded({
         </div>
       </section>
 
+      <div className="dashboard-charts">
       {/* グラフ */}
       <section className="section" aria-label="フォロワー推移">
         <div className="chart-card">
@@ -186,7 +209,7 @@ function Loaded({
               </p>
             </div>
           ) : (
-            <ResponsiveContainer width="100%" height={140}>
+            <ResponsiveContainer width="100%" height={220}>
               <LineChart data={followerSeries} margin={{ top: 6, right: 12, bottom: 0, left: 0 }}>
                 <CartesianGrid stroke="var(--line)" vertical={false} />
                 <XAxis dataKey="x" tick={{ fontSize: 10, fill: "var(--ink3)" }} minTickGap={22} />
@@ -195,7 +218,7 @@ function Loaded({
                 <Line
                   type="monotone"
                   dataKey="n"
-                  stroke="var(--ap)"
+                  stroke="var(--chart)"
                   strokeWidth={2}
                   dot={false}
                   isAnimationActive={false}
@@ -214,24 +237,25 @@ function Loaded({
               <p className="muted">この期間のデータがまだありません</p>
             </div>
           ) : (
-            <ResponsiveContainer width="100%" height={140}>
+            <ResponsiveContainer width="100%" height={220}>
               <BarChart data={viewSeries} margin={{ top: 6, right: 12, bottom: 0, left: 0 }}>
                 <CartesianGrid stroke="var(--line)" vertical={false} />
                 <XAxis dataKey="x" tick={{ fontSize: 10, fill: "var(--ink3)" }} minTickGap={22} />
                 <YAxis tick={{ fontSize: 10, fill: "var(--ink3)" }} width={34} tickFormatter={fmtK} />
                 <Tooltip content={<Tip unit="回" />} cursor={{ fill: "var(--paper2)" }} />
-                <Bar dataKey="v" fill="var(--ap)" radius={[3, 3, 0, 0]} isAnimationActive={false} />
+                <Bar dataKey="v" fill="var(--chart)" radius={[3, 3, 0, 0]} isAnimationActive={false} />
               </BarChart>
             </ResponsiveContainer>
           )}
         </div>
       </section>
 
+      </div>
       {/* トップ投稿 */}
       <section className="section" aria-label="トップ投稿">
         <div className="section-head">
           <h2>トップ投稿</h2>
-          <span className="muted">{data.posts.length}本</span>
+          <span className="muted">{PERIODS.find(p => p.value === data.period)?.label}に公開 · {data.posts.length}本</span>
         </div>
 
         <div className="chips" role="group" aria-label="並べ替える指標">
@@ -254,7 +278,7 @@ function Loaded({
           </p>
         ) : (
           <div className="rows" style={{ marginTop: "var(--sp)" }}>
-            {sorted.map((p) => (
+            {postPaging.items.map((p) => (
               <PostRow
                 key={p.id}
                 post={p}
@@ -268,17 +292,19 @@ function Loaded({
         )}
       </section>
 
+      <Pagination label="トップ投稿" paging={postPaging} />
       {/* リンク */}
       <section className="section" aria-label="リンク">
         <div className="section-head">
           <h2>リンク</h2>
-          <span className="muted">URL別のクリック</span>
+          <button className="btn btn-sub btn-fit" onClick={() => navigate("/app/settings?tab=links")}>リンク名を編集</button>
         </div>
+        <p className="muted">URL別クリックの累計です。上の表示期間では絞り込まれません。</p>
         <div className="card">
           {data.links.length === 0 ? (
             <p className="muted">まだクリックのあるリンクがありません。</p>
           ) : (
-            data.links.map((l) => (
+            linkPaging.items.map((l) => (
               <div className="link-row" key={l.url}>
                 <span style={{ minWidth: 0 }}>
                   <span className="label">{l.label}</span>
@@ -295,6 +321,7 @@ function Loaded({
             どの投稿にも結びつかなかったクリック: {fmtN(data.unassignedClicks)}
           </p>
         </div>
+        <Pagination label="リンク" paging={linkPaging} />
       </section>
     </>
   );

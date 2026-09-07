@@ -241,6 +241,7 @@ export async function sendEmail(
   template: EmailTemplate,
   vars: Record<string, string> = {},
 ): Promise<SendResult> {
+  if (env.APP_ENV === "staging") return {ok:false, via:"console", error:"Staging email delivery disabled"};
   const { subject, text } = render(template, vars);
   // `[vars]` に空文字で置かれることがあるので、空も未設定として扱う（`??` だと素通りする）
   const from = (env.MAIL_FROM ?? "").trim() || "noreply@example.com";

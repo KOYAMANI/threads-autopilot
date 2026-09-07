@@ -78,6 +78,16 @@ export type MockAiInput = { system: string; user: string; provider: string };
 
 /** 生成の生応答（JSON 文字列）を返す。`lib/ai.ts` の `generateRaw` から呼ばれる。 */
 export default function aiMockCall(input: MockAiInput): string {
+  // The composition protocol is mocked explicitly; never call real providers in tests.
+  if (input.user.startsWith("{")) {
+    const request = JSON.parse(input.user);
+    if (request.task === "composition-plan") return JSON.stringify({ status: "ok", summary: "投稿を型、参考情報を内容として使用", structure: "導入と続き", style: "短い断定", partCount: 2, anchors: [], variants: Array.from({ length: request.n }, (_, i) => ({ label: `切り口${i + 1}`, approach: `焦点${i + 1}`, blueprint: { posts: ["{{body}}", "{{comment}}"], slots: [{ id: "body", task: "本文", maxChars: 450 }, { id: "comment", task: "続き", maxChars: 450 }] } })) });
+    if (request.task === "composition-slots") return JSON.stringify({ slots: { body: MOCK_BODIES[request.index % MOCK_BODIES.length], comment: MOCK_COMMENTS[request.index % MOCK_COMMENTS.length]![0] } });
+    if (request.task === "composition-write") {
+      const i = request.index % MOCK_BODIES.length;
+      return JSON.stringify({ candidates: [{ hook: MOCK_HOOKS[i], body: MOCK_BODIES[i], comments: [MOCK_COMMENTS[i]![0]], basis: `「${request.sources[0]?.title ?? "指示"}」の内容を使いました` }] });
+    }
+  }
   // revise は1案だけ返す（直前の案の本文の先頭に指示を織り込んだ体で差し替える）
   const isRevise = input.user.includes("# 直前の案");
   if (isRevise) {

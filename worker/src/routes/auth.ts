@@ -5,7 +5,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type {
-  AccountSummary,
   AiSettingsSummary,
   MeResponse,
   NotificationSettings,
@@ -13,6 +12,7 @@ import type {
 } from "@tap/shared";
 import { ok } from "@tap/shared";
 import { fail, type AppEnv } from "../app";
+import { ACCOUNT_COLUMNS, toAccountSummary, type AccountRow } from "../lib/accounts";
 import { audit } from "../lib/audit";
 import type { Db } from "../lib/db";
 import { hashPassword, sha256Hex, verifyPassword } from "../lib/crypto";
@@ -116,42 +116,13 @@ async function buildMe(db: Db, userId: string): Promise<MeResponse | null> {
   );
   if (!user) return null;
 
-  const accountRows = await db.all<{
-    id: string;
-    username: string;
-    name: string | null;
-    avatar_url: string | null;
-    color: string;
-    status: string;
-    timezone: string;
-    token_long_lived: number;
-    token_obtained_at: string;
-    last_full_sync_at: string | null;
-    ap_enabled: number | null;
-  }>(
-    `SELECT a.id, a.username, a.name, a.avatar_url, a.color, a.status, a.timezone,
-            a.token_long_lived, a.token_obtained_at, a.last_full_sync_at, ap.enabled AS ap_enabled
+  const accountRows = await db.all<AccountRow & { ap_enabled: number | null }>(
+    `SELECT ${ACCOUNT_COLUMNS.split(", ").map(column => `a.${column}`).join(", ")}, ap.enabled AS ap_enabled
        FROM accounts a LEFT JOIN autopilot ap ON ap.account_id = a.id
       WHERE a.user_id=? ORDER BY a.created_at ASC`,
     userId,
   );
-
-  const accounts: AccountSummary[] = accountRows.map((a) => ({
-    id: a.id,
-    username: a.username,
-    name: a.name,
-    avatarUrl: a.avatar_url,
-    color: a.color,
-    status: (a.status as AccountSummary["status"]) ?? "ok",
-    timezone: a.timezone,
-    // 長期トークンは60日。取得時刻からの残日数（M2 で refresh と揃える）
-    tokenExpiresInDays: a.token_long_lived
-      ? Math.max(0, Math.ceil((Date.parse(a.token_obtained_at) + 60 * 86400_000 - Date.now()) / 86400_000))
-      : null,
-    longLived: Boolean(a.token_long_lived),
-    lastFullSyncAt: a.last_full_sync_at,
-    autopilotEnabled: Boolean(a.ap_enabled),
-  }));
+  const accounts = accountRows.map(account => toAccountSummary(account, { autopilotEnabled: Boolean(account.ap_enabled) }));
 
   const aiRow = await db.first<{
     provider: string;
@@ -351,6 +322,46 @@ export function authRoutes() {
     });
   });
 
+  // Password verification, update and revocation all belong to the signed-in user.
+  r.post("/password", async (c) => {
+    const userId = c.get("userId")!;
+    const db = c.get("db");
+    if (!(await rateHit(db, `password-change:${userId}`, 5, 15))) {
+      return fail("RATE_LIMITED", "試行回数が多いため、15分ほど待ってからお試しください", 429);
+    }
+    const parsed = z.object({
+      current_password: z.string().min(1).max(200),
+      new_password: passwordSchema,
+    }).safeParse(await readJson(c));
+    if (!parsed.success) return fail("BAD_REQUEST", "現在のパスワードと、8〜200文字の新しいパスワードを入力してください", 400);
+    const { current_password, new_password } = parsed.data;
+    const user = await db.first<{ pass_hash: string; pass_salt: string }>(
+      "SELECT pass_hash, pass_salt FROM users WHERE id=?", userId,
+    );
+    if (!user || !(await verifyPassword(current_password, { hash: user.pass_hash, salt: user.pass_salt }))) {
+      return fail("PASSWORD_INCORRECT", "現在のパスワードが違います", 400);
+    }
+    if (current_password === new_password) return fail("PASSWORD_UNCHANGED", "現在とは異なるパスワードを設定してください", 400);
+    const { hash, salt } = await hashPassword(new_password);
+    const now = new Date().toISOString();
+    // CAS prevents concurrent changes from overwriting a password verified earlier.
+    // Every revocation is guarded by this request's unique salted hash, in one D1 transaction.
+    const changed = "EXISTS (SELECT 1 FROM users WHERE id=? AND pass_hash=? AND pass_salt=?)";
+    const guard = [userId, hash, salt];
+    await db.batch([
+      { sql: "UPDATE users SET pass_hash=?,pass_salt=? WHERE id=? AND pass_hash=? AND pass_salt=?", params: [hash,salt,userId,user.pass_hash,user.pass_salt] },
+      { sql: `UPDATE password_resets SET used_at=? WHERE user_id=? AND used_at IS NULL AND ${changed}`, params: [now,userId,...guard] },
+      { sql: `DELETE FROM sessions WHERE user_id=? AND ${changed}`, params: [userId,...guard] },
+      { sql: `DELETE FROM push_subscriptions WHERE user_id=? AND ${changed}`, params: [userId,...guard] },
+      { sql: `INSERT INTO audit_log (id,user_id,at,action,detail) SELECT ?,?,?,'password_change',NULL WHERE ${changed}`, params: [crypto.randomUUID(),userId,now,...guard] },
+    ]);
+    const accepted = await db.first<{ pass_hash: string }>("SELECT pass_hash FROM users WHERE id=?", userId);
+    if (accepted?.pass_hash !== hash) return fail("PASSWORD_CHANGED", "パスワードが更新されています。もう一度ログインしてください", 409);
+    return new Response(JSON.stringify(ok({ changed: true })), {
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store", "Set-Cookie": clearSessionCookie() },
+    });
+  });
+
   /* ── me ──────────────────────────────────────── */
   r.get("/me", async (c) => {
     const userId = c.get("userId")!;
@@ -466,31 +477,22 @@ export function authRoutes() {
     const { hash, salt } = await hashPassword(password);
     const nowIso = now.toISOString();
 
-    await db.run("UPDATE users SET pass_hash=?, pass_salt=? WHERE id=?", hash, salt, row.user_id);
-    // 同時押しで2回消費されないよう used_at IS NULL 付きで更新する
-    const consumed = await db.run(
-      "UPDATE password_resets SET used_at=? WHERE id=? AND used_at IS NULL",
-      nowIso,
-      row.id,
-    );
-    if (consumed.changes === 0) return invalid();
-
-    // 同じユーザーの未使用リンクも無効化
-    await db.run(
-      "UPDATE password_resets SET used_at=? WHERE user_id=? AND used_at IS NULL",
-      nowIso,
-      row.user_id,
-    );
-    // 全端末ログアウト
-    await deleteUserSessions(db, row.user_id);
-    await db.run(
-      "INSERT INTO audit_log (id, user_id, at, action, detail) VALUES (?,?,?,?,?)",
-      crypto.randomUUID(),
-      row.user_id,
-      nowIso,
-      "password_reset",
-      null,
-    );
+    const claimId = crypto.randomUUID();
+    const claimed = "EXISTS (SELECT 1 FROM password_resets WHERE id=? AND claim_id=?)";
+    await db.batch([
+      { sql: "UPDATE password_resets SET used_at=?, claim_id=? WHERE id=? AND used_at IS NULL AND expires_at>? AND token_hash=?",
+        params: [nowIso, claimId, row.id, nowIso, await sha256Hex(token)] },
+      { sql: `UPDATE users SET pass_hash=?, pass_salt=? WHERE id=? AND ${claimed}`,
+        params: [hash, salt, row.user_id, row.id, claimId] },
+      { sql: `UPDATE password_resets SET used_at=? WHERE user_id=? AND used_at IS NULL AND ${claimed}`,
+        params: [nowIso, row.user_id, row.id, claimId] },
+      { sql: `DELETE FROM sessions WHERE user_id=? AND ${claimed}`, params: [row.user_id, row.id, claimId] },
+      { sql: `DELETE FROM push_subscriptions WHERE user_id=? AND ${claimed}`, params: [row.user_id, row.id, claimId] },
+      { sql: `INSERT INTO audit_log (id,user_id,at,action,detail) SELECT ?,?,?,'password_reset',NULL WHERE ${claimed}`,
+        params: [crypto.randomUUID(), row.user_id, nowIso, row.id, claimId] },
+    ]);
+    const accepted = await db.first<{ claim_id: string }>("SELECT claim_id FROM password_resets WHERE id=?", row.id);
+    if (accepted?.claim_id !== claimId) return invalid();
 
     // 自動ログインはしない。Cookie も消してログイン画面へ戻す
     return new Response(JSON.stringify(ok({ reset: true })), {

@@ -713,7 +713,8 @@ describe("pushToUser（lib/notify.ts）", () => {
     expect(auth).toMatch(/^vapid t=[\w-]+\.[\w-]+\.[\w-]+, k=[\w-]+$/);
     const plain = await decryptPayload(body!, privateJwk, authSecret);
     const parsed = JSON.parse(plain) as { title: string; url: string };
-    expect(parsed.title).toBe("下書きを承認してください");
+    expect(parsed.title).toBe("Threads オートパイロット");
+    expect(plain).not.toContain("9/11 21:00");
     expect(parsed.url).toBe("/app/queue");
     // ワンタイムの承認/取消 URL は入れない（jobs/notify.ts のコメント）
     expect(plain).not.toContain("/a/");

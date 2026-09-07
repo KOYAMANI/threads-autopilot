@@ -123,12 +123,13 @@ export function pushRoutes() {
     // 同じ endpoint を二重に持たない。判定できるよう endpoint のハッシュを id にする
     const id = await endpointId(userId, parsed.data.endpoint);
     await db.run(
-      `INSERT INTO push_subscriptions (id, user_id, json, created_at) VALUES (?,?,?,?)
-         ON CONFLICT(id) DO UPDATE SET json=excluded.json`,
+      `INSERT INTO push_subscriptions (id, user_id, json, created_at, session_id) VALUES (?,?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET user_id=excluded.user_id, json=excluded.json, session_id=excluded.session_id`,
       id,
       userId,
       await encrypt(JSON.stringify(parsed.data), c.env.ENC_KEY),
       new Date().toISOString(),
+      c.get("sessionId"),
     );
     return c.json(ok({ id }), 201);
   });
@@ -161,7 +162,7 @@ export function pushRoutes() {
 
 /** `user_id` と endpoint から決まる id。同じ端末の再購読で行が増えないようにする。 */
 async function endpointId(userId: string, endpoint: string): Promise<string> {
-  const bytes = new TextEncoder().encode(`${userId}\n${endpoint}`);
+  const bytes = new TextEncoder().encode(endpoint);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(digest)]
     .slice(0, 16)

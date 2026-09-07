@@ -1,3 +1,4 @@
+import AccountAvatar from "./AccountAvatar";
 /**
  * アプリの外枠（SPEC §12.2）。TopBar / ApBar / 本文 / Tabs / Drawer。
  *
@@ -39,7 +40,7 @@ export default function Shell() {
   const context: ShellContext = { account: active, accounts };
 
   return (
-    <>
+    <div className="app-shell">
       <TopBar
         account={active}
         onMenu={() => setDrawerOpen(true)}
@@ -49,7 +50,7 @@ export default function Shell() {
       <ApBar accountId={active?.id ?? null} enabled={Boolean(active?.autopilotEnabled)} />
 
       <motion.main
-        key={pathname}
+        key={`${data?.user.id}:${active?.id}:${pathname}`}
         className="screen"
         initial={reduced ? { opacity: 0 } : { opacity: 0, y: 6 }}
         animate={reduced ? { opacity: 1 } : { opacity: 1, y: 0 }}
@@ -58,7 +59,7 @@ export default function Shell() {
         <Outlet context={context} />
       </motion.main>
 
-      <Tabs />
+      <Tabs account={active} onAccount={() => setDrawerOpen(true)} email={data?.user.email} onLogout={() => logout.mutate()} />
 
       <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} labelledBy="drawer-title">
         <h2 id="drawer-title" style={{ padding: "var(--sp)" }}>
@@ -82,7 +83,7 @@ export default function Shell() {
               setDrawerOpen(false);
             }}
           >
-            <span className="dot" style={{ background: a.color }} aria-hidden="true" />
+            <AccountAvatar account={a} />
             <span style={{ minWidth: 0, flex: "1 1 auto" }}>
               <span style={{ display: "block", fontSize: "0.8125rem", fontWeight: 600 }}>
                 @{a.username}
@@ -140,6 +141,6 @@ export default function Shell() {
           </button>
         </div>
       </Drawer>
-    </>
+    </div>
   );
 }

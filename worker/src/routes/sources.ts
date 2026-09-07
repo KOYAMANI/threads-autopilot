@@ -79,7 +79,7 @@ export function sourceRoutes() {
 
   r.get("/", async (c) => {
     const rows = await c.get("db").all<SourceRow>(
-      `SELECT ${SOURCE_SELECT} FROM sources WHERE user_id=? ORDER BY created_at DESC`,
+      `SELECT id,user_id,type,title,url,substr(content,1,160) AS content,char_count,enabled_for_ap,last_used_at,use_count,created_at FROM sources WHERE user_id=? ORDER BY created_at DESC LIMIT 200`,
       c.get("userId")!,
     );
     return c.json(ok({ sources: rows.map(toSourceSummary) }));
@@ -120,9 +120,9 @@ export function sourceRoutes() {
     if (title === "") title = content.slice(0, 30) || "無題";
 
     const id = crypto.randomUUID();
-    await c.get("db").run(
+    const inserted = await c.get("db").run(
       `INSERT INTO sources (id, user_id, type, title, url, content, char_count, enabled_for_ap, last_used_at, use_count, created_at)
-         VALUES (?,?,?,?,?,?,?,1,NULL,0,?)`,
+         SELECT ?,?,?,?,?,?,?,1,NULL,0,? WHERE (SELECT COUNT(*) FROM sources WHERE user_id=?) < 200`,
       id,
       c.get("userId")!,
       input.type,
@@ -131,7 +131,9 @@ export function sourceRoutes() {
       content,
       content.length,
       new Date().toISOString(),
+      c.get("userId")!,
     );
+    if (inserted.changes === 0) return fail("LIMIT_REACHED", "参考情報は200件までです。不要な情報を削除してください", 409);
     const row = (await c.get("db").first<SourceRow>(
       `SELECT ${SOURCE_SELECT} FROM sources WHERE id=? AND user_id=?`,
       id,

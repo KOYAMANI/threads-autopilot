@@ -27,6 +27,9 @@ export function useDashboard(accountId: string | null, period: DashboardPeriod) 
   return useQuery({
     queryKey: accountKey(accountId ?? "-", "dashboard", { period }),
     enabled: Boolean(accountId),
+    staleTime: 60_000,
+    // Keep this account's current results while another period loads. Never carry data across accounts.
+    placeholderData: (previous, query) => query?.queryKey[0] === accountId ? previous : undefined,
     queryFn: () =>
       api.get<DashboardResponse>(`/accounts/${accountId}/dashboard?period=${period}`),
   });
@@ -40,7 +43,7 @@ export function useSyncStatus(accountId: string | null, enabled = true) {
   return useQuery({
     queryKey: accountKey(accountId ?? "-", "sync"),
     enabled: Boolean(accountId) && enabled,
-    refetchInterval: (query) => (query.state.data?.running === false ? false : 1500),
+    refetchInterval: (query) => (query.state.data?.running ? 4000 : 30000),
     queryFn: () => api.get<SyncStatus>(`/accounts/${accountId}/sync`),
   });
 }
@@ -82,6 +85,15 @@ export function useLinks(accountId: string | null) {
     enabled: Boolean(accountId),
     queryFn: async () =>
       (await api.get<{ links: LinkSummary[] }>(`/accounts/${accountId}/links`)).links,
+  });
+}
+
+export function useUpdateLink(accountId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: { label?: string; enabledForAp?: boolean } }) =>
+      api.patch(`/accounts/${accountId}/links/${id}`, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [accountId] }),
   });
 }
 
@@ -159,5 +171,13 @@ export function useDeleteUser() {
   return useMutation({
     mutationFn: (password: string) =>
       api.del<DeleteUserResponse>("/users/me", { password } satisfies DeleteUserRequest),
+  });
+}
+
+export function useStartSync(accountId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<{queued:boolean}>(`/accounts/${accountId}/sync`),
+    onSuccess: () => { void qc.invalidateQueries({queryKey:[accountId]}); },
   });
 }

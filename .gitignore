@@ -9,3 +9,14 @@ coverage/
 
 # scripts/check-bundle.sh が一時生成する（実行後に削除される）
 worker/src/__bundle_probe.ts
+
+# Environment credentials and database exports never belong in Git.
+.env
+.env.*
+!.env.example
+.dev.vars.*
+!.dev.vars.example
+backups/
+*.sqlite
+*.sqlite3
+*.db

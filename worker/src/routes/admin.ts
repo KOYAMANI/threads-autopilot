@@ -4,6 +4,7 @@
  * - POST /api/admin/licenses/:id/revoke → status='revoked', revoked_at=now
  */
 import { Hono } from "hono";
+import { rateHit } from "../lib/rate";
 import { z } from "zod";
 import { ok } from "@tap/shared";
 import { fail, type AppEnv } from "../app";
@@ -35,6 +36,8 @@ export function adminRoutes() {
   const r = new Hono<AppEnv>();
 
   r.use("*", async (c, next) => {
+    const ip = c.req.header("CF-Connecting-IP");
+    if (ip && !(await rateHit(c.get("db"), `admin-ip:${ip}`, 20, 10))) return fail("RATE_LIMITED", "しばらく待ってください", 429);
     if (!adminOk(c.req.header("X-Admin-Secret"), c.env.ADMIN_SECRET)) {
       return fail("FORBIDDEN", "管理者用の操作です", 403);
     }

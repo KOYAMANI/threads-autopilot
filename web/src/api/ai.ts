@@ -1,18 +1,11 @@
-/**
- * AI と参考情報の React Query フック（SPEC §7.5 / §7.6 / §12.3）。
- * キーは `[accountId, resource, params]`（アカウントに紐づかないものは `["ai"|"sources", …]`）。
- *
- * キーの置き場所（SPEC §12.3 Settings）:
- * - サーバー保存（既定）… `PUT /ai/settings` に `key` を送る。以後 `clientKey` は付けない
- * - この端末にだけ保存  … `localStorage.aiKey` に置き、生成のたびに `clientKey` で送る。
- *   サーバーは保存しないので、オートパイロット（自動生成）は使えない
- */
+/** AI settings and content API. Credentials are stored only on the server. */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   AiCandidate,
   AiGenerateRequest,
   AiGenerateResponse,
   AiHistoryTurn,
+  AiGenerationContext,
   AiReviseResponse,
   AiSettingsResponse,
   AiTestResponse,
@@ -28,34 +21,12 @@ import { meKey } from "./auth";
 
 /* ── 端末に置くキー（SPEC §12.3 Settings） ───────────── */
 
-const CLIENT_KEY_STORAGE = "aiKey";
+/** Compatibility helper: no credentials are ever loaded from browser storage. */
+export function withClientKey<T extends object>(_settings: AiSettingsResponse | undefined, body: T): T { return body; }
 
-export function readClientKey(): string | null {
-  try {
-    const v = localStorage.getItem(CLIENT_KEY_STORAGE);
-    return v && v.trim() !== "" ? v : null;
-  } catch {
-    return null;
-  }
-}
-
-export function writeClientKey(key: string | null): void {
-  try {
-    if (key === null || key.trim() === "") localStorage.removeItem(CLIENT_KEY_STORAGE);
-    else localStorage.setItem(CLIENT_KEY_STORAGE, key.trim());
-  } catch {
-    // プライベートブラウズ等。保存できなくても画面は動く
-  }
-}
-
-/** 端末保存モードのときだけ `clientKey` を足す。 */
-export function withClientKey<T extends object>(
-  settings: AiSettingsResponse | undefined,
-  body: T,
-): T & { clientKey?: string } {
-  if (!settings || settings.storeOnServer) return body;
-  const key = readClientKey();
-  return key ? { ...body, clientKey: key } : body;
+export function useDeleteAiKey() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: () => api.del("/ai/settings/key"), onSuccess: () => qc.invalidateQueries() });
 }
 
 /* ── AI 設定（SPEC §7.6） ───────────────────────────── */
@@ -134,14 +105,14 @@ export type PostSort = "new" | "views" | "likes" | "clicks";
 
 export function usePostPicker(
   accountId: string | null,
-  params: { q: string; sort: PostSort },
+  params: { q: string; sort: PostSort; cursor?: string },
 ) {
   return useQuery({
     queryKey: accountKey(accountId ?? "-", "post-picker", params),
     enabled: Boolean(accountId),
     queryFn: () =>
       api.get<PostListResponse>(
-        `/accounts/${accountId}/posts?q=${encodeURIComponent(params.q)}&sort=${params.sort}&limit=30`,
+        `/accounts/${accountId}/posts?q=${encodeURIComponent(params.q)}&sort=${params.sort}&limit=5&cursor=${encodeURIComponent(params.cursor ?? "")}`,
       ),
   });
 }
@@ -161,6 +132,7 @@ export function useRevise() {
       candidate: AiCandidate;
       instruction: string;
       history?: AiHistoryTurn[];
+      context?: AiGenerationContext;
       clientKey?: string;
     }) => api.post<AiReviseResponse>("/ai/revise", body),
   });

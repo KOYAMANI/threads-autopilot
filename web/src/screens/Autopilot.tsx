@@ -87,10 +87,13 @@ export default function Autopilot() {
 
   return (
     <>
-      <h1>オートパイロット</h1>
-      <p className="muted" style={{ marginTop: "0.125rem" }}>
-        枠と型は実績から選び、本文だけAIが書きます
-      </p>
+      <div className="page-heading"><div><p className="eyebrow">YOUR PUBLISHING ROUTINE</p><h1>オートパイロット</h1><p className="muted">実績をもとに、投稿の型とスケジュールを整えます。</p></div></div>
+
+      <details className="card section autopilot-guide" open>
+        <summary>オートパイロットの使い方</summary>
+        <ol><li>参考情報・投稿頻度・使うリンクを設定します。</li><li>オンにすると、設定した参考情報からAIが下書きと投稿予定を作ります。</li><li>「毎回承認する」なら、内容を確認して承認するまで投稿されません。</li><li>予約時刻に投稿し、投稿後の数字を次の型・時間帯選びに使います。</li></ol>
+        <p className="muted">最初は「毎回承認する」がおすすめです。「取消可」は何もしないと投稿され、「全部おまかせ」は確認なしで投稿されます。自動作成・予約投稿はサーバーの定期実行で動きます。</p>
+      </details>
 
       {ap.isPending && <p className="muted section">読み込んでいます…</p>}
 
@@ -111,6 +114,7 @@ export default function Autopilot() {
             }}
           />
 
+          <div className="autopilot-grid">
           <FrequencyCard settings={settings} onChange={patch} />
           <SlotCard settings={settings} onChange={patch} />
           <HookCard settings={settings} onChange={patch} />
@@ -137,6 +141,7 @@ export default function Autopilot() {
           />
           <ApprovalCard settings={settings} onChange={patch} />
           <LimitCard settings={settings} onChange={patch} />
+          </div>
         </>
       )}
 
@@ -181,7 +186,7 @@ function PowerCard({
   return (
     <section className="card section">
       <div className="section-head">
-        <h2>{settings.enabled ? "動いています" : "止まっています"}</h2>
+        <h2>{settings.enabled ? "自動投稿がオンです" : "自動投稿がオフです"}</h2>
       </div>
       <p className="muted">
         {settings.enabled

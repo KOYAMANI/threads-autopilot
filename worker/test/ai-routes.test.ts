@@ -132,22 +132,12 @@ describe("/api/ai/settings（SPEC §7.6）", () => {
     expect(res.body.data.model).toBe("gemini-2.5-flash");
   });
 
-  it("端末保存を選ぶと key_enc が NULL になり、autopilotAvailable=false（SPEC §7.6）", async () => {
+  it("端末保存への変更を拒否し、既存のサーバーキーを保持する", async () => {
     const { cookie, userId } = await setup("ai3");
-    // いったんサーバー保存 → 端末保存に切り替えると、残っていたキーも消える
-    await saveKey(cookie, { storeOnServer: true, key: "AIzaSERVERKEY0123456789" });
-    const res = await saveKey(cookie, { storeOnServer: false, key: "AIzaBROWSERKEY0123456789" });
-
-    expect(res.body.data).toMatchObject({
-      hasKey: false,
-      storeOnServer: false,
-      autopilotAvailable: false,
-    });
-    const row = await testDb().first<{ key_enc: string | null }>(
-      "SELECT key_enc FROM ai_settings WHERE user_id=?",
-      userId,
-    );
-    expect(row?.key_enc).toBeNull();
+    await saveKey(cookie, {storeOnServer:true,key:"test-server-key"});
+    const before=await testDb().first<{key_enc:string}>("SELECT key_enc FROM ai_settings WHERE user_id=?",userId);
+    expect((await saveKey(cookie,{storeOnServer:false,key:"test-client-key"})).status).toBe(400);
+    expect((await testDb().first<{key_enc:string}>("SELECT key_enc FROM ai_settings WHERE user_id=?",userId))?.key_enc).toBe(before?.key_enc);
   });
 
   it("モデルだけ変えるときはサーバー保存のキーを消さない", async () => {
@@ -246,31 +236,11 @@ describe("POST /api/ai/generate（SPEC §7.6）", () => {
     expect(row?.last_used_at).not.toBeNull();
   });
 
-  it("端末保存のときは clientKey を付ければ通り、付けないと AI_KEY_REQUIRED（SPEC §7.6）", async () => {
-    const { cookie, accountId, userId } = await setup("aig3");
-    await saveKey(cookie, { storeOnServer: false, key: "AIzaBROWSERONLY0123456789" });
-
-    const without = await withAiMock(() =>
-      api("POST", "/api/ai/generate", { cookie, body: { accountId } }),
-    );
-    expect(without.status).toBe(400);
-    expect(without.body.error.code).toBe("AI_KEY_REQUIRED");
-
-    const withKey = await withAiMock(() =>
-      api("POST", "/api/ai/generate", {
-        cookie,
-        body: { accountId, clientKey: "AIzaBROWSERONLY0123456789" },
-      }),
-    );
-    expect(withKey.status).toBe(200);
-    expect(withKey.body.data.candidates.length).toBeGreaterThan(0);
-
-    // clientKey はサーバーに残らない
-    const row = await testDb().first<{ key_enc: string | null }>(
-      "SELECT key_enc FROM ai_settings WHERE user_id=?",
-      userId,
-    );
-    expect(row?.key_enc).toBeNull();
+  it("clientKeyを使った生成を拒否する", async () => {
+    const {cookie,accountId}=await setup("aig3");
+    await saveKey(cookie);
+    const result=await api("POST","/api/ai/generate",{cookie,body:{accountId,clientKey:"test-only-local-key"}});
+    expect(result.status).toBe(400);
   });
 
   it("他人の accountId は 404", async () => {
@@ -403,4 +373,18 @@ describe("topTemplates（SPEC §10.2）", () => {
     const got = await topTemplates(db, accountId);
     expect(got).toEqual(["これは残る本文です。"]);
   });
+});
+
+
+describe("rewrite input origins", () => {
+  it("accepts a pasted tree and rejects mixing it with an owned post selection", async () => withAiMock(async () => {
+    const { cookie, accountId } = await setup("rewrite-paste");
+    await saveKey(cookie);
+    const input = { accountId, pickMode: "rewrite", picks: [], referenceText: "【1投稿目】講座の準備はこの順番。\n【続き】生徒の悩みを聞く→目標を決める→試す。", instruction: "内容を保って簡潔に", n: 3 };
+    const accepted = await api("POST", "/api/ai/generate", { cookie, body: input });
+    expect(accepted.status).toBe(200);
+    expect(accepted.body.data.candidates.length).toBeGreaterThan(0);
+    expect((await api("POST", "/api/ai/generate", { cookie, body: { ...input, picks: ["another-id"] } })).status).toBe(400);
+    expect((await api("POST", "/api/ai/generate", { cookie, body: { ...input, referenceText: "" } })).status).toBe(400);
+  }));
 });

@@ -116,10 +116,11 @@ export default function SourceAdder({
   return (
     <section className="card section">
       <div className="section-head">
-        <h2>参考情報</h2>
+        <h2>内容の参考情報</h2>
         <span className="muted">{selected.length > 0 ? `${selected.length}件を使う` : "任意"}</span>
       </div>
 
+      <p className="muted section">YouTube・記事・メモは情報として使います。投稿の型を真似たい場合は「型・文体の参考」に貼り付けてください。</p>
       <div
         className="chips"
         role="group"

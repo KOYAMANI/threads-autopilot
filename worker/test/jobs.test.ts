@@ -15,7 +15,9 @@ import { resetMock } from "../src/mock/threads";
 
 const NOW = new Date("2026-09-06T00:00:00.000Z");
 
-beforeEach(() => {
+beforeEach(async () => {
+  await testDb().run("DELETE FROM jobs");
+  await testDb().run("DELETE FROM cron_sweeps");
   resetMock();
 });
 
@@ -195,8 +197,9 @@ describe("台帳の予算が尽きたとき（SPEC §8.1）", () => {
 
     await expect(enqueueForCron(ctx, "0 * * * *")).resolves.toBeUndefined(); // 投げない
     const after = await countAllJobs();
-    expect(after).toBeGreaterThan(before); // 積めたぶんは消えない
-    expect(after - before).toBeLessThan(3); // 予算どおり途中で止まっている
+    expect(after).toBe(before); // ページとカーソルは同一バッチなので部分登録しない
+    await enqueueForCron(makeJobContext(env, { now: NOW }), "* * * * *");
+    expect(await countAllJobs()).toBeGreaterThan(before); // 次回は未完了の周期から再開
   });
 });
 

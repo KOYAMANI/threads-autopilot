@@ -442,7 +442,7 @@ export async function planAccount(ctx: JobContext, accountId: string): Promise<P
   }
 
   const planned: PlannedItem[] = [];
-  for (let i = 0; i < need; i++) {
+  for (let i = 0; i < (ctx.env.WORKERS_PLAN === "free" ? Math.min(need, 1) : need); i++) {
     try {
       const item = await planOne(ctx, account, ap, key);
       planned.push(item);

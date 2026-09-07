@@ -701,7 +701,7 @@ export async function publishJob(ctx: JobContext, job: RunningJob): Promise<void
   const call: CallOptions = { budget: ctx.budget, env: ctx.env, now: ctx.now.getTime() };
   const nowIso = ctx.now.toISOString();
 
-  for (let i = 0; i < MAX_STEPS_PER_RUN; i++) {
+  for (let i = 0; i < (ctx.env.WORKERS_PLAN === "free" ? 1 : MAX_STEPS_PER_RUN); i++) {
     ctx.budget.timeMs.check();
 
     const row = await ctx.db.first<QueueRow>(

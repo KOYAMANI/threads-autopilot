@@ -13,17 +13,9 @@
  */
 
 self.addEventListener("push", (event) => {
-  let data = { title: "Threads オートパイロット", body: "", url: "/app/queue" };
-  try {
-    if (event.data) data = { ...data, ...event.data.json() };
-  } catch {
-    // JSON でないペイロード（他所から来たもの）。既定の文言で出す
-    try {
-      if (event.data) data.body = event.data.text();
-    } catch {
-      /* 読めなければ本文なしで出す */
-    }
-  }
+  // Lock screens and delayed delivery on shared devices must not reveal account names or drafts.
+  // Ignore older payloads too, including notifications queued before a logout.
+  const data = { title: "Threads オートパイロット", body: "アプリに新しいお知らせがあります。ログインして確認してください。", url: "/app/queue" };
 
   event.waitUntil(
     self.registration.showNotification(data.title, {

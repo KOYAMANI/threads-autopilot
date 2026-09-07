@@ -10,9 +10,11 @@
  */
 import { buildTags, extractUrls, normalizeUrl } from "@tap/shared";
 import { accountToken, loadAccount, type AccountRow } from "../lib/accounts";
+import { BudgetExceeded } from "../lib/budget";
 import { buildUpsertChunks } from "../lib/db";
-import type { JobContext, RunningJob } from "../lib/jobs";
+import { enqueueJob, wakeAccountSync, type JobContext, type RunningJob } from "../lib/jobs";
 import {
+  getProfile,
   listReplies,
   listThreads,
   type CallOptions,
@@ -32,6 +34,9 @@ type SyncState = {
   after?: string | null;
   pages?: number;
   seen?: number;
+  profileSynced?: boolean;
+  imported?: boolean;
+  previewScheduled?: boolean;
 };
 
 const POST_COLUMNS = [
@@ -114,23 +119,12 @@ async function upsertFoundLinks(
   }
   if (urls.size === 0) return;
   const nowIso = ctx.now.toISOString();
-  const rows = [...urls].map((url) => [
-    crypto.randomUUID(),
-    accountId,
-    url,
-    url, // label は URL そのもの（SPEC §7.5）
-    "other",
-    1,
-    nowIso,
-  ]);
-  const chunks = buildUpsertChunks(
-    "links",
-    ["id", "account_id", "url", "label", "kind", "enabled_for_ap", "created_at"],
-    rows,
-    ["account_id", "url"],
-    [], // 既存のラベル・種別は触らない
+  // One bound JSON parameter avoids a page with many URLs exceeding the D1 query budget.
+  await ctx.db.run(
+    `INSERT INTO links(id,account_id,url,label,kind,enabled_for_ap,created_at)
+     SELECT lower(hex(randomblob(16))),?,value,value,'other',1,? FROM json_each(?) WHERE 1
+     ON CONFLICT(account_id,url) DO NOTHING`, accountId, nowIso, JSON.stringify([...urls]),
   );
-  await ctx.db.batch(chunks);
 }
 
 async function savePage(
@@ -184,50 +178,77 @@ export async function fullSyncJob(ctx: JobContext, job: RunningJob): Promise<voi
   const token = await accountToken(ctx.env, account);
   const options: CallOptions = { budget: ctx.budget, env: ctx.env, now: ctx.now.getTime() };
 
+  const free = ctx.env.WORKERS_PLAN === "free";
+  const pageSize = free ? 25 : PAGE_SIZE;
+  const pageProgress = pageSize / PAGE_SIZE;
   const state = job.state as SyncState;
   state.phase ??= "threads";
   state.pages ??= 0;
   state.seen ??= 0;
 
-  while (state.phase === "threads" && (state.pages ?? 0) < MAX_PAGES) {
+  if (!state.profileSynced) {
+    const profile = await getProfile(token, options);
+    await ctx.db.run("UPDATE accounts SET username=?,name=?,avatar_url=? WHERE id=?", profile.username, profile.name ?? null, profile.threads_profile_picture_url ?? null, account.id);
+    state.profileSynced = true;
+  }
+
+  while (!state.imported && state.phase === "threads" && (state.pages ?? 0) < MAX_PAGES) {
     ctx.budget.timeMs.check();
     const page: ThreadsPage = await listThreads(
       token,
-      { limit: PAGE_SIZE, ...(state.after ? { after: state.after } : {}) },
+      { limit: pageSize, ...(state.after ? { after: state.after } : {}) },
       options,
     );
     await savePage(ctx, account, page.data ?? []);
-    state.pages = (state.pages ?? 0) + 1;
+    if (!state.previewScheduled) {
+      for (const type of ["insights_recent", "insights_daily"] as const) {
+        await enqueueJob(ctx, type, {accountId: account.id, state:{initial:true}});
+      }
+      await wakeAccountSync(ctx, account.id);
+      state.previewScheduled = true;
+    }
+    state.pages = (state.pages ?? 0) + pageProgress;
     state.seen = (state.seen ?? 0) + (page.data?.length ?? 0);
     const after = page.paging?.cursors?.after;
     if (!after || (page.data?.length ?? 0) === 0) break;
     state.after = after;
+    if (free) throw new BudgetExceeded("subrequests", 1, 1);
   }
 
-  if (state.phase === "threads") {
+  if (!state.imported && state.phase === "threads") {
     state.phase = "replies";
     state.after = null;
     state.pages = MAX_PAGES; // 進捗の分母を揃える（threads フェーズは終わり）
+    if (free) throw new BudgetExceeded("subrequests", 1, 1);
   }
 
+  if (!state.previewScheduled && (state.seen ?? 0) > 0) {
+    for (const type of ["insights_recent", "insights_daily"] as const) {
+      await enqueueJob(ctx, type, {accountId: account.id, state:{initial:true}});
+    }
+    await wakeAccountSync(ctx, account.id);
+    state.previewScheduled = true;
+  }
   let replyPages = 0;
-  while ((state.pages ?? 0) < SYNC_TOTAL_PAGES && replyPages < MAX_PAGES) {
+  while (!state.imported && (state.pages ?? 0) < SYNC_TOTAL_PAGES && replyPages < MAX_PAGES) {
     ctx.budget.timeMs.check();
     const page: ThreadsPage = await listReplies(
       token,
-      { limit: PAGE_SIZE, ...(state.after ? { after: state.after } : {}) },
+      { limit: pageSize, ...(state.after ? { after: state.after } : {}) },
       options,
     );
     const mine = await keepOwnReplies(ctx, account.id, page.data ?? []);
     await savePage(ctx, account, mine);
-    state.pages = (state.pages ?? 0) + 1;
+    state.pages = (state.pages ?? 0) + pageProgress;
     replyPages++;
     state.seen = (state.seen ?? 0) + mine.length;
     const after = page.paging?.cursors?.after;
     if (!after || (page.data?.length ?? 0) === 0) break;
     state.after = after;
+    if (free) throw new BudgetExceeded("subrequests", 1, 1);
   }
 
+  state.imported = true;
   state.pages = SYNC_TOTAL_PAGES;
   state.phase = "replies";
   await ctx.db.run(
@@ -235,4 +256,8 @@ export async function fullSyncJob(ctx: JobContext, job: RunningJob): Promise<voi
     ctx.now.toISOString(),
     account.id,
   );
+  for (const type of ["insights_recent", "insights_daily", "insights_old"] as const) {
+    await enqueueJob(ctx, type, {accountId: account.id, state:{initial: true}});
+  }
+  await wakeAccountSync(ctx, account.id);
 }

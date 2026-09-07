@@ -5,7 +5,7 @@
  * 「全経路で使う」）。サーバーと同じ関数なので、画面で通ったものはサーバーでも通る。
  * リンクの置き場は手動のキューでは本文でも許す（`link_placement` は M6 の設定）。
  */
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { MAX_BODY_LENGTH, bodyLength, validatePost } from "@tap/shared";
 
 /** ツリーは本文＋コメント3本まで（SPEC §1「本文＋コメント①②③」）。 */
@@ -46,12 +46,17 @@ export default function PostFields({
   onChange,
   autoFocus = false,
   idPrefix = "post",
+  compact = false,
 }: {
   draft: PostDraft;
   onChange: (next: PostDraft) => void;
   autoFocus?: boolean;
   idPrefix?: string;
+  compact?: boolean;
 }) {
+  const [extraComments, setExtraComments] = useState(0);
+  const lastFilled = draft.comments.reduce((last, text, i) => text.trim() ? i + 1 : last, 0);
+  const visibleComments = compact ? Math.max(lastFilled, extraComments) : MAX_COMMENTS;
   const issue = useMemo(() => draftIssue(draft), [draft]);
   const comments = draft.comments.length >= MAX_COMMENTS
     ? draft.comments.slice(0, MAX_COMMENTS)
@@ -81,10 +86,10 @@ export default function PostFields({
         />
       </label>
 
-      {comments.map((c, i) => (
+      {comments.slice(0, visibleComments).map((c, i) => (
         <label className="field" key={i} htmlFor={`${idPrefix}-c${i}`}>
           <span className="field-head">
-            コメント{"①②③"[i]}
+            {compact ? `続きの投稿 ${i + 1}` : `コメント${"①②③"[i]}`}
             <Counter text={c} />
           </span>
           <textarea
@@ -97,6 +102,8 @@ export default function PostFields({
           />
         </label>
       ))}
+
+      {compact && visibleComments < MAX_COMMENTS && <button type="button" className="btn-quiet section" onClick={() => setExtraComments(visibleComments + 1)}>＋ 続きの投稿を追加</button>}
 
       {issue && draft.body.trim() !== "" && (
         <p className="msg msg-bad" role="status">

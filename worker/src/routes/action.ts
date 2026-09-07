@@ -13,6 +13,7 @@
  * SPA のルートではなく Worker が直接 HTML を返す（`index.ts` から呼ばれる）。
  */
 import type { Env } from "../env";
+import { canPublishAccount, loadAccount } from "../lib/accounts";
 import { apLog } from "../lib/autopilot";
 import { createBudget } from "../lib/budget";
 import { createDb, type Db } from "../lib/db";
@@ -229,6 +230,13 @@ export async function handleAction(request: Request, env: Env): Promise<Response
   /* ── POST: 実行（SPEC §7.9 の処理順を守る） ─────── */
   const terminal = terminalOutcome(row);
   if (terminal) return page(env, terminal, null); // 3・4。遷移も消費もしない
+
+  if (action === "approve") {
+    const account = await loadAccount(db, row.account_id);
+    if (!account || !canPublishAccount(account, now.getTime())) {
+      return page(env, { status: 409, title: "Threadsの再連携が必要です", message: "設定でThreads APIを連携し直してから承認してください。" }, null);
+    }
+  }
 
   const nowIso = now.toISOString();
   // 5・6。条件付き UPDATE の changes で同時押しも弾く
