@@ -5,10 +5,10 @@ import { ApiError } from "../api/client";
 import { fromDateTimeLocal, mdhm, toDateTimeLocal } from "../lib/format";
 import Sheet from "./Sheet";
 
-export type SchedulePick = { kind: "now" | "at" | "next_slot"; at: string | null };
+export type SchedulePick = { kind: "at" | "next_slot"; at: string | null };
 
 export default function ScheduleSheet({
-  open, onClose, onPick, accountId, tz, title = "いつ出す？",
+  open, onClose, onPick, accountId, tz, title = "予約する日時",
   confirmLabel = "予約する", initialAt = null, busy = false,
 }: {
   open: boolean;
@@ -21,7 +21,7 @@ export default function ScheduleSheet({
   initialAt?: string | null;
   busy?: boolean;
 }) {
-  const [mode, setMode] = useState<"now" | "at" | "slot">("slot");
+  const [mode, setMode] = useState<"at" | "slot">("slot");
   const [local, setLocal] = useState("");
   const slot = useSuggestSlot(accountId, open && mode === "slot");
   useEffect(() => {
@@ -32,11 +32,11 @@ export default function ScheduleSheet({
 
   const atIso = mode === "at" ? fromDateTimeLocal(local, tz) : (slot.data?.at ?? null);
   const invalidDate = mode === "at" && (!atIso || new Date(atIso).getTime() <= Date.now());
-  const ready = mode === "now" || (mode === "at" ? !invalidDate : Boolean(slot.data && !slot.isError));
+  const ready = mode === "at" ? !invalidDate : Boolean(slot.data && !slot.isError);
 
   function confirm() {
     if (!ready) return;
-    onPick({ kind: mode === "now" ? "now" : mode === "slot" ? "next_slot" : "at", at: mode === "now" ? null : atIso });
+    onPick({ kind: mode === "slot" ? "next_slot" : "at", at: atIso });
   }
 
   return <Sheet open={open} onClose={onClose} title={title}>
@@ -50,11 +50,8 @@ export default function ScheduleSheet({
         <span className="choice-title">日時を指定</span><span className="choice-note">{tz} の時刻で指定します</span>
       </button>
       {mode === "at" && <><input type="datetime-local" className="input" aria-label="投稿する日時" value={local} disabled={busy} onChange={e => setLocal(e.target.value)} />{invalidDate && <p className="muted" role="status">これからの日時を指定してください。</p>}</>}
-      <button type="button" className="choice" role="radio" aria-checked={mode === "now"} disabled={busy} onClick={() => setMode("now")}>
-        <span className="choice-title">今すぐ</span><span className="choice-note">保存後、サーバーの次の実行で投稿します</span>
-      </button>
     </div>
-    <button type="button" className="btn section" disabled={busy || !ready} onClick={confirm}>{busy ? "送っています…" : mode === "now" ? "今すぐ投稿する" : mode === "slot" ? "次の空き枠に入れる" : confirmLabel}</button>
+    <button type="button" className="btn section" disabled={busy || !ready} onClick={confirm}>{busy ? "送っています…" : mode === "slot" ? "次の空き枠に入れる" : confirmLabel}</button>
     {mode === "slot" && slot.data && !slot.isError && <p className="muted section">保存する時点の空き枠に入ります。他の投稿が先に入った場合は、その次の枠を使います。</p>}
     {mode === "at" && !invalidDate && atIso && <p className="muted section">{mdhm(atIso, tz)} に出します</p>}
   </Sheet>;

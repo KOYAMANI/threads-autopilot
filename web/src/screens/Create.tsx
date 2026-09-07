@@ -5,7 +5,7 @@
  *   箱2  参考情報（テキスト / YouTube / ファイル / 記事URL） … components/SourceAdder
  *   指示 → [生成する（3案）] → 結果タブ 案A/B/C
  *   1投稿目とコメントを編集 →「指示で直す」（会話履歴を保持）
- *   [下書き保存] [キューに入れる ▸ 今すぐ / 日時指定 / おすすめ枠]
+ *   [下書き保存] [予約・キューに追加] [今すぐ投稿 ▸ 確認]
  *
  * キー未設定なら生成ボタンの代わりに設定への誘導を出す（design-v0.2 §3-4）。
  * AI credentials are resolved server-side; never load keys from browser storage.
@@ -24,6 +24,7 @@ import PostFields, {
 } from "../components/PostFields";
 import PostPicker from "../components/PostPicker";
 import ScheduleSheet, { type SchedulePick } from "../components/ScheduleSheet";
+import PublishNowSheet from "../components/PublishNowSheet";
 import SourceAdder from "../components/SourceAdder";
 import { useShell } from "../components/Shell";
 import { useToast } from "../components/Toast";
@@ -68,6 +69,7 @@ export default function Create() {
   /** 案ごとの会話履歴（SPEC §12.3「指示で直す（会話履歴保持）」）。 */
   const [history, setHistory] = useState<Record<string, AiHistoryTurn[]>>({});
   const [sheet, setSheet] = useState(false);
+  const [showPublishNow, setShowPublishNow] = useState(false);
 
   /**
    * ホーム・キューからの下敷き（SPEC §12.3 の `location.state.preset`）。
@@ -217,7 +219,7 @@ export default function Create() {
     );
   }
 
-  function enqueue(pick: SchedulePick) {
+  function enqueue(pick: SchedulePick | { kind: "now" }) {
     if (!account?.canPublish) { toast.show("設定でThreads APIを連携してください", "bad"); return; }
     if (!guard()) return;
     const common = {
@@ -235,7 +237,8 @@ export default function Create() {
         onSuccess: () => {
           if (!mounted.current) return;
           setSheet(false);
-          toast.show(pick.kind === "now" ? "次の実行で出します" : "予約しました", "ok");
+          setShowPublishNow(false);
+          toast.show(pick.kind === "now" ? "投稿を受け付けました。下書き・予約で進行状況を確認できます" : "予約しました", "ok");
           navigate("/app/queue");
         },
         onError: (e) => fail(e, "キューに入れられませんでした"),
@@ -374,18 +377,27 @@ export default function Create() {
         </section>
       )}
 
-      <div className="section" style={{ display: "grid", gap: "calc(var(--sp) * 1.5)" }}>
-        <button type="button" className="btn" disabled={busy || !account.canPublish} onClick={() => setSheet(true)}>
-          キューに入れる
-        </button>
-        {!account.canPublish && <p className="msg msg-warn">予約するには設定でThreads APIを連携してください。下書きは保存できます。</p>}
-        <button type="button" className="btn btn-sub" disabled={busy} onClick={saveDraft}>
-          {create.isPending ? "保存しています…" : "下書きに保存"}
-        </button>
+      <div className="section">
+        <div className="create-publish-actions">
+          <button type="button" className="btn btn-sub" disabled={busy} onClick={saveDraft}>下書き保存</button>
+          <button type="button" className="btn" disabled={busy || !account.canPublish} onClick={() => { if (guard()) setSheet(true); }}>予約・キューに追加</button>
+          <button type="button" className="btn btn-sub" disabled={busy || !account.canPublish} onClick={() => { if (guard()) setShowPublishNow(true); }}>今すぐ投稿</button>
+        </div>
+        {!account.canPublish && <p className="msg msg-warn section">予約・投稿するには設定でThreads APIを連携してください。下書きは保存できます。</p>}
       </div>
 
       </div>
       </div>
+      <PublishNowSheet
+        open={showPublishNow}
+        onClose={() => setShowPublishNow(false)}
+        onConfirm={() => enqueue({ kind: "now" })}
+        username={account.username}
+        body={draft.body}
+        comments={trimComments(draft.comments)}
+        canPublish={account.canPublish === true}
+        busy={create.isPending}
+      />
       <ScheduleSheet
         open={sheet}
         onClose={() => setSheet(false)}

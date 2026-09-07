@@ -30,6 +30,7 @@ import { ApiError } from "../api/client";
 import { useShell } from "../components/Shell";
 import PostFields, { draftIssue, trimComments, type PostDraft } from "../components/PostFields";
 import ScheduleSheet, { type SchedulePick } from "../components/ScheduleSheet";
+import PublishNowSheet from "../components/PublishNowSheet";
 import Sheet from "../components/Sheet";
 import PostingScheduleEditor from "../components/PostingScheduleEditor";
 import { DotsIcon, PlusIcon } from "../components/Icons";
@@ -96,7 +97,7 @@ function draftOf(item: QueueItem): PostDraft {
 
 /* ── 画面 ──────────────────────────────────────────── */
 
-type SheetKind = "actions" | "edit" | "schedule" | null;
+type SheetKind = "actions" | "edit" | "schedule" | "publish" | null;
 
 export default function Queue() {
   const { account } = useShell();
@@ -197,17 +198,6 @@ export default function Queue() {
 
   function reschedule(pick: SchedulePick) {
     if (!selected || !canPublish) return;
-    if (pick.kind === "now") {
-      publishNow.mutate(selected.id, {
-        onSuccess: () => {
-          setSheet(null);
-          setTab("scheduled");
-          toast.show("次の実行で出します", "ok");
-        },
-        onError: (e) => fail(e, "投稿できませんでした"),
-      });
-      return;
-    }
     patch.mutate(
       { id: selected.id, patch: pick.kind === "next_slot" ? { status: "next_slot" } : { scheduledAt: pick.at, status: "scheduled" } },
       {
@@ -395,18 +385,9 @@ export default function Queue() {
                   type="button"
                   className="menu-item"
                   disabled={!canPublish}
-                  onClick={() =>
-                    publishNow.mutate(selected.id, {
-                      onSuccess: () => {
-                        setSheet(null);
-                        setTab("scheduled");
-                        toast.show("次の実行で出します", "ok");
-                      },
-                      onError: (e) => fail(e, "投稿できませんでした"),
-                    })
-                  }
+                  onClick={() => openSheet(selected, "publish")}
                 >
-                  {selected.status === "failed" ? "もう一度ためす" : "今すぐ投稿"}
+                  {selected.status === "failed" ? "今すぐ再試行" : "今すぐ投稿"}
                 </button>
               )}
               {selected.status === "done" && (
@@ -527,6 +508,29 @@ export default function Queue() {
         </button>
       </Sheet>
 
+      <PublishNowSheet
+        open={sheet === "publish" && selected !== null}
+        onClose={() => setSheet(null)}
+        username={account.username}
+        body={selected?.body ?? ""}
+        comments={selected?.comments ?? []}
+        canPublish={canPublish}
+        busy={publishNow.isPending}
+        resume={Boolean(selected?.resultIds.length)}
+        onConfirm={() => {
+          if (!selected || !canPublish || publishNow.isPending) return;
+          publishNow.mutate(selected.id, {
+            onSuccess: () => {
+              setSheet(null);
+              setTab("scheduled");
+              setDay(dayKey(Date.now(), tz));
+              toast.show("投稿を受け付けました。進行状況を確認できます", "ok");
+            },
+            onError: e => fail(e, "投稿できませんでした"),
+          });
+        }}
+      />
+
       {/* ── 日時変更シート ───────────────────────────── */}
       <ScheduleSheet
         open={sheet === "schedule" && selected !== null}
@@ -534,10 +538,10 @@ export default function Queue() {
         onPick={reschedule}
         accountId={accountId}
         tz={tz}
-        title="いつ出す？"
+        title="予約する日時"
         confirmLabel="この日時で予約する"
         initialAt={selected?.scheduledAt ?? null}
-        busy={patch.isPending || publishNow.isPending}
+        busy={patch.isPending}
       />
     </>
   );

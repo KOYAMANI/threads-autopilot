@@ -254,3 +254,12 @@ button,input,select,textarea { font-family:inherit; }
 .schedule-time-summary { display:flex; gap:.5rem; flex-wrap:wrap; }
 .schedule-time-summary > span { border:1px solid var(--line); border-radius:6px; background:var(--paper2); padding:.4rem .75rem; font-size:.8rem; }
 .ap-daily-choices .choice:disabled { cursor:default; opacity:.6; }
+
+
+.create-publish-actions { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.75rem; }
+.publish-actions { display:grid; grid-template-columns:1fr 2fr; gap:.75rem; }
+.publish-preview { display:grid; gap:.75rem; }
+.publish-preview-text { white-space:pre-wrap; overflow-wrap:anywhere; margin-top:.5rem; }
+@media (max-width:680px) {
+  .create-publish-actions, .publish-actions { grid-template-columns:1fr; }
+}
