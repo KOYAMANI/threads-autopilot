@@ -25,6 +25,7 @@ export type QueueRow = {
   container_id: string | null;
   container_polls: number;
   result_ids_json: string;
+  root_published_at: string | null;
   error: string | null;
   error_raw: string | null;
   attempts: number;
@@ -38,7 +39,7 @@ export type QueueRow = {
 export const QUEUE_SELECT =
   "id, account_id, status, scheduled_at, body, comments_json, image_url, reply_control, source, " +
   "approval_mode, approve_deadline, notified_at, action_token_used_at, step, next_step_at, container_id, " +
-  "container_polls, result_ids_json, error, error_raw, attempts, tags_json, origin_post_id, source_ids_json, " +
+  "container_polls, result_ids_json, root_published_at, error, error_raw, attempts, tags_json, origin_post_id, source_ids_json, " +
   "created_at, updated_at";
 
 /** 画面に出しうる状態（SPEC §12.3 のタブ）。 */

@@ -7,6 +7,9 @@ import {
   encrypt,
   generateLicenseKey,
   hashPassword,
+  PASSWORD_HASH_PREFIX,
+  passwordHashNeedsUpgrade,
+  upgradeLegacyPasswordHash,
   isLicenseKeyShape,
   sha256Hex,
   timingSafeEqual,
@@ -53,22 +56,43 @@ describe("AES-256-GCM（SPEC §13 M1 完了条件2）", () => {
   });
 });
 
-describe("PBKDF2-SHA256 100,000回", () => {
+describe("PBKDF2-SHA256 + separate post-hash pepper", () => {
   it("正しいパスワードだけ通る", async () => {
-    const stored = await hashPassword("password1234");
-    expect(await verifyPassword("password1234", stored)).toBe(true);
-    expect(await verifyPassword("password1235", stored)).toBe(false);
+    const stored = await hashPassword("password1234", env.PASSWORD_PEPPER);
+    expect(await verifyPassword("password1234", stored, env.PASSWORD_PEPPER)).toBe(true);
+    expect(await verifyPassword("password1235", stored, env.PASSWORD_PEPPER)).toBe(false);
+  });
+
+  it("versions the format and requires the same secret, without accepting the leaked DB digest as a password", async () => {
+    const stored = await hashPassword("password1234", env.PASSWORD_PEPPER);
+    expect(stored.hash.startsWith(PASSWORD_HASH_PREFIX)).toBe(true);
+    expect(passwordHashNeedsUpgrade(stored)).toBe(false);
+    expect(await verifyPassword("password1234", stored, "different-pepper-different-pepper-0123")).toBe(false);
+    expect(await verifyPassword(stored.hash, stored, env.PASSWORD_PEPPER)).toBe(false);
+    await expect(hashPassword("password1234", "")).rejects.toThrow("PASSWORD_PEPPER");
+    await expect(verifyPassword("password1234", stored, "")).rejects.toThrow("PASSWORD_PEPPER");
+  });
+
+  it("verifies the independent legacy vector and upgrades it without needing a password reset", async () => {
+    // Python hashlib.pbkdf2_hmac('sha256', b'password1234', bytes(range(16)), 100000)
+    const legacy = { hash: "fmmThy7w6gLovBzttVbAd8jUZZEY4P6uFRoNnvWWvrg=", salt: "AAECAwQFBgcICQoLDA0ODw==" };
+    expect(passwordHashNeedsUpgrade(legacy)).toBe(true);
+    expect(await verifyPassword("password1234", legacy, env.PASSWORD_PEPPER)).toBe(true);
+    expect(await verifyPassword("wrong", legacy, env.PASSWORD_PEPPER)).toBe(false);
+    const upgraded = await upgradeLegacyPasswordHash(legacy, env.PASSWORD_PEPPER);
+    expect(upgraded.hash).not.toContain(legacy.hash);
+    expect(await verifyPassword("password1234", upgraded, env.PASSWORD_PEPPER)).toBe(true);
   });
 
   it("salt が毎回違うのでハッシュも変わる", async () => {
-    const a = await hashPassword("password1234");
-    const b = await hashPassword("password1234");
+    const a = await hashPassword("password1234", env.PASSWORD_PEPPER);
+    const b = await hashPassword("password1234", env.PASSWORD_PEPPER);
     expect(a.salt).not.toBe(b.salt);
     expect(a.hash).not.toBe(b.hash);
   });
 
   it("壊れた保存値では false を返す（例外にしない）", async () => {
-    expect(await verifyPassword("x", { hash: "!!!", salt: "!!!" })).toBe(false);
+    expect(await verifyPassword("x", { hash: "!!!", salt: "!!!" }, env.PASSWORD_PEPPER)).toBe(false);
   });
 });
 

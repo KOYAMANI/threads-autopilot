@@ -8,6 +8,7 @@ import { rateHit } from "../lib/rate";
 import { z } from "zod";
 import { ok } from "@tap/shared";
 import { fail, type AppEnv } from "../app";
+import { readSchedulerStatus } from "../lib/scheduler-health";
 import { audit } from "../lib/audit";
 import { generateLicenseKey, timingSafeEqual } from "../lib/crypto";
 
@@ -43,6 +44,8 @@ export function adminRoutes() {
     }
     await next();
   });
+
+  r.get("/scheduler-status", async (c) => c.json(ok(await readSchedulerStatus(c.get("db"), c.env))));
 
   r.post("/licenses", async (c) => {
     let body: unknown;

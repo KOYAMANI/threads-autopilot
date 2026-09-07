@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { hasRequestedWith, readCookie, signToken, verifyToken } from "../src/lib/session";
+import { createSession, deleteSession, getSession, hasRequestedWith, readCookie, signToken, verifyToken } from "../src/lib/session";
+
+import { api, registerUser, testDb } from "./helpers";
+import { sha256Hex } from "../src/lib/crypto";
 
 const SECRET = "unit-test-secret-unit-test-secret-0123456789";
 const nowSec = 1_800_000_000;
@@ -96,5 +99,43 @@ describe("Cookie / CSRF", () => {
         new Request("https://x.test", { method: "POST", headers: { "X-Requested-With": "fetch" } }),
       ),
     ).toBe(true);
+  });
+});
+
+
+describe("opaque session credentials", () => {
+  it("stores only the digest, rejects a leaked digest, and preserves OAuth FK ownership", async () => {
+    const u = await registerUser(), db = testDb();
+    const token = u.cookie.slice(4);
+    const row = await db.first<{ id: string }>("SELECT id FROM sessions WHERE user_id=?", u.userId);
+    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(row?.id).toBe(await sha256Hex(token));
+    expect(JSON.stringify(row)).not.toContain(token);
+    expect((await api("GET", "/api/auth/me", { cookie: `sid=${row!.id}` })).status).toBe(401);
+    const session = await getSession(db, token);
+    expect(session?.user_id).toBe(u.userId);
+    await db.run("INSERT INTO threads_oauth_states(id,user_id,session_id,browser_hash,expires_at) VALUES (?,?,?,?,?)",
+      "test-state", u.userId, session!.id, "browser-hash", session!.expires_at);
+    const second = await createSession(db, u.userId, null);
+    await deleteSession(db, session!.id);
+    expect(await getSession(db, token)).toBeNull();
+    expect(await db.first("SELECT id FROM threads_oauth_states WHERE id='test-state'")).toBeNull();
+    expect((await getSession(db, second.token))?.id).toBe(second.id);
+  });
+
+  it("does not accept old bearer IDs or malformed cookies and does not delete the retained records", async () => {
+    const u = await registerUser(), db = testDb();
+    const legacyToken = crypto.randomUUID();
+    await db.run("INSERT INTO sessions(id,user_id,expires_at,created_at) VALUES (?,?,?,?)", legacyToken, u.userId,
+      new Date(Date.now()+86400000).toISOString(), new Date().toISOString());
+    expect((await api("GET", "/api/auth/me", { cookie: `sid=${legacyToken}` })).status).toBe(401);
+    expect((await api("GET", "/api/auth/me", { cookie: "sid=%broken" })).status).toBe(401);
+    expect(await db.first("SELECT id FROM sessions WHERE id=?", legacyToken)).toBeTruthy();
+  });
+
+  it("enforces expiry even for a correctly hashed token", async () => {
+    const u = await registerUser(), db = testDb();
+    const expired = await createSession(db, u.userId, null, new Date("2000-01-01T00:00:00Z"));
+    expect(await getSession(db, expired.token)).toBeNull();
   });
 });

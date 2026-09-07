@@ -207,3 +207,50 @@ button,input,select,textarea { font-family:inherit; }
 
 .environment-notice { position:fixed; bottom:1rem; right:1rem; z-index:90; display:flex; flex-direction:column; gap:.2rem; padding:.65rem 1rem; background:#fff8e0; color:#735600; border:1px solid #e8ca70; border-radius:10px; box-shadow:0 2px 8px #0001; font-size:.7rem; pointer-events:none; }
 @media(max-width:959px) { .environment-notice { bottom:5rem; right:.5rem; padding:.4rem .7rem; } }
+
+/* Daily publishing slots share one schedule across manual drafts and autopilot. */
+.queue-heading-actions,.queue-date-controls { display:flex; gap:.6rem; align-items:center; }
+.queue-calendar-toolbar { display:flex; justify-content:space-between; align-items:center; gap:1rem; }
+.queue-date-controls .input { width:auto; min-width:0; }
+.week > .week-day[aria-pressed="true"] { background:var(--ink); color:white; }
+.slot-time-inputs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.65rem; margin-top:1.1rem; }
+.slot-time-input { min-width:0; display:flex; align-items:flex-end; gap:.15rem; background:var(--paper2); border:1px solid var(--line); border-radius:var(--r-sm); padding:.65rem; }
+.slot-time-input label { display:block; flex:1; min-width:0; }
+.slot-time-input label > span { display:block; margin-bottom:.3rem; font-size:.625rem; }
+.slot-time-input .input { padding:.5rem; min-width:0; }
+.slot-time-input .icon-btn { flex:none; height:44px; width:30px; font-size:1.3rem; color:var(--ink3); }
+.slot-add-time { background:transparent; border:1px dashed #d2d4da; border-radius:var(--r-sm); cursor:pointer; min-height:85px; font-size:.8rem; }
+.schedule-save-row { display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-top:1rem; }
+.ap-daily-choices { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.65rem; }
+.ap-daily-choices .choice { gap:.8rem; padding:1rem; }
+.ap-daily-count { font-size:1.8rem; font-weight:650; line-height:1.2; }
+.ap-daily-count small { font-size:.75rem; font-weight:500; margin-left:.25rem; }
+.ap-daily-choices .choice-note { font-size:.625rem; }
+.slot-timeline { display:grid; gap:.8rem; margin-top:1.2rem; }
+.slot-timeline-row { display:grid; grid-template-columns:78px minmax(0,1fr); gap:1rem; }
+.slot-timeline-time { display:flex; align-items:center; gap:1rem; font-size:.8rem; font-weight:600; }
+.slot-timeline-dot { width:7px; height:7px; border-radius:50%; border:1px solid #bfc2ca; flex:none; background:white; }
+.slot-timeline-dot.is-filled { background:var(--chart); border-color:var(--chart); }
+.slot-timeline-row > .row { border:1px solid var(--line); border-radius:var(--r-sm); min-width:0; }
+.slot-empty { display:flex; justify-content:space-between; align-items:center; gap:1rem; border:1px dashed #d2d4da; background:#fff; border-radius:var(--r-sm); padding:1.1rem 1.25rem; }
+.slot-empty strong { font-size:.8125rem; font-weight:550; }
+.slot-empty .muted { margin-top:.2rem; font-size:.7rem; }
+.slot-empty.is-muted { background:transparent; border-color:var(--line); color:var(--ink3); }
+.slot-draft-body { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; line-height:1.6; }
+@media (max-width:680px) {
+  .queue-heading,.queue-calendar-toolbar { align-items:flex-start; flex-direction:column; }
+  .queue-heading-actions { flex-wrap:wrap; }
+  .queue-date-controls { width:100%; justify-content:space-between; }
+  .queue-date-controls .input { flex:1; }
+  .slot-timeline-row { grid-template-columns:48px minmax(0,1fr); gap:.65rem; }
+  .slot-timeline-time { gap:.35rem; font-size:.6875rem; }
+  .slot-timeline-dot { width:5px; height:5px; }
+  .slot-empty { flex-direction:column; align-items:flex-start; gap:.6rem; padding:.8rem; }
+  .slot-empty .btn { padding:.5rem .6rem; font-size:.7rem; }
+  .daily-schedule > .section-head { align-items:flex-start; flex-direction:column; }
+  .ap-daily-choices .choice { padding:.75rem; }
+}
+
+.schedule-time-summary { display:flex; gap:.5rem; flex-wrap:wrap; }
+.schedule-time-summary > span { border:1px solid var(--line); border-radius:6px; background:var(--paper2); padding:.4rem .75rem; font-size:.8rem; }
+.ap-daily-choices .choice:disabled { cursor:default; opacity:.6; }

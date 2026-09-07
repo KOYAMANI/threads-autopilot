@@ -113,11 +113,12 @@ type QueueRow = {
   status: string;
   scheduled_at: string | null;
   action_token_used_at: string | null;
+  updated_at: string;
 };
 
 async function loadQueue(db: Db, id: string): Promise<QueueRow | null> {
   return db.first<QueueRow>(
-    "SELECT id, account_id, status, scheduled_at, action_token_used_at FROM queue WHERE id=?",
+    "SELECT id, account_id, status, scheduled_at, action_token_used_at, updated_at FROM queue WHERE id=?",
     id,
   );
 }
@@ -238,47 +239,30 @@ export async function handleAction(request: Request, env: Env): Promise<Response
     }
   }
 
-  const nowIso = now.toISOString();
-  // 5・6。条件付き UPDATE の changes で同時押しも弾く
-  const claim = await db.run(
-    "UPDATE queue SET action_token_used_at=?, updated_at=? WHERE id=? AND action_token_used_at IS NULL",
-    nowIso,
-    nowIso,
-    row.id,
-  );
-  if (claim.changes === 0) return page(env, ALREADY_DONE, null); // 同時押し
+  if (action === "approve" && row.status !== "pending_approval") {
+    return page(env, { status: 200, title: "承認は済んでいます", message: "この下書きは予定の時刻に投稿されます。" }, null);
+  }
+  if (row.status !== "pending_approval" && row.status !== "scheduled") {
+    return page(env, { status: 409, title: "この下書きは動かせません", message: "状態が変わっています。" }, null);
+  }
 
-  // 7. 状態遷移
-  if (action === "approve") {
-    if (row.status !== "pending_approval") {
-      return page(
-        env,
-        {
-          status: 200,
-          title: "承認は済んでいます",
-          message: "この下書きは予定の時刻に投稿されます。",
-        },
-        null,
-      );
-    }
-    await db.run(
-      "UPDATE queue SET status='scheduled', approve_deadline=NULL, updated_at=? WHERE id=?",
-      nowIso,
-      row.id,
-    );
-  } else {
-    if (row.status !== "pending_approval" && row.status !== "scheduled") {
-      return page(
-        env,
-        { status: 200, title: "この下書きは動かせません", message: "状態が変わっています。" },
-        null,
-      );
-    }
-    await db.run(
-      "UPDATE queue SET status='cancelled', next_step_at=NULL, updated_at=? WHERE id=?",
-      nowIso,
-      row.id,
-    );
+  // トークン消費と状態変更を同じUPDATEで行う。公開処理のclaimに負けたら取消成功を返さない。
+  const nowIso = now.toISOString();
+  const claim = await db.run(
+    `UPDATE queue SET status=?, action_token_used_at=?, updated_at=?,
+       approve_deadline=CASE WHEN ? THEN NULL ELSE approve_deadline END,
+       next_step_at=CASE WHEN ? THEN NULL ELSE next_step_at END
+       WHERE id=? AND action_token_used_at IS NULL AND status=? AND updated_at=?
+         AND status IN ('pending_approval','scheduled')`,
+    action === "approve" ? "scheduled" : "cancelled", nowIso, nowIso,
+    action === "approve" ? 1 : 0, action === "cancel" ? 1 : 0,
+    row.id, row.status, row.updated_at,
+  );
+  if (claim.changes === 0) {
+    const fresh = await loadQueue(db, row.id);
+    return page(env, (fresh && terminalOutcome(fresh)) ?? {
+      status: 409, title: "状態が変わりました", message: "投稿処理または別の操作が始まったため、変更しませんでした。アプリで最新の状態を確認してください。",
+    }, null);
   }
 
   // 8. ap_log と audit_log

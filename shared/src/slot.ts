@@ -126,7 +126,7 @@ export function zonedHourToUtcMs(
 }
 
 /** tz での「今日」の 00:00 を UTC ms で返す。 */
-function startOfTzDay(ms: number, tz: string): number {
+export function startOfTzDay(ms: number, tz: string): number {
   const f = tzFields(ms, tz);
   return zonedHourToUtcMs(f.y, f.mo, f.d, 0, tz);
 }
@@ -243,4 +243,45 @@ export function suggestSlot(input: SuggestSlotInput): SlotSuggestion {
     return { at, reason: "実績がまだ足りないので既定の枠です", n: 0 };
   }
   return { at: pick.at, reason: "実績がまだ足りないので既定の枠です", n: 0 };
+}
+
+/** 毎日の投稿時刻。表示時刻はアカウントの timezone を使う。 */
+export const DEFAULT_POSTING_TIMES = ["09:00", "12:00", "18:00"];
+export const MAX_POSTING_TIMES = 10;
+
+export function normalizePostingTimes(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_POSTING_TIMES) return null;
+  if (value.some((v) => typeof v !== "string" || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(v))) return null;
+  const times = value as string[];
+  if (new Set(times).size !== times.length) return null;
+  return [...times].sort();
+}
+
+export function localDateKey(ms: number, tz: string): string {
+  const f = tzFields(ms, tz);
+  return `${f.y}-${String(f.mo).padStart(2, "0")}-${String(f.d).padStart(2, "0")}`;
+}
+
+/** DST の存在しない時刻は生成しない。二重になる時刻は決定的に一つだけ選ぶ。 */
+export function postingSlotsForDate(date: string, times: string[], tz: string): Array<{ at: string; time: string }> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return [];
+  const [y, mo, d] = date.split("-").map(Number) as [number, number, number];
+  if (new Date(Date.UTC(y, mo - 1, d)).toISOString().slice(0, 10) !== date) return [];
+  return times.flatMap((time) => {
+    const [h, mi] = time.split(":").map(Number) as [number, number];
+    const ms = zonedTimeToUtcMs(y, mo, d, h, mi, tz);
+    const seen = tzFields(ms, tz);
+    if (seen.y !== y || seen.mo !== mo || seen.d !== d || seen.h !== h || seen.mi !== mi) return [];
+    return [{ at: new Date(ms).toISOString(), time }];
+  }).sort((a, b) => a.at.localeCompare(b.at));
+}
+
+export function upcomingPostingSlots(nowMs: number, times: string[], tz: string, horizonDays = 7): Array<{ at: string; time: string }> {
+  const f = tzFields(nowMs, tz);
+  const out: Array<{ at: string; time: string }> = [];
+  for (let i = 0; i <= horizonDays; i++) {
+    const date = new Date(Date.UTC(f.y, f.mo - 1, f.d + i)).toISOString().slice(0, 10);
+    out.push(...postingSlotsForDate(date, times, tz).filter((s) => Date.parse(s.at) > nowMs));
+  }
+  return out;
 }

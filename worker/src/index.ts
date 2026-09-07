@@ -7,7 +7,7 @@
 import type { Env } from "./env";
 import { createApp } from "./app";
 import { createJobContext, createSchedulerContext, enqueueForCron, runJobs, dispatchJobs } from "./lib/jobs";
-import { redact } from "./lib/redact";
+import { createSchedulerHealthDb, recordSchedulerStart, recordSchedulerFinish } from "./lib/scheduler-health";
 import { enqueueSheetSyncs } from "./jobs/sheets";
 import { handleAction } from "./routes/action";
 
@@ -52,17 +52,32 @@ export default {
   },
 
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    if (env.MAINTENANCE_MODE === "1") return;
     ctx.waitUntil(
       (async () => {
+        const healthDb = createSchedulerHealthDb(env);
+        const runId = crypto.randomUUID();
         try {
-          const jobCtx = createSchedulerContext(env);
-          await enqueueForCron(jobCtx, event.cron);
-          await enqueueSheetSyncs(jobCtx);
-          if (env.JOB_QUEUE) await dispatchJobs(jobCtx);
-          else if (env.WORKERS_PLAN !== "free") await runJobs(jobCtx);
-        } catch (e) {
-          console.error(`[cron] ${event.cron} failed: ${redact(String(e))}`);
+          await recordSchedulerStart(healthDb, event.cron, runId, new Date(event.scheduledTime));
+          if (env.MAINTENANCE_MODE === "1") {
+            await recordSchedulerFinish(healthDb, event.cron, runId, "paused");
+            return;
+          }
+          // Staging's sole Cron proves trigger delivery only. Never enqueue,
+          // dispatch, notify, refresh tokens, or invoke external APIs here.
+          if (env.APP_ENV !== "staging") {
+            const jobCtx = createSchedulerContext(env);
+            await enqueueForCron(jobCtx, event.cron);
+            await enqueueSheetSyncs(jobCtx);
+            if (env.JOB_QUEUE) await dispatchJobs(jobCtx);
+            else if (env.WORKERS_PLAN !== "free") await runJobs(jobCtx);
+          }
+          await recordSchedulerFinish(healthDb, event.cron, runId, "success");
+        } catch {
+          try { await recordSchedulerFinish(healthDb, event.cron, runId, "error"); }
+          catch { /* The platform still records failure even if D1 is unavailable. */ }
+          // Surface failure to Cloudflare instead of reporting a successful Cron.
+          // Provider/DB exception bodies may contain data, so keep telemetry generic.
+          throw new Error("Scheduled task failed; inspect scheduler status and job outcomes");
         }
       })(),
     );

@@ -14,6 +14,10 @@ SESSION_SECRET=
 #   生成: openssl rand -hex 32
 ADMIN_SECRET=
 
+# PWハッシュの追加保護。環境ごとに独立生成し、DBやGitには保存しない。
+# 生成: openssl rand -base64 32
+PASSWORD_PEPPER=
+
 # メール送信（Resend）。未設定ならメールは送らず、開発用のコンソール出力にフォールバックする。
 RESEND_API_KEY=
 

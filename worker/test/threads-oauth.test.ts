@@ -33,7 +33,7 @@ describe('Threads OAuth',()=>{
   const body={state:s.state,code:'test-code'};const browser=s.cookie.slice(s.cookie.indexOf(';')+1);
   expect((await req('/complete','POST',other.cookie+';'+browser,body)).status).toBe(400);
   const session=await createSession(testDb(),u.userId,null);
-  expect((await req('/complete','POST',`sid=${session.id};${browser}`,body)).status).toBe(400);
+  expect((await req('/complete','POST',`sid=${session.token};${browser}`,body)).status).toBe(400);
   expect((await req('/complete','POST',u.cookie+'; __Secure-tap_threads_oauth=wrong-browser',body)).status).toBe(400);
   expect(fetcher).not.toHaveBeenCalled();
  });

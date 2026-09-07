@@ -15,7 +15,7 @@
  * 二重投稿の防止: Threads への publish が1回成功するたびに、**次に進む前に**
  * `result_ids_json` を保存する。途中で落ちても、再開時は保存済みの step から続く。
  */
-import { buildTags, validatePost, type PostTags } from "@tap/shared";
+import { buildTags, startOfTzDay, validatePost, type PostTags } from "@tap/shared";
 import { accountToken, loadAccount, type AccountRow } from "../lib/accounts";
 import { apLog, loadAutopilot } from "../lib/autopilot";
 import { sendEmail } from "../lib/email";
@@ -77,6 +77,7 @@ type QueuePatch = {
   containerId?: string | null;
   containerPolls?: number;
   resultIds?: string[];
+  rootPublishedAt?: string;
   error?: string | null;
   errorRaw?: string | null;
   attempts?: number;
@@ -100,6 +101,7 @@ async function patchQueue(
   if (patch.containerId !== undefined) put("container_id=?", patch.containerId);
   if (patch.containerPolls !== undefined) put("container_polls=?", patch.containerPolls);
   if (patch.resultIds !== undefined) put("result_ids_json=?", JSON.stringify(patch.resultIds));
+  if (patch.rootPublishedAt !== undefined) put("root_published_at=COALESCE(root_published_at,?)", patch.rootPublishedAt);
   if (patch.error !== undefined) put("error=?", patch.error);
   if (patch.errorRaw !== undefined) put("error_raw=?", patch.errorRaw);
   if (patch.attempts !== undefined) put("attempts=?", patch.attempts);
@@ -201,31 +203,11 @@ export type PreflightResult = { ok: true } | { ok: false; message: string };
 
 /** その日の tz 00:00 を ISO で返す。 */
 function startOfDayIso(nowMs: number, tz: string): string {
-  const f = new Intl.DateTimeFormat("en-CA", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(nowMs));
-  // tz の当日の始まりを UTC に直す。ここは1日の件数を数えるための下限なので、
-  // ±1時間ずれても件数の意味は変わらない（UTC 換算の近似で足りる）
-  const [y, m, d] = f.split("-").map(Number);
-  const guess = Date.UTC(y!, (m ?? 1) - 1, d ?? 1, 0, 0, 0);
-  const seen = new Intl.DateTimeFormat("en-CA", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    hour12: false,
-  }).formatToParts(new Date(guess));
-  let hour = 0;
-  for (const p of seen) if (p.type === "hour") hour = Number(p.value) % 24;
-  return new Date(guess - hour * 3_600_000).toISOString();
+  return new Date(startOfTzDay(nowMs, tz)).toISOString();
 }
 
 /**
- * 1日の投稿上限・投稿間隔・重複（SPEC §8.3）。step 0 でだけ通す。
+ * 1日の投稿上限・投稿間隔・重複（SPEC §8.3）。各root公開の直前に通す。
  * `validatePost()` は呼び出し側（`runStep`）で別に見る。
  */
 export async function preflight(
@@ -238,11 +220,14 @@ export async function preflight(
 
   // 1日の投稿上限
   const dayStart = startOfDayIso(nowMs, account.timezone);
+  // Midnight + 36h lands on the next local date even across a DST change.
+  const dayEnd = startOfDayIso(Date.parse(dayStart) + 36 * 3600_000, account.timezone);
   const today = await ctx.db.first<{ n: number }>(
-    "SELECT COUNT(*) AS n FROM queue WHERE account_id=? AND id<>? AND status IN ('done','publishing') AND updated_at>=?",
+    "SELECT COUNT(*) AS n FROM queue WHERE account_id=? AND id<>? AND root_published_at>=? AND root_published_at<?",
     account.id,
     row.id,
     dayStart,
+    dayEnd,
   );
   if ((today?.n ?? 0) >= settings.dailyPostLimit) {
     return {
@@ -251,16 +236,25 @@ export async function preflight(
     };
   }
 
-  // 投稿間隔。`posts` は done になった時点で入るので、**まだコメントを出している最中の行**
-  // （`publishing` かつ root が公開済み）も見る。見ないと、ツリーの1本目が出た直後に
-  // 別の投稿がすり抜ける（`updated_at` は最後に公開できた時刻なので root 以降になる）
+  if (row.source === "autopilot") {
+    const ap = await loadAutopilot(ctx.db, account.id);
+    const autoToday = await ctx.db.first<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM queue WHERE account_id=? AND id<>? AND source='autopilot' AND root_published_at>=? AND root_published_at<?",
+      account.id, row.id, dayStart, dayEnd,
+    );
+    const limit = Math.min(3, Math.max(1, ap.daily_limit));
+    if ((autoToday?.n ?? 0) >= limit) return { ok: false, message: `オートパイロットの1日上限（${limit}件）に達しています` };
+  }
+
+  // Root publication remains counted after reply failure, cancellation, or retry.
+  // updated_at is intentionally ignored: editing a row must not move its publication day.
   if (settings.minGapMin > 0) {
     const last = await ctx.db.first<{ at: string | null }>(
       "SELECT MAX(posted_at) AS at FROM posts WHERE account_id=? AND is_reply=0 AND source<>'external'",
       account.id,
     );
     const inflight = await ctx.db.first<{ at: string | null }>(
-      "SELECT MAX(updated_at) AS at FROM queue WHERE account_id=? AND id<>? AND status='publishing' AND result_ids_json<>'[]'",
+      "SELECT MAX(root_published_at) AS at FROM queue WHERE account_id=? AND id<>?",
       account.id,
       row.id,
     );
@@ -339,7 +333,7 @@ export async function finishQueue(
       i === 0 && row.image_url ? "IMAGE" : "TEXT_POST",
       i === 0 ? row.image_url : null,
       null,
-      nowIso,
+      i === 0 ? (row.root_published_at ?? nowIso) : nowIso,
       i === 0 ? tags : "{}",
       source,
       row.id,
@@ -385,6 +379,7 @@ async function runStep(
   row: QueueRow,
   token: string,
   call: CallOptions,
+  clock: () => Date,
 ): Promise<StepOutcome> {
   const nowMs = ctx.now.getTime();
   const comments = parseJsonArray(row.comments_json);
@@ -395,26 +390,29 @@ async function runStep(
   const twoStep = twoStepMode(ctx.env);
   const later = (sec: number) => new Date(nowMs + sec * 1000).toISOString();
 
-  /* step 0: 本文 */
-  if (row.step === 0) {
-    // 既に Threads へ出ている投稿がある行で step 0 に戻っていたら、root を作り直さない
-    // （SPEC §8.3 の二重投稿防止）。step を戻す経路（PATCH 等）が増えても、ここで最後に止める
-    if (resultIds.length > 0) {
-      // resultIds[0] は root。以降は投稿済みのコメント
-      const doneComments = resultIds.length - 1;
-      if (doneComments >= comments.length) {
-        await finishQueue(ctx, account, row, resultIds);
-        return "continue";
-      }
-      await patchQueue(ctx.db, ctx, row.id, {
-        step: 2 + doneComments * (twoStep ? 3 : 1),
-        containerId: null,
-        containerPolls: 0,
-        nextStepAt: ctx.now.toISOString(),
-      });
+  // Published root IDs are authoritative even if a recovery accidentally resets
+  // either root step. Never issue a second root while finishing the old thread.
+  if (row.step <= 1 && resultIds.length > 0) {
+    const doneComments = resultIds.length - 1;
+    if (doneComments >= comments.length) {
+      await finishQueue(ctx, account, row, resultIds);
       return "continue";
     }
+    await patchQueue(ctx.db, ctx, row.id, {
+      step: 2 + doneComments * (twoStep ? 3 : 1),
+      containerId: null,
+      containerPolls: 0,
+      nextStepAt: ctx.now.toISOString(),
+    });
+    return "continue";
+  }
+  if (row.root_published_at && resultIds.length === 0) {
+    await failQueue(ctx, row, "公開済みの投稿IDを確認できないため、再投稿を停止しました", null);
+    return "continue";
+  }
 
+  /* step 0: 本文 */
+  if (row.step === 0) {
     // 手で書いた投稿（`manual`）は本文にリンクを置いてよい。見るのは空・500文字・
     // リンク5本・NGワードだけ。オートパイロット経由（`autopilot`）は設定の
     // `link_placement` と `ng_words` を効かせる（SPEC §9.6）
@@ -429,7 +427,7 @@ async function runStep(
       return "continue";
     }
 
-    const pre = await preflight(ctx, account, row);
+    const pre = await preflight({ ...ctx, now: clock() }, account, row);
     if (!pre.ok) {
       await failQueue(ctx, row, pre.message, null);
       return "continue";
@@ -460,16 +458,18 @@ async function runStep(
     );
     // 成功した result_ids は「次へ進む前に」保存する（二重投稿防止。SPEC §8.3）
     const ids = [created.id];
+    const rootPublishedAt = clock().toISOString();
     if (comments.length > 0) {
       await patchQueue(ctx.db, ctx, row.id, {
         resultIds: ids,
+        rootPublishedAt,
         step: 2,
         nextStepAt: new Date(nowMs + delayMs).toISOString(),
       });
       return "stop";
     }
-    await patchQueue(ctx.db, ctx, row.id, { resultIds: ids });
-    await finishQueue(ctx, account, { ...row, result_ids_json: JSON.stringify(ids) }, ids);
+    await patchQueue(ctx.db, ctx, row.id, { resultIds: ids, rootPublishedAt });
+    await finishQueue(ctx, account, { ...row, result_ids_json: JSON.stringify(ids), root_published_at: rootPublishedAt }, ids);
     return "continue";
   }
 
@@ -481,11 +481,20 @@ async function runStep(
     }
     const status = await getContainerStatus(token, row.container_id, call);
     if (status.status === "FINISHED") {
+      // Containers can resume hours/days after creation; recheck the current
+      // publication day and gap immediately before the irreversible root publish.
+      const pre = await preflight({ ...ctx, now: clock() }, account, row);
+      if (!pre.ok) {
+        await failQueue(ctx, row, pre.message, null);
+        return "continue";
+      }
       const published = await publishContainer(token, row.container_id, call);
       const ids = [...resultIds, published.id];
+      const rootPublishedAt = clock().toISOString();
       if (comments.length > 0) {
         await patchQueue(ctx.db, ctx, row.id, {
           resultIds: ids,
+          rootPublishedAt,
           containerId: null,
           containerPolls: 0,
           step: 2,
@@ -495,10 +504,11 @@ async function runStep(
       }
       await patchQueue(ctx.db, ctx, row.id, {
         resultIds: ids,
+        rootPublishedAt,
         containerId: null,
         containerPolls: 0,
       });
-      await finishQueue(ctx, account, { ...row, result_ids_json: JSON.stringify(ids) }, ids);
+      await finishQueue(ctx, account, { ...row, result_ids_json: JSON.stringify(ids), root_published_at: rootPublishedAt }, ids);
       return "continue";
     }
     if (status.status === "ERROR" || status.status === "EXPIRED") {
@@ -679,6 +689,9 @@ async function licenseRevoked(ctx: JobContext, account: AccountRow): Promise<boo
 }
 
 export async function publishJob(ctx: JobContext, job: RunningJob): Promise<void> {
+  const startedAt = Date.now();
+  // Follow elapsed API/I/O time while preserving the injected logical clock in tests.
+  const clock = () => new Date(ctx.now.getTime() + Math.max(0, Date.now() - startedAt));
   if (!job.accountId) return;
   const account = await loadAccount(ctx.db, job.accountId);
   if (!account) return;
@@ -707,6 +720,8 @@ export async function publishJob(ctx: JobContext, job: RunningJob): Promise<void
     const row = await ctx.db.first<QueueRow>(
       `SELECT ${QUEUE_SELECT} FROM queue
          WHERE account_id=? AND status IN ('scheduled','publishing')
+           AND (status='publishing' OR source<>'autopilot' OR EXISTS (
+             SELECT 1 FROM autopilot ap WHERE ap.account_id=queue.account_id AND ap.enabled=1))
            AND scheduled_at<=? AND (next_step_at IS NULL OR next_step_at<=?)
          ORDER BY scheduled_at ASC LIMIT 1`,
       account.id,
@@ -717,9 +732,13 @@ export async function publishJob(ctx: JobContext, job: RunningJob): Promise<void
 
     if (row.status === "scheduled") {
       const claim = await ctx.db.run(
-        "UPDATE queue SET status='publishing', updated_at=? WHERE id=? AND status='scheduled'",
-        nowIso,
-        row.id,
+        `UPDATE queue SET status='publishing', updated_at=? WHERE id=? AND status='scheduled'
+           AND updated_at=? AND scheduled_at=? AND body=? AND comments_json=? AND image_url IS ?
+           AND reply_control=? AND next_step_at IS ? AND step=?
+           AND (source<>'autopilot' OR EXISTS (
+             SELECT 1 FROM autopilot ap WHERE ap.account_id=queue.account_id AND ap.enabled=1))`,
+        nowIso, row.id, row.updated_at, row.scheduled_at, row.body, row.comments_json, row.image_url,
+        row.reply_control, row.next_step_at, row.step,
       );
       if (claim.changes === 0) continue;
       row.status = "publishing";
@@ -727,7 +746,7 @@ export async function publishJob(ctx: JobContext, job: RunningJob): Promise<void
 
     let outcome: StepOutcome;
     try {
-      outcome = await runStep(ctx, account, row, token, call);
+      outcome = await runStep(ctx, account, row, token, call, clock);
     } catch (e) {
       if (e instanceof ThreadsApiError) {
         const err = e.toThreadsError();

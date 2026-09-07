@@ -375,7 +375,8 @@ describe("publish（SPEC §8.3）", () => {
       accountId,
     );
     // 今日すでに1件 done がある
-    await insertQueue(accountId, "今日すでに出した投稿です。", { status: "done" });
+    const published = await insertQueue(accountId, "今日すでに出した投稿です。", { status: "done", resultIds: ["already-published"] });
+    await testDb().run("UPDATE queue SET root_published_at=? WHERE id=?", NOW.toISOString(), published);
     const qid = await insertQueue(accountId, "上限に引っかかる2本目です。");
 
     await drain(e, accountId, qid);

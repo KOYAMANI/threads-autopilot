@@ -93,7 +93,7 @@ export function userRoutes() {
     const good = await verifyPassword(parsed.data.password, {
       hash: user.pass_hash,
       salt: user.pass_salt,
-    });
+    }, c.env.PASSWORD_PEPPER);
     if (!good) return fail("LOGIN_FAILED", "パスワードが違います", 401);
 
     const accounts = await db.all<{ id: string }>(

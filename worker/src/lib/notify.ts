@@ -115,7 +115,7 @@ export async function pushToUser(
   if (!settings || settings.push_enabled !== 1) return { sent: 0, removed: 0 };
 
   const rows = await db.all<{ id: string; json: string; fail_count: number }>(
-    "SELECT id, json, fail_count FROM push_subscriptions WHERE user_id=? AND fail_count<? AND session_id IN (SELECT id FROM sessions WHERE expires_at>? AND user_id=?) LIMIT 10",
+    "SELECT id, json, fail_count FROM push_subscriptions WHERE user_id=? AND fail_count<? AND session_id IN (SELECT id FROM sessions WHERE expires_at>? AND user_id=? AND length(id)=64) LIMIT 10",
     userId,
     PUSH_MAX_FAILURES,
     new Date().toISOString(),

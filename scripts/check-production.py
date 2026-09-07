@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parent.parent
 def validate(config):
     errors = []
     variables = config.get("vars", {})
+    if variables.get("APP_ENV") != "production":
+        errors.append("APP_ENV: must be production")
     origin = urlparse(variables.get("APP_ORIGIN", ""))
     hostname = origin.hostname or ""
     if origin.scheme != "https" or not hostname or hostname in ("localhost", "127.0.0.1", "::1") or hostname.endswith(".example.com") or "example" in hostname.split(".") or origin.path not in ("", "/") or origin.query or origin.fragment or origin.username:
@@ -55,7 +57,7 @@ def main():
         try:
             if result.returncode: raise ValueError()
             names = {s["name"] for s in json.loads(result.stdout)}
-            required = {"ENC_KEY", "SESSION_SECRET", "ADMIN_SECRET", "RESEND_API_KEY"}
+            required = {"ENC_KEY", "SESSION_SECRET", "ADMIN_SECRET", "RESEND_API_KEY", "PASSWORD_PEPPER"}
             if config.get("vars", {}).get("THREADS_APP_ID"): required.add("THREADS_APP_SECRET")
             if config.get("vars", {}).get("GOOGLE_CLIENT_ID"): required.add("GOOGLE_CLIENT_SECRET")
             if config.get("vars", {}).get("VAPID_PUBLIC_KEY"): required.add("VAPID_PRIVATE_KEY")

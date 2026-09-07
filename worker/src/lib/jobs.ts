@@ -95,7 +95,7 @@ function systemDb(env: Env, scheduler = false): Db {
   return createDb(
     env.DB,
     createBudget({
-      dbQueries: env.WORKERS_PLAN === "free" ? (scheduler ? 40 : 16) : JOB_BOOKKEEPING_QUERIES,
+      dbQueries: env.WORKERS_PLAN === "free" ? (scheduler ? 37 : 16) : JOB_BOOKKEEPING_QUERIES,
       subrequests: 0,
       timeMs: Number.MAX_SAFE_INTEGER,
     }),
@@ -108,7 +108,7 @@ export function createJobContext(env: Env, now = new Date()): JobContext {
   return { env, db: createDb(env.DB, budget), sys: systemDb(env), budget, now };
 }
 
-/** Cron only enqueues/dispatches. Its total free DB allowance is 8 + 40 = 48. */
+/** Cron only enqueues/dispatches. Its total free DB allowance is 8 work + 37 bookkeeping + 3 cron telemetry = 48. */
 export function createSchedulerContext(env: Env, now = new Date()): JobContext {
   if (env.WORKERS_PLAN !== "free") return createJobContext(env, now);
   const budget = createBudget({ dbQueries: 8, subrequests: 20, timeMs: 20000 });

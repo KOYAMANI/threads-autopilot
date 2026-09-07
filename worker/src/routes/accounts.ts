@@ -433,7 +433,7 @@ export async function connectThreadsAccount(c: Context<AppEnv>, token: string, a
         nowIso,
       );
       await db.run(
-        `INSERT INTO autopilot (account_id, updated_at) VALUES (?,?)
+        `INSERT INTO autopilot (account_id, updated_at, daily_limit, per_week) VALUES (?,?,3,21)
            ON CONFLICT(account_id) DO NOTHING`,
         accountId,
         nowIso,

@@ -4,12 +4,14 @@
  * - signToken / verifyToken: pwreset と qaction の共用（HMAC-SHA256）
  */
 import type { Db } from "./db";
-import { base64UrlToBytes, bytesToBase64Url, hmacSha256, timingSafeEqual } from "./crypto";
+import { base64UrlToBytes, bytesToBase64Url, hmacSha256, sha256Hex, timingSafeEqual, type PasswordHash } from "./crypto";
 
 export const SESSION_COOKIE = "sid";
 export const SESSION_DAYS = 30;
 
+/** id is a SHA-256 digest. It is safe for internal FK references, never a bearer token. */
 export type SessionRow = { id: string; user_id: string; expires_at: string; created_at: string };
+export type CreatedSession = SessionRow & { token: string };
 
 /* ── Cookie ─────────────────────────────────────────── */
 
@@ -19,7 +21,9 @@ export function readCookie(req: Request, name: string): string | null {
   for (const part of header.split(";")) {
     const idx = part.indexOf("=");
     if (idx < 0) continue;
-    if (part.slice(0, idx).trim() === name) return decodeURIComponent(part.slice(idx + 1).trim());
+    if (part.slice(0, idx).trim() === name) {
+      try { return decodeURIComponent(part.slice(idx + 1).trim()); } catch { return null; }
+    }
   }
   return null;
 }
@@ -34,27 +38,41 @@ export function clearSessionCookie(): string {
 
 /* ── sessions テーブル ──────────────────────────────── */
 
+export function createSession(db: Db, userId: string, ua: string | null, now?: Date): Promise<CreatedSession>;
+export function createSession(db: Db, userId: string, ua: string | null, now: Date, verifiedPassword: PasswordHash): Promise<CreatedSession | null>;
 export async function createSession(
   db: Db,
   userId: string,
   ua: string | null,
   now = new Date(),
-): Promise<SessionRow> {
-  const id = crypto.randomUUID();
+  verifiedPassword?: PasswordHash,
+): Promise<CreatedSession | null> {
+  const token = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)));
+  const id = await sha256Hex(token);
   const createdAt = now.toISOString();
   const expiresAt = new Date(now.getTime() + SESSION_DAYS * 86400_000).toISOString();
-  await db.run(
-    "INSERT INTO sessions (id, user_id, expires_at, created_at, ua) VALUES (?,?,?,?,?)",
-    id,
-    userId,
-    expiresAt,
-    createdAt,
-    ua,
-  );
-  return { id, user_id: userId, expires_at: expiresAt, created_at: createdAt };
+  if (verifiedPassword) {
+    // A reset/change between password verification and this insert must not create
+    // an authenticated session with the old password. The predicate is atomic in D1.
+    const inserted = await db.run(
+      "INSERT INTO sessions (id,user_id,expires_at,created_at,ua) SELECT ?,?,?,?,? FROM users WHERE id=? AND pass_hash=? AND pass_salt=?",
+      id, userId, expiresAt, createdAt, ua, userId, verifiedPassword.hash, verifiedPassword.salt,
+    );
+    if (!inserted.changes) return null;
+  } else {
+    await db.run(
+      "INSERT INTO sessions (id, user_id, expires_at, created_at, ua) VALUES (?,?,?,?,?)",
+      id, userId, expiresAt, createdAt, ua,
+    );
+  }
+  return { id, token, user_id: userId, expires_at: expiresAt, created_at: createdAt };
 }
 
-export async function getSession(db: Db, id: string, now = new Date()): Promise<SessionRow | null> {
+/** Accept only the new opaque Cookie token; never fall back to legacy raw DB IDs.
+ * Existing rows/device records remain for normal expiry cleanup, without bulk deletion. */
+export async function getSession(db: Db, token: string, now = new Date()): Promise<SessionRow | null> {
+  if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
+  const id = await sha256Hex(token);
   return db.first<SessionRow>(
     "SELECT id, user_id, expires_at, created_at FROM sessions WHERE id=? AND expires_at>?",
     id,

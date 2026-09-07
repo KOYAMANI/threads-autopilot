@@ -19,4 +19,5 @@ npx --no-install wrangler d1 export threads-autopilot "$1" --config "$config" --
 test -s "$backup_dir/database.sql"
 chmod 600 "$backup_dir/database.sql"
 shasum -a 256 "$backup_dir/database.sql" > "$backup_dir/SHA256SUMS"
+python3 scripts/verify-backup.py "$backup_dir/database.sql"
 echo "Backup: $backup_dir (contains personal data; keep private and encrypted at rest)"

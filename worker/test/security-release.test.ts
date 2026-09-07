@@ -115,7 +115,7 @@ it("logout removes only the current device push registration; AI deletion clears
     a.userId,
     await encrypt("{}", env.ENC_KEY),
     new Date().toISOString(),
-    a.cookie.slice(4),
+    await sha256Hex(a.cookie.slice(4)),
   );
   await db.run(
     "INSERT INTO push_subscriptions(id,user_id,json,created_at,session_id) VALUES (?,?,?,?,?)",

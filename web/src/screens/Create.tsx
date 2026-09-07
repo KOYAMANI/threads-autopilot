@@ -228,7 +228,9 @@ export default function Create() {
     create.mutate(
       pick.kind === "now"
         ? { status: "now", ...common }
-        : { status: "scheduled", scheduledAt: pick.at ?? undefined, ...common },
+        : pick.kind === "next_slot"
+          ? { status: "next_slot", ...common }
+          : { status: "scheduled", scheduledAt: pick.at ?? undefined, ...common },
       {
         onSuccess: () => {
           if (!mounted.current) return;

@@ -23,15 +23,10 @@ import { useLinks } from "../api/accounts";
 import { useToast } from "../components/Toast";
 import { useShell } from "../components/Shell";
 import { ApiError } from "../api/client";
+import PostingScheduleEditor from "../components/PostingScheduleEditor";
+import Sheet from "../components/Sheet";
+import { usePostingSchedule } from "../api/queue";
 import { fmtN, mdhm, pct } from "../lib/format";
-
-/** 頻度の選択肢（SPEC §4 の `per_week` のコメントと同じ4つ）。 */
-const FREQUENCIES = [
-  { value: 3, label: "週3本", note: "月・火・水に1本ずつ" },
-  { value: 5, label: "週5本", note: "平日に1本ずつ" },
-  { value: 7, label: "1日1本", note: "毎日1本" },
-  { value: 14, label: "1日2本", note: "毎日2本" },
-] as const;
 
 const APPROVAL_MODES = [
   {
@@ -52,8 +47,6 @@ const LINK_PLACEMENTS = [
   { value: "body" as const, label: "本文に置く", note: "本文にURLを入れます" },
   { value: "none" as const, label: "使わない", note: "リンクを入れません" },
 ];
-
-const SLOT_HOURS = [0, 3, 6, 9, 12, 15, 18, 21];
 
 export default function Autopilot() {
   const { account } = useShell();
@@ -87,15 +80,16 @@ export default function Autopilot() {
 
   return (
     <>
-      <div className="page-heading"><div><p className="eyebrow">YOUR PUBLISHING ROUTINE</p><h1>オートパイロット</h1><p className="muted">実績をもとに、投稿の型とスケジュールを整えます。</p></div></div>
+      <div className="page-heading"><div><p className="eyebrow">YOUR PUBLISHING ROUTINE</p><h1>オートパイロット</h1><p className="muted">毎日最大3本。参考情報から下書きを作り、投稿スロットに入れます。</p></div></div>
 
       <details className="card section autopilot-guide" open>
         <summary>オートパイロットの使い方</summary>
-        <ol><li>参考情報・投稿頻度・使うリンクを設定します。</li><li>オンにすると、設定した参考情報からAIが下書きと投稿予定を作ります。</li><li>「毎回承認する」なら、内容を確認して承認するまで投稿されません。</li><li>予約時刻に投稿し、投稿後の数字を次の型・時間帯選びに使います。</li></ol>
-        <p className="muted">最初は「毎回承認する」がおすすめです。「取消可」は何もしないと投稿され、「全部おまかせ」は確認なしで投稿されます。自動作成・予約投稿はサーバーの定期実行で動きます。</p>
+        <ol><li>毎日の投稿スロット・参考情報・使うリンクを設定します。</li><li>オンにすると、1日1〜3本を上限にAIが下書きを作り、空いている投稿スロットに入れます。</li><li>「毎回承認する」なら、内容を確認して承認するまで投稿されません。</li><li>予約時刻に投稿し、投稿後の数字を次の型選びに使います。</li></ol>
+        <p className="muted">最初は「毎回承認する」がおすすめです。「取消可」は何もしないと投稿され、「全部おまかせ」は確認なしで投稿されます。自動作成・予約投稿はアプリを閉じていてもサーバーの定期実行で動きます。参考情報不足や空き枠不足、エラーの際は上限まで作れないことがあります。</p>
       </details>
 
       {ap.isPending && <p className="muted section">読み込んでいます…</p>}
+      {ap.isError && <p className="msg msg-bad" role="alert">{ap.error instanceof ApiError ? ap.error.message : "設定を読み込めませんでした"}</p>}
 
       {settings && (
         <>
@@ -115,11 +109,12 @@ export default function Autopilot() {
           />
 
           <div className="autopilot-grid">
-          <FrequencyCard settings={settings} onChange={patch} />
-          <SlotCard settings={settings} onChange={patch} />
+          <FrequencyCard settings={settings} onChange={patch} pending={put.isPending} />
+          <ScheduleCard accountId={accountId} />
           <HookCard settings={settings} onChange={patch} />
           <SourceCard
             sources={sources.data ?? []}
+            dailyLimit={settings.dailyLimit}
             pending={sources.isPending}
             onToggle={(id, enabled) =>
               patchSource.mutate(
@@ -190,7 +185,7 @@ function PowerCard({
       </div>
       <p className="muted">
         {settings.enabled
-          ? "24時間先までの下書きを毎時つくり、承認方式にしたがって投稿します。"
+          ? "毎日、設定した本数まで下書きを作ります。承認方式にしたがって投稿します。"
           : "オンにすると、参考情報から下書きを作って予約します。"}
       </p>
 
@@ -205,6 +200,8 @@ function PowerCard({
           {pending ? "保存しています…" : settings.enabled ? "オフにする" : "オンにする"}
         </button>
       </div>
+
+      {settings.enabled && <p className="muted section">オフにすると、作成済みで送信を始めていない自動予約も停止します。手動予約はそのまま残ります。送信が始まった投稿は取り消せません。</p>}
 
       {!canEnable && !settings.enabled && blockerMessages.length > 0 && (
         <div className="msg msg-warn section" role="status">
@@ -230,88 +227,28 @@ function PowerCard({
 
 type Patcher = (body: Partial<AutopilotSettings>, ok?: string) => void;
 
-function FrequencyCard({
-  settings,
-  onChange,
-}: {
-  settings: AutopilotSettings;
-  onChange: Patcher;
-}) {
-  return (
-    <section className="card section">
-      <div className="section-head">
-        <h2>どれくらい出すか</h2>
-      </div>
-      <div className="choices" role="radiogroup" aria-label="頻度">
-        {FREQUENCIES.map((f) => (
-          <button
-            key={f.value}
-            type="button"
-            role="radio"
-            className="choice"
-            aria-checked={settings.perWeek === f.value}
-            onClick={() => onChange({ perWeek: f.value })}
-          >
-            <span className="choice-title">{f.label}</span>
-            <span className="choice-note">{f.note}</span>
-          </button>
-        ))}
-      </div>
-    </section>
-  );
+function FrequencyCard({ settings, onChange, pending }: { settings: AutopilotSettings; onChange: Patcher; pending: boolean }) {
+  return <section className="card section">
+    <div className="section-head"><h2>毎日、何本まで作るか</h2><span className="tag">毎日実行</span></div>
+    <div className="ap-daily-choices" role="radiogroup" aria-label="1日の自動作成本数">
+      {[1, 2, 3].map(n => <button key={n} type="button" role="radio" className="choice" aria-checked={settings.dailyLimit === n} disabled={pending} onClick={() => onChange({ dailyLimit: n }, `毎日${n}本まで自動作成します`)}><span className="ap-daily-count num">{n}<small>本</small></span><span className="choice-note">1日あたりの上限</span></button>)}
+    </div>
+    <p className="muted section">サーバーが順に1本ずつ作り、承認待ちも上限に含みます。材料が足りない日は本数が減ります。「毎回承認する」の投稿は、承認待ちのまま公開されません。</p>
+    <p className="muted section">手動の予約は投稿スロットを最大10個まで使えます。枠を10個に増やしても、自動作成は1日3本を超えません。</p>
+  </section>;
 }
 
-function SlotCard({ settings, onChange }: { settings: AutopilotSettings; onChange: Patcher }) {
-  const fixed = settings.slotMode === "fixed";
-  return (
-    <section className="card section">
-      <div className="section-head">
-        <h2>いつ出すか</h2>
-      </div>
-      <div className="choices" role="radiogroup" aria-label="時間帯の決め方">
-        <button
-          type="button"
-          role="radio"
-          className="choice"
-          aria-checked={!fixed}
-          onClick={() => onChange({ slotMode: "auto" })}
-        >
-          <span className="choice-title">自動</span>
-          <span className="choice-note">
-            実績のある枠から選びます（まだ足りなければ平日21時・土日12時）
-          </span>
-        </button>
-        <button
-          type="button"
-          role="radio"
-          className="choice"
-          aria-checked={fixed}
-          onClick={() => onChange({ slotMode: "fixed", fixedHour: settings.fixedHour ?? 21 })}
-        >
-          <span className="choice-title">時間を固定</span>
-          <span className="choice-note">毎回この時間に出します</span>
-        </button>
-      </div>
-
-      {fixed && (
-        <div className="chips section" role="radiogroup" aria-label="固定する時間">
-          {SLOT_HOURS.map((h) => (
-            <button
-              key={h}
-              type="button"
-              role="radio"
-              className="chip"
-              aria-checked={(settings.fixedHour ?? 21) === h}
-              aria-pressed={(settings.fixedHour ?? 21) === h}
-              onClick={() => onChange({ fixedHour: h })}
-            >
-              {h}時
-            </button>
-          ))}
-        </div>
-      )}
-    </section>
-  );
+function ScheduleCard({ accountId }: { accountId: string }) {
+  const schedule = usePostingSchedule(accountId);
+  const [open, setOpen] = useState(false);
+  return <section className="card section">
+    <div className="section-head"><h2>毎日の投稿スロット</h2><span className="muted">{schedule.data?.times.length ?? "—"} / 10 枠</span></div>
+    <p className="muted">手動の予約と同じスロットに入れます。時刻は {schedule.data?.timezone ?? "アカウントのタイムゾーン"} です。</p>
+    {schedule.isPending ? <p className="muted section">読み込んでいます…</p> : schedule.isError ? <p className="msg msg-bad" role="alert">投稿スロットを読み込めませんでした。</p> : schedule.data?.times.length ? <div className="schedule-time-summary section">{schedule.data.times.map(time => <span className="num" key={time}>{time}</span>)}</div> : <p className="msg msg-warn">投稿スロットを設定してください。空き枠がない間は自動作成を進めません。</p>}
+    <button type="button" className="btn btn-sub btn-fit section" onClick={() => setOpen(true)}>投稿スロットを編集</button>
+    <p className="muted section">予約済み・取り消した枠は、自動で埋め直しません。</p>
+    <Sheet open={open} onClose={() => setOpen(false)} title="毎日の投稿スロット"><PostingScheduleEditor key={accountId} accountId={accountId} /></Sheet>
+  </section>;
 }
 
 function HookCard({ settings, onChange }: { settings: AutopilotSettings; onChange: Patcher }) {
@@ -371,10 +308,12 @@ function HookCard({ settings, onChange }: { settings: AutopilotSettings; onChang
 
 function SourceCard({
   sources,
+  dailyLimit,
   pending,
   onToggle,
 }: {
   sources: SourceSummary[];
+  dailyLimit: number;
   pending: boolean;
   onToggle: (id: string, enabled: boolean) => void;
 }) {
@@ -405,7 +344,7 @@ function SourceCard({
         ))}
       </div>
       {sources.length > 0 && (
-        <p className="muted section">同じネタ源は7日以内に使い回しません。</p>
+        <p className="muted section">同じ参考情報は7日以内に使い回しません。毎日{dailyLimit}本を続けるには、7日分で{dailyLimit * 7}件の材料が目安です。素材不足などで3回続けて作成できないと、自動的に停止します。</p>
       )}
     </section>
   );
@@ -499,27 +438,8 @@ function LimitCard({ settings, onChange }: { settings: AutopilotSettings; onChan
   return (
     <section className="card section">
       <div className="section-head">
-        <h2>安全のための上限</h2>
+        <h2>投稿のルール</h2>
       </div>
-
-      <label className="field">
-        <span>1日に出す本数の上限</span>
-        <div className="chips" role="radiogroup" aria-label="1日の上限">
-          {[1, 2, 3].map((n) => (
-            <button
-              key={n}
-              type="button"
-              role="radio"
-              className="chip"
-              aria-checked={settings.dailyLimit === n}
-              aria-pressed={settings.dailyLimit === n}
-              onClick={() => onChange({ dailyLimit: n })}
-            >
-              {n}本
-            </button>
-          ))}
-        </div>
-      </label>
 
       <button
         type="button"
@@ -529,9 +449,9 @@ function LimitCard({ settings, onChange }: { settings: AutopilotSettings; onChan
         onClick={() => onChange({ quietHours: !settings.quietHours })}
       >
         <span className="choice-title">
-          深夜帯（0〜6時）に出さない{settings.quietHours ? "（オン）" : "（オフ）"}
+          深夜帯（0〜6時台）に出さない{settings.quietHours ? "（オン）" : "（オフ）"}
         </span>
-        <span className="choice-note">オンのあいだ、0時・3時・6時の枠は候補から外します</span>
+        <span className="choice-note">オンのあいだ、自動作成では0:00〜6:59の枠を使いません</span>
       </button>
 
       <label className="field section">

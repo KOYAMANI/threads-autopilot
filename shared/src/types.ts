@@ -269,7 +269,11 @@ export type QueueListResponse = { items: QueueItem[] };
 
 export type CreateQueueRequest = {
   /** `now` は「今すぐ投稿」（`scheduledAt = now` にして予約する） */
-  status: "draft" | "scheduled" | "now";
+  status: "draft" | "scheduled" | "now" | "next_slot";
+  /** 同じ操作の再送時に使うキー。アカウントごとに重複作成を防ぐ */
+  idempotencyKey?: string;
+  /** 指定した時刻が現在の投稿スロットであることを検証して予約する */
+  reserveSlot?: boolean;
   scheduledAt?: string;
   body: string;
   comments?: string[];
@@ -280,18 +284,28 @@ export type CreateQueueRequest = {
 };
 
 export type PatchQueueRequest = {
+  reserveSlot?: boolean;
   body?: string;
   comments?: string[];
   scheduledAt?: string | null;
   imageUrl?: string | null;
   replyControl?: ReplyControl;
-  status?: "draft" | "scheduled";
+  status?: "draft" | "scheduled" | "next_slot";
 };
 
 export type QueueItemResponse = { item: QueueItem };
 
 /** `GET /accounts/:id/queue/suggest-slot`（SPEC §7.4 / §9.3）。 */
 export type SuggestSlotResponse = { at: string; reason: string; n: number };
+
+export type PostingSchedule = { timezone: string; times: string[] };
+export type PutPostingScheduleRequest = { times: string[] };
+export type QueueSlotsResponse = {
+  date: string;
+  timezone: string;
+  slots: Array<{ at: string; time: string; item: QueueItem | null; skipped: boolean }>;
+  unslotted: QueueItem[];
+};
 
 /* ── 参考情報（SPEC §7.5 / §10.4） ───────────────────── */
 
@@ -416,7 +430,7 @@ export type ScoreWeightsSetting = "balanced" | "followers" | "clicks";
 export type AutopilotSettings = {
   accountId: string;
   enabled: boolean;
-  /** 週あたり本数（1日1本=7, 1日2本=14, 週3本=3, 週5本=5） */
+  /** 旧クライアント互換。毎日の上限 × 7 */
   perWeek: number;
   slotMode: "auto" | "fixed";
   fixedHour: number | null;

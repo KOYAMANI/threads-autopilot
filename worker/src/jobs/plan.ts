@@ -6,8 +6,8 @@
  * AI が呼ばれるのは本文の生成だけ（§10 冒頭）。
  *
  * 1. ライセンスが `active` か（`revoked` なら `enabled=0` にして終了。§5.4）
- * 2. 今後24時間で必要な本数（`per_week/7` の日割り − すでにある自動下書き）
- * 3. 枠（§9.3）→ 型（§9.4-3）→ ネタ源（`enabled_for_ap`・7日以内再使用なし）→ リンク
+ * 2. 毎日の上限（最大3本）と今後24時間の設定スロット・既存下書きから必要本数を決める
+ * 3. 空き枠 → 型（§9.4-3）→ ネタ源（`enabled_for_ap`・7日以内再使用なし）→ リンク
  * 4. 生成（§10.3 の AP プロンプト、n=1）。失敗は `ap_log` ＋ `consecutive_failures`、
  *    3連続で `enabled=0` ＋ 通知
  * 5. `queue` に挿入（`source='autopilot'`、承認方式ごとの status / `approve_deadline`）
@@ -16,10 +16,8 @@
 import {
   MIN_SAMPLES_LEARNING,
   buildTags,
-  mondayIndex,
   pickHook,
-  postsForDay,
-  suggestSlot,
+  localDateKey,
   validatePost,
   type SlotHistory,
 } from "@tap/shared";
@@ -36,9 +34,10 @@ import { decrypt } from "../lib/crypto";
 import type { Db } from "../lib/db";
 import { isBudgetExceeded } from "../lib/budget";
 import type { JobContext, RunningJob } from "../lib/jobs";
-import { findDuplicate, publishSettings } from "../lib/queue";
+import { findDuplicate } from "../lib/queue";
 import { sendEmail } from "../lib/email";
 import { notifyTargets } from "../lib/notify";
+import { availablePostingSlots, isSlotConflict } from "../lib/posting-schedule";
 
 /** 計画する先（SPEC §9.4-2「今後24時間」）。枠の候補は §9.3 が7日先まで出す。 */
 export const PLAN_HORIZON_MS = 24 * 3_600_000;
@@ -47,7 +46,7 @@ export const SOURCE_REUSE_DAYS = 7;
 /** 3回連続で失敗したら止める（SPEC §9.4-4 / §9.6）。 */
 export const MAX_CONSECUTIVE_FAILURES = 3;
 /** 1回の `ap_plan` で作る上限（暴走ガード）。必要本数がこれを超えても打ち切る。 */
-export const MAX_PLANNED_PER_RUN = 4;
+export const MAX_PLANNED_PER_RUN = 3;
 /** 生成が重複・検査に落ちたときの引き直し回数（暴走ガード）。 */
 export const MAX_GENERATE_ATTEMPTS = 2;
 
@@ -148,6 +147,8 @@ async function serverKey(ctx: JobContext, userId: string): Promise<ResolvedKey> 
 
 /* ── 1本ぶんの計画 ──────────────────────────────────── */
 
+class AutopilotChanged extends Error {}
+
 export type PlannedItem = {
   queueId: string;
   at: string;
@@ -160,30 +161,10 @@ async function planOne(
   account: AccountRow,
   ap: AutopilotRow,
   key: ResolvedKey,
+  slot: { at: string },
 ): Promise<PlannedItem> {
   const db = ctx.db;
-  const settings = publishSettings(account);
   const recent = await recentAutoTags(db, account.id, 3);
-
-  // 枠（SPEC §9.3）
-  const taken = await db.all<{ scheduled_at: string }>(
-    `SELECT scheduled_at FROM queue
-       WHERE account_id=? AND status IN ('scheduled','pending_approval','publishing')
-         AND scheduled_at IS NOT NULL`,
-    account.id,
-  );
-  const slot = suggestSlot({
-    nowMs: ctx.now.getTime(),
-    tz: account.timezone,
-    quietHours: ap.quiet_hours === 1,
-    slotMode: ap.slot_mode as "auto" | "fixed",
-    fixedHour: ap.fixed_hour,
-    taken: taken.map((t) => t.scheduled_at),
-    dailyLimit: ap.daily_limit,
-    minGapMin: settings.minGapMin,
-    history: await learningFor(db, account.id, "slot"),
-    recentValues: recent.map((r) => r.slot).filter((v): v is string => v !== null),
-  });
 
   // 型（SPEC §9.4-3）
   const hook = pickHook({
@@ -220,7 +201,7 @@ async function planOne(
   let body = "";
   let comments: string[] = [];
   let lastIssue = "";
-  for (let attempt = 0; attempt < MAX_GENERATE_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < (ctx.env.WORKERS_PLAN === "free" ? 1 : MAX_GENERATE_ATTEMPTS); attempt++) {
     const raw = await generateRaw(
       ctx.env,
       {
@@ -292,12 +273,13 @@ async function planOne(
 
   const id = crypto.randomUUID();
   const nowIso = ctx.now.toISOString();
-  await db.run(
+  const inserted = await db.run(
     `INSERT INTO queue (id, account_id, status, scheduled_at, body, comments_json, image_url, reply_control,
         source, approval_mode, approve_deadline, notified_at, action_token_used_at, step, next_step_at,
         container_id, container_polls, result_ids_json, error, error_raw, attempts, tags_json,
-        origin_post_id, source_ids_json, created_at, updated_at)
-      VALUES (?,?,?,?,?,?,NULL,'everyone','autopilot',?,?,NULL,NULL,0,NULL,NULL,0,'[]',NULL,NULL,0,?,?,?,?,?)`,
+        origin_post_id, source_ids_json, created_at, updated_at, slot_managed, slot_day)
+      SELECT ?,?,?,?,?,?,NULL,'everyone','autopilot',?,?,NULL,NULL,0,NULL,NULL,0,'[]',NULL,NULL,0,?,?,?,?,?,1,?
+        WHERE EXISTS (SELECT 1 FROM autopilot WHERE account_id=? AND enabled=1 AND approval_mode=? AND daily_limit=? AND updated_at=?)`,
     id,
     account.id,
     status,
@@ -311,7 +293,10 @@ async function planOne(
     JSON.stringify([source.id]),
     nowIso,
     nowIso,
+    localDateKey(Date.parse(slot.at), account.timezone),
+    account.id, ap.approval_mode, ap.daily_limit, ap.updated_at,
   );
+  if (inserted.changes === 0) throw new AutopilotChanged("自動投稿の設定が変わったため、作成した案を予約しませんでした");
 
   await db.run(
     "UPDATE sources SET last_used_at=?, use_count=use_count+1 WHERE id=?",
@@ -327,33 +312,22 @@ async function planOne(
 
 /* ── 何本足りないか（SPEC §9.4-2） ───────────────────── */
 
-/**
- * 今後24時間で作るべき本数。`per_week/7` の日割りから、**まだ出ていない自動下書き**
- * （`source='autopilot'` の `pending_approval|scheduled`）を差し引く（SPEC §9.4-2）。
- *
- * 差し引くのは「24時間以内のぶん」ではなく**未消化の全部**。枠が埋まっていて先の日に
- * 置かれた下書きを数え落とすと、毎時それを無視してもう1本作り、どんどん先へ積み上がる
- * （ブラウザ確認で踏んだ）。`daily_limit` は枠の側で効くので、在庫で止めるのが正しい。
- */
-export async function neededCount(
-  db: Db,
-  account: AccountRow,
-  ap: AutopilotRow,
-  now: Date,
-): Promise<number> {
-  const dow = mondayIndex(
-    new Date(
-      new Date(now).toLocaleString("en-US", { timeZone: account.timezone }),
-    ).getDay(),
+/** 今後24時間の設定枠だけを補充する。各ローカル日の日次上限に承認待ち・取消済みも含む。 */
+export async function neededCount(db: Db, account: AccountRow, ap: AutopilotRow, now: Date): Promise<number> {
+  const slots = await availablePostingSlots(db, account, now, {
+    autopilotLimit: Math.min(3, ap.daily_limit), quietHours: ap.quiet_hours === 1,
+    untilMs: now.getTime() + PLAN_HORIZON_MS,
+  });
+  const stock = await outstandingCount(db, account.id);
+  return Math.max(0, Math.min(MAX_PLANNED_PER_RUN, Math.min(3, ap.daily_limit) - stock, slots.length));
+}
+
+async function outstandingCount(db: Db, accountId: string): Promise<number> {
+  const row = await db.first<{ n: number }>(
+    "SELECT COUNT(*) AS n FROM queue WHERE account_id=? AND source='autopilot' AND status IN ('pending_approval','scheduled','publishing')",
+    accountId,
   );
-  const want = postsForDay(ap.per_week, dow);
-  const have = await db.first<{ n: number }>(
-    `SELECT COUNT(*) AS n FROM queue
-       WHERE account_id=? AND source='autopilot' AND status IN ('pending_approval','scheduled')
-         AND scheduled_at IS NOT NULL`,
-    account.id,
-  );
-  return Math.max(0, Math.min(MAX_PLANNED_PER_RUN, want - (have?.n ?? 0)));
+  return row?.n ?? 0;
 }
 
 /* ── 失敗の記録と自動停止（SPEC §9.4-4 / §9.6） ──────── */
@@ -430,7 +404,16 @@ export async function planAccount(ctx: JobContext, accountId: string): Promise<P
     return { planned: [], skipped: "ライセンスが無効です" };
   }
 
-  const need = await neededCount(ctx.db, account, ap, ctx.now);
+  const slots = await availablePostingSlots(ctx.db, account, ctx.now, {
+    autopilotLimit: Math.min(3, ap.daily_limit), quietHours: ap.quiet_hours === 1,
+    // 取消猶予を確保できる枠だけに置く。期限を過ぎた直後に自動公開しない。
+    untilMs: ctx.now.getTime() + PLAN_HORIZON_MS,
+  });
+  const eligible = slots.filter((s) => ap.approval_mode !== "cancel" ||
+    Date.parse(s.at) - ap.approval_window_h * 3_600_000 > ctx.now.getTime());
+  // 承認待ちを放置しても毎日際限なく蓄積しない。投稿が消化されるたびに次の枠を補充する。
+  const stock = await outstandingCount(ctx.db, account.id);
+  const need = Math.max(0, Math.min(MAX_PLANNED_PER_RUN, Math.min(3, ap.daily_limit) - stock, eligible.length));
   if (need === 0) return { planned: [], skipped: null };
 
   let key: ResolvedKey;
@@ -444,7 +427,13 @@ export async function planAccount(ctx: JobContext, accountId: string): Promise<P
   const planned: PlannedItem[] = [];
   for (let i = 0; i < (ctx.env.WORKERS_PLAN === "free" ? Math.min(need, 1) : need); i++) {
     try {
-      const item = await planOne(ctx, account, ap, key);
+      // 前の1本で日次上限・投稿間隔が変わるため、2本目以降は空き状況を再評価する。
+      const slot = i === 0 ? eligible[0] : (await availablePostingSlots(ctx.db, account, ctx.now, {
+        autopilotLimit: Math.min(3, ap.daily_limit), quietHours: ap.quiet_hours === 1,
+        untilMs: ctx.now.getTime() + PLAN_HORIZON_MS,
+      })).find((s) => ap.approval_mode !== "cancel" || Date.parse(s.at) - ap.approval_window_h * 3_600_000 > ctx.now.getTime());
+      if (!slot) break;
+      const item = await planOne(ctx, account, ap, key, slot);
       planned.push(item);
       await apLog(
         ctx.db,
@@ -456,6 +445,8 @@ export async function planAccount(ctx: JobContext, accountId: string): Promise<P
       );
     } catch (e) {
       if (isBudgetExceeded(e)) throw e; // 予算切れは失敗ではない。次回続きから
+      if (e instanceof AutopilotChanged) return { planned, skipped: e.message };
+      if (isSlotConflict(e)) return { planned, skipped: "投稿枠が別の操作で埋まりました。次回の定期処理で確認します" };
       await recordFailure(ctx, account, e instanceof Error ? e.message : String(e));
       return { planned, skipped: "生成に失敗しました" };
     }

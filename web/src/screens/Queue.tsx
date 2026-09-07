@@ -15,10 +15,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
-import type { QueueItem } from "@tap/shared";
+import type { QueueItem, QueueSlotsResponse } from "@tap/shared";
 import {
   QUEUE_TABS,
-  useCreateQueue,
+  useQueueSlots,
   useDeleteQueue,
   usePatchQueue,
   useQueue,
@@ -31,6 +31,7 @@ import { useShell } from "../components/Shell";
 import PostFields, { draftIssue, trimComments, type PostDraft } from "../components/PostFields";
 import ScheduleSheet, { type SchedulePick } from "../components/ScheduleSheet";
 import Sheet from "../components/Sheet";
+import PostingScheduleEditor from "../components/PostingScheduleEditor";
 import { DotsIcon, PlusIcon } from "../components/Icons";
 import { useToast } from "../components/Toast";
 import { CROSSFADE, SPRING, useReducedMotion } from "../lib/motion";
@@ -108,13 +109,17 @@ export default function Queue() {
   const canPublish = account?.canPublish === true;
 
   const [tab, setTab] = useState<QueueTabKey>("scheduled");
-  const [day, setDay] = useState<string | null>(null);
+  const [day, setDay] = useState<string | null>(() => dayKey(Date.now(), tz));
+  const [showSlots, setShowSlots] = useState(false);
+  const [pickSlotAt, setPickSlotAt] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sheet, setSheet] = useState<SheetKind>(null);
   const [editDraft, setEditDraft] = useState<PostDraft>({ body: "", comments: ["", "", ""] });
 
   const { data: items, isPending, isError, error } = useQueue(accountId, tab);
+  const daily = useQueueSlots(tab === "scheduled" ? accountId : null, day);
+  const drafts = useQueue(pickSlotAt ? accountId : null, "draft");
   const patch = usePatchQueue(accountId);
   const duplicate = useQueueAction(accountId, "duplicate");
   const publishNow = useQueueAction(accountId, "publish-now");
@@ -124,8 +129,8 @@ export default function Queue() {
   const repost = useRepost(accountId);
 
   const selected = useMemo(
-    () => items?.find((i) => i.id === selectedId) ?? null,
-    [items, selectedId],
+    () => [...(items ?? []), ...(daily.data?.slots.flatMap(slot => slot.item ? [slot.item] : []) ?? []), ...(daily.data?.unslotted ?? [])].find(i => i.id === selectedId) ?? null,
+    [items, daily.data, selectedId],
   );
 
   // 週表示の7日（今日から6日後まで）。予約タブでだけ出す
@@ -204,12 +209,13 @@ export default function Queue() {
       return;
     }
     patch.mutate(
-      { id: selected.id, patch: { scheduledAt: pick.at, status: "scheduled" } },
+      { id: selected.id, patch: pick.kind === "next_slot" ? { status: "next_slot" } : { scheduledAt: pick.at, status: "scheduled" } },
       {
-        onSuccess: () => {
+        onSuccess: item => {
           setSheet(null);
           setTab("scheduled");
-          toast.show("予約しました", "ok");
+          if (item.scheduledAt) setDay(dayKey(item.scheduledAt, tz));
+          toast.show(item.status === "pending_approval" ? "承認待ちの日時を変更しました。承認するまで投稿されません" : item.scheduledAt ? `${mdhm(item.scheduledAt, tz)} に予約しました` : "予約しました", "ok");
         },
         onError: (e) => fail(e, "予約できませんでした"),
       },
@@ -226,6 +232,7 @@ export default function Queue() {
             @{account.username} の予約と下書き
           </p>
         </div>
+        <div className="queue-heading-actions"><button type="button" className="btn btn-sub btn-fit" onClick={() => setShowSlots(true)}>投稿スロット設定</button>
         <button
           type="button"
           className="btn btn-sub"
@@ -233,7 +240,7 @@ export default function Queue() {
           onClick={() => navigate("/app/create")}
         >
           <PlusIcon size={16} /> 作る
-        </button>
+        </button></div>
       </div>
 
       <div className="chips" role="group" aria-label="表示する状態">
@@ -245,7 +252,7 @@ export default function Queue() {
             aria-pressed={tab === t.key}
             onClick={() => {
               setTab(t.key);
-              setDay(null);
+              setDay(t.key === "scheduled" ? dayKey(Date.now(), tz) : null);
               setOpenId(null);
             }}
           >
@@ -255,6 +262,8 @@ export default function Queue() {
       </div>
 
       {tab === "scheduled" && (
+        <section className="queue-calendar section">
+        <div className="queue-calendar-toolbar"><div><h2>投稿カレンダー</h2><p className="muted">空き枠に下書きを入れるだけ。{tz}</p></div><div className="queue-date-controls"><input type="date" className="input" aria-label="予定を見る日" value={day ?? ""} onChange={e => setDay(e.target.value || null)} /><button type="button" className="btn btn-sub btn-fit" onClick={() => setDay(null)} aria-pressed={day === null}>すべての予約</button></div></div>
         <div className="week" role="group" aria-label="7日分の予定">
           {week.map((d) => {
             const n = counts.get(d.key) ?? 0;
@@ -264,7 +273,7 @@ export default function Queue() {
                 type="button"
                 className="week-day"
                 aria-pressed={day === d.key}
-                onClick={() => setDay((v) => (v === d.key ? null : d.key))}
+                onClick={() => setDay(d.key)}
               >
                 <span className="w">{weekdayLabel(d.ms, tz)}</span>
                 <span className="d num">{dayNumber(d.ms, tz)}</span>
@@ -272,7 +281,7 @@ export default function Queue() {
               </button>
             );
           })}
-        </div>
+        </div></section>
       )}
 
       {isError && (
@@ -281,7 +290,13 @@ export default function Queue() {
         </p>
       )}
 
-      {isPending ? (
+      {tab === "scheduled" && day ? <DailySlots
+        date={day} data={daily.data} loading={daily.isPending} error={daily.error}
+        now={now} tz={tz} canPublish={canPublish} openId={openId}
+        onToggle={id => setOpenId(current => current === id ? null : id)}
+        onMenu={item => openSheet(item, "actions")} onFill={setPickSlotAt}
+        onSettings={() => setShowSlots(true)}
+      /> : isPending ? (
         <p className="muted" style={{ marginTop: "calc(var(--sp) * 3)" }}>
           読み込んでいます…
         </p>
@@ -314,6 +329,17 @@ export default function Queue() {
           ))}
         </div>
       )}
+
+      <Sheet open={showSlots} onClose={() => setShowSlots(false)} title="毎日の投稿スロット"><PostingScheduleEditor key={accountId} accountId={account.id} /></Sheet>
+      <Sheet open={Boolean(pickSlotAt)} onClose={() => setPickSlotAt(null)} title="この枠に下書きを入れる">
+        {pickSlotAt && <p className="muted">{mdhm(pickSlotAt, tz)} の枠に予約します。</p>}
+        {drafts.isPending ? <p className="muted section">下書きを読み込んでいます…</p> : drafts.isError ? <p className="msg msg-bad" role="alert">下書きを読み込めませんでした。</p> : <div className="choices section">{drafts.data?.map(draft => <button type="button" className="choice" key={draft.id} disabled={patch.isPending || !canPublish} onClick={() => patch.mutate({ id: draft.id, patch: { status: "scheduled", scheduledAt: pickSlotAt, reserveSlot: true } }, {
+          onSuccess: item => { setPickSlotAt(null); toast.show(item.status === "pending_approval" ? "この枠へ移動しました。承認するまで投稿されません" : "この枠に予約しました", "ok"); },
+          onError: error => fail(error, "予約できませんでした"),
+        })}><span className="choice-title slot-draft-body">{draft.body || "（本文なし）"}</span><span className="choice-note">{draft.comments.length ? `ツリー ${draft.comments.length + 1}段` : "1投稿"}</span></button>)}</div>}
+        {!drafts.isPending && !drafts.isError && !drafts.data?.length && <p className="muted section">まだ下書きがありません。「作る」で投稿を作成して保存してください。</p>}
+        <button type="button" className="btn btn-sub section" onClick={() => navigate("/app/create")}>新しい投稿を作る</button>
+      </Sheet>
 
       {/* ── 操作シート ───────────────────────────────── */}
       <Sheet
@@ -353,6 +379,7 @@ export default function Queue() {
                   承認する
                 </button>
               )}
+              {selected.status !== "done" && selected.status !== "publishing" && <button type="button" className="menu-item" disabled={!canPublish || patch.isPending} onClick={() => reschedule({ kind: "next_slot", at: null })}>次の空き枠へ入れる</button>}
               {selected.status !== "done" && selected.status !== "publishing" && (
                 <button
                   type="button"
@@ -514,6 +541,30 @@ export default function Queue() {
       />
     </>
   );
+}
+
+function DailySlots({ date, data, loading, error, now, tz, canPublish, openId, onToggle, onMenu, onFill, onSettings }: {
+  date: string; data: QueueSlotsResponse | undefined; loading: boolean; error: Error | null;
+  now: number; tz: string; canPublish: boolean; openId: string | null;
+  onToggle: (id: string) => void; onMenu: (item: QueueItem) => void;
+  onFill: (at: string) => void; onSettings: () => void;
+}) {
+  if (loading) return <p className="muted section">この日の投稿スロットを読み込んでいます…</p>;
+  if (error) return <p className="msg msg-bad" role="alert">{error instanceof ApiError ? error.message : "投稿スロットを読み込めませんでした"}</p>;
+  if (!data) return null;
+  const renderItem = (item: QueueItem) => <QueueRow key={item.id} item={item} tz={tz} now={now} open={openId === item.id} onToggle={() => onToggle(item.id)} onMenu={() => onMenu(item)} />;
+  return <section className="daily-schedule section" aria-label={`${date}の投稿スロット`}>
+    <div className="section-head"><h2>{date.replaceAll("-", "/")} の予定</h2><span className="muted">{data.slots.filter(slot => slot.item).length} / {data.slots.length} 枠に投稿あり</span></div>
+    {data.slots.length === 0 && <div className="card"><p className="muted">毎日の投稿スロットを設定すると、空き枠がここに表示されます。</p><button type="button" className="btn btn-sub btn-fit section" onClick={onSettings}>投稿スロットを設定</button></div>}
+    <div className="slot-timeline">{data.slots.map(slot => {
+      const past = new Date(slot.at).getTime() <= now;
+      return <div className="slot-timeline-row" key={slot.at}>
+        <div className="slot-timeline-time num"><time dateTime={slot.at}>{slot.time}</time><span className={`slot-timeline-dot${slot.item ? " is-filled" : ""}`} /></div>
+        {slot.item ? renderItem(slot.item) : <div className={`slot-empty${past || slot.skipped ? " is-muted" : ""}`}><div><strong>{slot.skipped ? "取り消した枠" : past ? "過ぎた空き枠" : "空き枠"}</strong><p className="muted">{slot.skipped ? "自動作成では埋め直しません" : past ? "この時刻は過ぎています" : "下書きを選んで、この時刻に予約"}</p></div>{!past && !slot.skipped && <button type="button" className="btn btn-sub btn-fit" disabled={!canPublish} onClick={() => onFill(slot.at)}>＋ 下書きを入れる</button>}</div>}
+      </div>;
+    })}</div>
+    {data.unslotted.length > 0 && <div className="section"><h3>スロット以外の予約・投稿</h3><p className="muted">日時を直接指定した投稿や、スロット設定を変える前の予約です。</p><div className="rows section">{data.unslotted.map(renderItem)}</div></div>}
+  </section>;
 }
 
 /* ── 1行 ───────────────────────────────────────────── */

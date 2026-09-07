@@ -195,18 +195,17 @@ describe("GET /api/accounts/:id/queue/suggest-slot（SPEC §7.4 / §9.3）", () 
     const slot = res.body.data;
     expect(Object.keys(slot).sort()).toEqual(["at", "n", "reason"]);
     expect(Date.parse(slot.at as string)).toBeGreaterThan(Date.now());
-    expect(slot.reason).toBe("実績がまだ足りないので既定の枠です");
+    expect(slot.reason).toBe("設定した投稿スロットの次の空き枠です");
     expect(slot.n).toBe(0);
   });
 
-  it("既定枠は平日21時・土日12時（Asia/Tokyo、quiet_hours で 0〜6時は出ない）（SPEC §9.3）", async () => {
+  it("既定の投稿時間09:00・12:00・18:00の空き枠を返す", async () => {
     const { cookie, accountId } = await setup("qslot2");
     const res = await api("GET", `/api/accounts/${accountId}/queue/suggest-slot`, { cookie });
     expect(res.status).toBe(200);
 
-    const { hour, weekday } = tokyoParts(res.body.data.at as string);
-    const isWeekend = weekday === "Sat" || weekday === "Sun";
-    expect({ hour, isWeekend }).toEqual({ hour: isWeekend ? 12 : 21, isWeekend });
+    const { hour } = tokyoParts(res.body.data.at as string);
+    expect([9, 12, 18]).toContain(hour);
   });
 
   it("返ってきた at をそのまま status:'scheduled' に渡すと予約できる（SPEC §12.3 Create）", async () => {

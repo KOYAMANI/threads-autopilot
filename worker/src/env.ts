@@ -28,6 +28,8 @@ export type Env = {
   // secrets（SPEC §3.2）。開発は .dev.vars
   ENC_KEY: string;
   SESSION_SECRET: string;
+  /** Dedicated post-hash password pepper; preserve alongside external secret backups. */
+  PASSWORD_PEPPER: string;
   ADMIN_SECRET?: string;
   RESEND_API_KEY?: string;
   /** [vars]。差出人アドレス。空文字なら未設定として扱い `noreply@example.com` にする */

@@ -1,11 +1,14 @@
 /**
  * 暗号（SPEC §5.2）。WebCrypto のみ。
  * - encrypt/decrypt: AES-256-GCM、鍵は ENC_KEY（32バイトの base64）
- * - パスワード: PBKDF2-SHA256 100,000回、salt 16バイト
+ * - パスワード: PBKDF2-SHA256 100,000回 + 専用 Secret による HMAC、salt 16バイト
  * 復号した値は関数スコープ内で使い切り、レスポンスやログに入れない。
  */
 
+// Keep within the deployed Workers PBKDF2 budget. The pepper adds DB-only breach
+// protection; it does not claim the 600k work factor recommended by OWASP.
 const PBKDF2_ITERATIONS = 100_000;
+export const PASSWORD_HASH_PREFIX = "pbkdf2-sha256$100000$hmac-sha256$v1$";
 const SALT_BYTES = 16;
 const IV_BYTES = 12;
 
@@ -102,26 +105,57 @@ async function pbkdf2(password: string, salt: Uint8Array): Promise<Uint8Array> {
   return new Uint8Array(bits);
 }
 
-export async function hashPassword(password: string): Promise<PasswordHash> {
+/** This dedicated secret must never be stored in D1 or derived from an encryption/session key. */
+function requirePasswordPepper(pepper: string): void {
+  if (typeof pepper !== "string" || pepper.length < 32) throw new Error("PASSWORD_PEPPER is not configured");
+}
+
+async function pepperDigest(derived: Uint8Array, salt: string, pepper: string): Promise<Uint8Array> {
+  requirePasswordPepper(pepper);
+  return hmacSha256(pepper, `${PASSWORD_HASH_PREFIX}${salt}$${bytesToBase64(derived)}`);
+}
+
+export async function hashPassword(password: string, pepper: string): Promise<PasswordHash> {
+  requirePasswordPepper(pepper);
   const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
-  const hash = await pbkdf2(password, salt);
-  return { hash: bytesToBase64(hash), salt: bytesToBase64(salt) };
+  const saltBase64 = bytesToBase64(salt);
+  const digest = await pepperDigest(await pbkdf2(password, salt), saltBase64, pepper);
+  return { hash: PASSWORD_HASH_PREFIX + bytesToBase64(digest), salt: saltBase64 };
+}
+
+export function passwordHashNeedsUpgrade(stored: PasswordHash): boolean {
+  return !stored.hash.startsWith(PASSWORD_HASH_PREFIX);
+}
+
+/** Called only after successful legacy verification. Reuse its existing KDF output
+ * so upgrading the post-hash HMAC does not require a second expensive KDF call. */
+export async function upgradeLegacyPasswordHash(stored: PasswordHash, pepper: string): Promise<PasswordHash> {
+  requirePasswordPepper(pepper);
+  const derived = base64ToBytes(stored.hash);
+  if (derived.length !== 32 || base64ToBytes(stored.salt).length !== SALT_BYTES) throw new Error("Invalid legacy password hash");
+  return { hash: PASSWORD_HASH_PREFIX + bytesToBase64(await pepperDigest(derived, stored.salt, pepper)), salt: stored.salt };
 }
 
 export async function verifyPassword(
   password: string,
   stored: PasswordHash,
+  pepper: string,
 ): Promise<boolean> {
+  requirePasswordPepper(pepper);
+  const current = stored.hash.startsWith(PASSWORD_HASH_PREFIX);
   let salt: Uint8Array;
   let expected: Uint8Array;
   try {
     salt = base64ToBytes(stored.salt);
-    expected = base64ToBytes(stored.hash);
+    expected = base64ToBytes(current ? stored.hash.slice(PASSWORD_HASH_PREFIX.length) : stored.hash);
+    if (salt.length !== SALT_BYTES || expected.length !== 32) return false;
   } catch {
     return false;
   }
-  const actual = await pbkdf2(password, salt);
-  return timingSafeEqual(actual, expected);
+  const derived = await pbkdf2(password, salt);
+  // Do the same KDF + HMAC for legacy, current and dummy credentials.
+  const protectedDigest = await pepperDigest(derived, stored.salt, pepper);
+  return timingSafeEqual(current ? protectedDigest : derived, expected);
 }
 
 /* ── 補助 ───────────────────────────────────────────── */

@@ -29,7 +29,7 @@ database_id = "dcce5294-b2de-4c72-9a81-5dc6f6d2e00a"
 migrations_dir = "worker/migrations"
 
 [triggers]
-crons = [] # No automatic triggers in staging.
+crons = ["* * * * *"] # Arrival monitor only; APP_ENV=staging never enqueues jobs.
 
 [vars]
 APP_ENV = "staging"

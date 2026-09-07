@@ -67,7 +67,7 @@ const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 /**
  * Threads API を1回呼ぶ。
- * - access_token はクエリに付ける（POST でもクエリでよい）
+ * - 通常のAPIはBearerヘッダ。トークン交換・延長だけMeta所定のクエリ方式。
  * - 失敗は ThreadsApiError を throw
  * - レート制限（4/17/32/613）だけ 1.5s→3s→6s で最大3回リトライ
  * - budget.subrequests.use() で外部 fetch 回数を数える（尽きたら BudgetExceeded）
@@ -103,10 +103,17 @@ export async function call(
 
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     budget.subrequests.use();
-    const query = toQuery({ ...params, access_token: token });
+    // OAuth exchange/refresh explicitly require access_token as a parameter.
+    // Keep normal profile, insight and publishing requests free of URL credentials.
+    const tokenEndpoint = p === "/access_token" || p === "/refresh_access_token";
+    const cleanParams = { ...params };
+    delete cleanParams.access_token;
+    const query = toQuery(tokenEndpoint ? { ...cleanParams, access_token: token } : cleanParams);
     const url = `${BASE}${p}?${query.toString()}`;
-
-    const res = await fetch(url, { method });
+    const headers: HeadersInit = tokenEndpoint ? {} : { Authorization: `Bearer ${token}` };
+    const remainingMs = Math.max(1, Math.min(15000, budget.timeMs.limit - budget.timeMs.elapsed));
+    budget.timeMs.check();
+    const res = await fetch(url, { method, headers, redirect: "error", signal: AbortSignal.timeout(remainingMs) });
     const bodyText = await res.text();
 
     if (res.ok) {

@@ -3,6 +3,7 @@
  * キーは `[accountId, resource, params]`。変更系の後は `[accountId]` を invalidate する
  * （キューの一覧・ホームの数字・おすすめ枠がまとめて古くなるため）。
  */
+import { useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   CreateQueueRequest,
@@ -11,6 +12,9 @@ import type {
   QueueItemResponse,
   QueueListResponse,
   QueueStatus,
+  QueueSlotsResponse,
+  PostingSchedule,
+  PutPostingScheduleRequest,
   SuggestSlotResponse,
 } from "@tap/shared";
 import { api } from "./client";
@@ -68,10 +72,18 @@ function useInvalidate(accountId: string | null) {
 
 export function useCreateQueue(accountId: string | null) {
   const invalidate = useInvalidate(accountId);
+  const attempt = useRef<{ signature: string; key: string } | null>(null);
   return useMutation({
-    mutationFn: async (body: CreateQueueRequest): Promise<QueueItem> =>
-      (await api.post<QueueItemResponse>(`/accounts/${accountId}/queue`, body)).item,
-    onSuccess: invalidate,
+    mutationFn: async (body: CreateQueueRequest): Promise<QueueItem> => {
+      const signature = JSON.stringify([accountId, body]);
+      if (attempt.current?.signature !== signature) {
+        attempt.current = { signature, key: crypto.randomUUID() };
+      }
+      return (await api.post<QueueItemResponse>(`/accounts/${accountId}/queue`, {
+        ...body, idempotencyKey: body.idempotencyKey ?? attempt.current.key,
+      })).item;
+    },
+    onSuccess: () => { attempt.current = null; invalidate(); },
   });
 }
 
@@ -107,5 +119,35 @@ export function useDeleteQueue(accountId: string | null) {
   return useMutation({
     mutationFn: (id: string) => api.del<{ deleted: boolean }>(`/accounts/${accountId}/queue/${id}`),
     onSuccess: invalidate,
+  });
+}
+
+/** 手動予約とオートパイロットが共用する、毎日の投稿時刻。 */
+export function usePostingSchedule(accountId: string | null) {
+  return useQuery({
+    queryKey: accountKey(accountId ?? "-", "posting-schedule"),
+    enabled: Boolean(accountId),
+    queryFn: () => api.get<PostingSchedule>(`/accounts/${accountId}/posting-schedule`),
+  });
+}
+
+export function usePutPostingSchedule(accountId: string | null) {
+  const invalidate = useInvalidate(accountId);
+  return useMutation({
+    mutationFn: (body: PutPostingScheduleRequest) =>
+      api.put<PostingSchedule>(`/accounts/${accountId}/posting-schedule`, body),
+    onSuccess: invalidate,
+  });
+}
+
+export function useQueueSlots(accountId: string | null, date: string | null) {
+  return useQuery({
+    queryKey: accountKey(accountId ?? "-", "queue-slots", { date }),
+    enabled: Boolean(accountId && date),
+    staleTime: 15_000,
+    refetchInterval: 60_000,
+    queryFn: () => api.get<QueueSlotsResponse>(
+      `/accounts/${accountId}/queue/slots?date=${encodeURIComponent(date ?? "")}`,
+    ),
   });
 }

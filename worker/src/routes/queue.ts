@@ -8,23 +8,23 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
 import {
-  MIN_SAMPLES_LEARNING,
   ok,
-  suggestSlot,
+  localDateKey,
+  normalizePostingTimes,
+  postingSlotsForDate,
   validatePost,
   type QueueItem,
-  type SuggestSlotResponse,
+  type QueueSlotsResponse,
 } from "@tap/shared";
 import { fail, type AppEnv } from "../app";
 import { audit } from "../lib/audit";
 import { canPublishAccount, loadOwnedAccount } from "../lib/accounts";
-import { recentAutoTags } from "../lib/autopilot";
+import { canReservePostingSlot, isSlotConflict, isValidScheduleDate, loadPostingSchedule, nextPostingSlot } from "../lib/posting-schedule";
 import { jobContextFrom } from "../lib/jobs";
 import { enqueuePublish } from "../jobs/publish";
 import {
   attachMetrics,
   parseJsonArray,
-  publishSettings,
   QUEUE_SELECT,
   toQueueItem,
   type QueueRow,
@@ -33,7 +33,9 @@ import {
 const REPLY_CONTROLS = ["everyone", "accounts_you_follow", "mentioned_only"] as const;
 
 const createSchema = z.object({
-  status: z.enum(["draft", "scheduled", "now"]),
+  status: z.enum(["draft", "scheduled", "now", "next_slot"]),
+  idempotencyKey: z.string().min(8).max(80).optional(),
+  reserveSlot: z.boolean().optional(),
   scheduledAt: z.string().min(1).optional(),
   body: z.string().max(4000),
   comments: z.array(z.string().max(4000)).max(10).optional(),
@@ -44,12 +46,13 @@ const createSchema = z.object({
 });
 
 const patchSchema = z.object({
+  reserveSlot: z.boolean().optional(),
   body: z.string().max(4000).optional(),
   comments: z.array(z.string().max(4000)).max(10).optional(),
   scheduledAt: z.string().min(1).nullable().optional(),
   imageUrl: z.string().trim().url().max(2000).nullable().optional(),
   replyControl: z.enum(REPLY_CONTROLS).optional(),
-  status: z.enum(["draft", "scheduled"]).optional(),
+  status: z.enum(["draft", "scheduled", "next_slot"]).optional(),
 });
 
 async function readJson(c: { req: { json: () => Promise<unknown> } }): Promise<unknown> {
@@ -139,40 +142,59 @@ export function queueRoutes() {
     const account = await loadOwnedAccount(db, c.req.param("id"), c.get("userId")!);
     if (!account) return fail("NOT_FOUND", "見つかりませんでした", 404);
 
-    const ap = await db.first<{ quiet_hours: number; slot_mode: string; fixed_hour: number | null; daily_limit: number }>(
-      "SELECT quiet_hours, slot_mode, fixed_hour, daily_limit FROM autopilot WHERE account_id=?",
-      account.id,
-    );
-    const taken = await db.all<{ scheduled_at: string }>(
-      "SELECT scheduled_at FROM queue WHERE account_id=? AND status IN ('scheduled','pending_approval','publishing') AND scheduled_at IS NOT NULL",
-      account.id,
-    );
-    // 実績（`learning` の `dim='slot'`）と直近の自動投稿を渡す。ここが AP の枠選択と
-    // 同じ関数（`suggestSlot`）を通るので、画面のおすすめと自動投稿の枠が一致する（SPEC §9.3）
-    const learned = await db.all<{ value: string; n: number; score_sum: number }>(
-      "SELECT value, n, score_sum FROM learning WHERE account_id=? AND dim='slot' AND n>=?",
-      account.id,
-      MIN_SAMPLES_LEARNING,
-    );
-    const recent = await recentAutoTags(db, account.id, 3);
-    const settings = publishSettings(account);
-    const body: SuggestSlotResponse = suggestSlot({
-      nowMs: Date.now(),
-      tz: account.timezone,
-      quietHours: (ap?.quiet_hours ?? 1) === 1,
-      slotMode: (ap?.slot_mode as "auto" | "fixed") ?? "auto",
-      fixedHour: ap?.fixed_hour ?? null,
-      taken: taken.map((t) => t.scheduled_at),
-      dailyLimit: ap?.daily_limit ?? 1,
-      minGapMin: settings.minGapMin,
-      history: learned.map((x) => ({
-        value: x.value,
-        n: x.n,
-        avgScore: x.n > 0 ? x.score_sum / x.n : 0,
-      })),
-      recentValues: recent.map((r) => r.slot).filter((v): v is string => v !== null),
-    });
-    return c.json(ok(body));
+    const slot = await nextPostingSlot(db, account);
+    if (!slot) return fail("CONFLICT", "7日先まで空いている投稿枠がありません。投稿スロットを見直してください", 409);
+    return c.json(ok({ at: slot.at, reason: "設定した投稿スロットの次の空き枠です", n: 0 }));
+  });
+
+  r.get("/:id/posting-schedule", async (c) => {
+    const db = c.get("db");
+    const account = await loadOwnedAccount(db, c.req.param("id"), c.get("userId")!);
+    if (!account) return fail("NOT_FOUND", "見つかりませんでした", 404);
+    return c.json(ok(await loadPostingSchedule(db, account)));
+  });
+
+  r.put("/:id/posting-schedule", async (c) => {
+    const parsed = z.object({ times: z.unknown() }).safeParse(await readJson(c));
+    const times = parsed.success ? normalizePostingTimes(parsed.data.times) : null;
+    if (!times) return fail("BAD_REQUEST", "投稿時間はHH:mm形式で1〜10個、重複しないように設定してください", 400);
+    const db = c.get("db");
+    const account = await loadOwnedAccount(db, c.req.param("id"), c.get("userId")!);
+    if (!account) return fail("NOT_FOUND", "見つかりませんでした", 404);
+    await db.run(`INSERT INTO posting_schedules (account_id, times_json, updated_at) VALUES (?,?,?)
+      ON CONFLICT(account_id) DO UPDATE SET times_json=excluded.times_json, updated_at=excluded.updated_at`,
+      account.id, JSON.stringify(times), new Date().toISOString());
+    return c.json(ok({ timezone: account.timezone, times }));
+  });
+
+  r.get("/:id/queue/slots", async (c) => {
+    const db = c.get("db");
+    const account = await loadOwnedAccount(db, c.req.param("id"), c.get("userId")!);
+    if (!account) return fail("NOT_FOUND", "見つかりませんでした", 404);
+    const date = c.req.query("date") ?? localDateKey(Date.now(), account.timezone);
+    if (!isValidScheduleDate(date, account.timezone)) return fail("BAD_REQUEST", "日付の形式が正しくありません", 400);
+    const schedule = await loadPostingSchedule(db, account);
+    const slots = postingSlotsForDate(date, schedule.times, account.timezone);
+    // UTC±14h の日付境界を含む範囲を読み、最後はアカウントの日付で厳密に絞る。
+    const center = Date.parse(`${date}T12:00:00Z`);
+    const rows = (await db.all<QueueRow>(`SELECT ${QUEUE_SELECT} FROM queue WHERE account_id=? AND scheduled_at>=? AND scheduled_at<? ORDER BY scheduled_at`,
+      account.id, new Date(center - 36 * 3_600_000).toISOString(), new Date(center + 36 * 3_600_000).toISOString()))
+      .filter((q) => q.scheduled_at && localDateKey(Date.parse(q.scheduled_at), account.timezone) === date);
+    const reserved = await db.all<{ scheduled_at: string; queue_id: string | null }>(
+      "SELECT scheduled_at, queue_id FROM posting_slot_reservations WHERE account_id=? AND scheduled_at>=? AND scheduled_at<?",
+      account.id, new Date(center - 36 * 3_600_000).toISOString(), new Date(center + 36 * 3_600_000).toISOString());
+    const metrics = await attachMetrics(db, account.id, rows);
+    const items = rows.map((q) => toQueueItem(q, metrics.get(parseJsonArray(q.result_ids_json)[0] ?? "") ?? null));
+    const slotAt = new Set(slots.map((s) => s.at));
+    const data: QueueSlotsResponse = {
+      date, timezone: account.timezone,
+      slots: slots.map((s) => {
+        const item = items.find((q) => q.scheduledAt === s.at && !["cancelled", "draft"].includes(q.status)) ?? null;
+        return { ...s, item, skipped: !item && reserved.some((r) => r.scheduled_at === s.at) };
+      }),
+      unslotted: items.filter((q) => !slotAt.has(q.scheduledAt ?? "") && !["cancelled", "draft"].includes(q.status)),
+    };
+    return c.json(ok(data));
   });
 
   /* ── 作成（SPEC §7.4） ────────────────────────────── */
@@ -184,6 +206,10 @@ export function queueRoutes() {
     if (!account) return fail("NOT_FOUND", "見つかりませんでした", 404);
 
     const input = parsed.data;
+    if (input.idempotencyKey) {
+      const previous = await db.first<QueueRow>(`SELECT ${QUEUE_SELECT} FROM queue WHERE account_id=? AND request_id=?`, account.id, input.idempotencyKey);
+      if (previous) return c.json(ok({ item: await itemOf(db, account.id, previous) }));
+    }
     if (input.status !== "draft" && !canPublishAccount(account)) return fail("CONFLICT", "Threads APIを設定で連携してから予約してください", 409);
     const comments = (input.comments ?? []).filter((t) => t.trim() !== "");
     const bad = check(input.body, comments);
@@ -192,7 +218,12 @@ export function queueRoutes() {
     const nowIso = new Date().toISOString();
     let status: string = input.status === "now" ? "scheduled" : input.status;
     let scheduledAt: string | null = null;
-    if (input.status === "now") {
+    if (input.status === "next_slot") {
+      const slot = await nextPostingSlot(db, account);
+      if (!slot) return fail("CONFLICT", "7日先まで空いている投稿枠がありません", 409);
+      scheduledAt = slot.at;
+      status = "scheduled";
+    } else if (input.status === "now") {
       scheduledAt = nowIso;
     } else if (input.status === "scheduled") {
       const at = parseAt(input.scheduledAt);
@@ -205,26 +236,48 @@ export function queueRoutes() {
       status = "draft";
     }
 
+    if (input.reserveSlot && (status !== "scheduled" || !(await canReservePostingSlot(db, account, scheduledAt)))) {
+      return fail("CONFLICT", "この投稿枠は利用できません。スケジュールを更新して別の枠を選んでください", 409);
+    }
     const id = crypto.randomUUID();
-    await db.run(
-      `INSERT INTO queue (id, account_id, status, scheduled_at, body, comments_json, image_url, reply_control,
-          source, approval_mode, approve_deadline, notified_at, action_token_used_at, step, next_step_at,
-          container_id, container_polls, result_ids_json, error, error_raw, attempts, tags_json,
-          origin_post_id, source_ids_json, created_at, updated_at)
-        VALUES (?,?,?,?,?,?,?,?, 'manual', NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, '[]', NULL, NULL, 0, '{}', ?,?,?,?)`,
-      id,
-      account.id,
-      status,
-      scheduledAt,
-      input.body,
-      JSON.stringify(comments),
-      input.imageUrl ?? null,
-      input.replyControl ?? "everyone",
-      input.originPostId ?? null,
-      JSON.stringify(input.sourceIds ?? []),
-      nowIso,
-      nowIso,
-    );
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await db.run(
+          `INSERT INTO queue (id, account_id, status, scheduled_at, body, comments_json, image_url, reply_control,
+              source, approval_mode, approve_deadline, notified_at, action_token_used_at, step, next_step_at,
+              container_id, container_polls, result_ids_json, error, error_raw, attempts, tags_json,
+              origin_post_id, source_ids_json, created_at, updated_at, slot_managed, slot_day, request_id)
+            VALUES (?,?,?,?,?,?,?,?, 'manual', NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, '[]', NULL, NULL, 0, '{}', ?,?,?,?,?,?,?)`,
+          id,
+          account.id,
+          status,
+          scheduledAt,
+          input.body,
+          JSON.stringify(comments),
+          input.imageUrl ?? null,
+          input.replyControl ?? "everyone",
+          input.originPostId ?? null,
+          JSON.stringify(input.sourceIds ?? []),
+          nowIso,
+          nowIso,
+          input.status === "next_slot" || input.reserveSlot ? 1 : 0,
+          scheduledAt ? localDateKey(Date.parse(scheduledAt), account.timezone) : null,
+          input.idempotencyKey ?? null,
+        );
+
+        break;
+      } catch (error) {
+        if (input.idempotencyKey) {
+          const previous = await db.first<QueueRow>(`SELECT ${QUEUE_SELECT} FROM queue WHERE account_id=? AND request_id=?`, account.id, input.idempotencyKey);
+          if (previous) return c.json(ok({ item: await itemOf(db, account.id, previous) }));
+        }
+        if (!isSlotConflict(error)) throw error;
+        if (input.status !== "next_slot" || attempt === 2) return fail("CONFLICT", "この投稿枠は埋まっています。別の枠を選んでください", 409);
+        const next = await nextPostingSlot(db, account);
+        if (!next) return fail("CONFLICT", "7日先まで空いている投稿枠がありません", 409);
+        scheduledAt = next.at;
+      }
+    }
 
     if (status === "scheduled" && scheduledAt) {
       await schedulePublish(c, account.id, scheduledAt);
@@ -258,13 +311,24 @@ export function queueRoutes() {
     if (input.scheduledAt !== undefined && at === undefined) {
       return fail("BAD_REQUEST", "日時の形式が正しくありません", 400);
     }
-    const scheduledAt = at === undefined ? row.scheduled_at : at;
-    const status = input.status ?? (row.status === "failed" ? "draft" : row.status);
+    let scheduledAt = at === undefined ? row.scheduled_at : at;
+    let status = input.status === "next_slot" ? "scheduled" : input.status ?? (row.status === "failed" ? "draft" : row.status);
+    if (status === "scheduled" && row.source === "autopilot" && row.approval_mode === "manual" && ["pending_approval", "draft"].includes(row.status)) {
+      status = "pending_approval"; // 日時の変更は承認の代わりにはならない。
+    }
+    if (input.status === "next_slot") {
+      const next = await nextPostingSlot(db, account, new Date(), row.id);
+      if (!next) return fail("CONFLICT", "7日先まで空いている投稿枠がありません", 409);
+      scheduledAt = next.at;
+    }
     if ((status === "scheduled" || status === "pending_approval") && !canPublishAccount(account)) return fail("CONFLICT", "Threads APIを設定で連携し直してから予約してください", 409);
     if (status === "scheduled" && !scheduledAt) {
       return fail("BAD_REQUEST", "投稿する日時を指定してください", 400);
     }
 
+    if (input.reserveSlot && (!["scheduled", "pending_approval"].includes(status) || !(await canReservePostingSlot(db, account, scheduledAt, row.id)))) {
+      return fail("CONFLICT", "この投稿枠は利用できません。スケジュールを更新して別の枠を選んでください", 409);
+    }
     const nowIso = new Date().toISOString();
     // 本文を直したら、途中まで進んだ状態はリセットする（失敗からの作り直し）。
     // ただし **既に Threads へ出た投稿がある行（result_ids が空でない）は step を戻さない**。
@@ -272,23 +336,41 @@ export function queueRoutes() {
     // その場合は続きの step から再開する（publish-now と同じ扱い）。
     const published = parseJsonArray(row.result_ids_json).length > 0;
     const resetSteps = (row.status === "failed" || row.status === "draft") && !published;
-    await db.run(
-      `UPDATE queue SET body=?, comments_json=?, image_url=?, reply_control=?, scheduled_at=?, status=?,
-         error=NULL, error_raw=NULL,
-         step=CASE WHEN ? THEN 0 ELSE step END,
-         next_step_at=NULL, container_id=NULL, container_polls=0,
-         updated_at=? WHERE id=? AND account_id=?`,
-      body,
-      JSON.stringify(comments),
-      input.imageUrl === undefined ? row.image_url : input.imageUrl,
-      input.replyControl ?? row.reply_control,
-      scheduledAt,
-      status,
-      resetSteps ? 1 : 0,
-      nowIso,
-      row.id,
-      account.id,
-    );
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const updated = await db.run(
+          `UPDATE queue SET body=?, comments_json=?, image_url=?, reply_control=?, scheduled_at=?, status=?,
+             slot_managed=CASE WHEN ? THEN 1 ELSE slot_managed END, slot_day=?,
+             error=NULL, error_raw=NULL,
+             step=CASE WHEN ? THEN 0 ELSE step END,
+             next_step_at=NULL, container_id=NULL, container_polls=0,
+             updated_at=? WHERE id=? AND account_id=? AND status=? AND updated_at=? AND status NOT IN ('publishing','done')`,
+          body,
+          JSON.stringify(comments),
+          input.imageUrl === undefined ? row.image_url : input.imageUrl,
+          input.replyControl ?? row.reply_control,
+          scheduledAt,
+          status,
+          input.status === "next_slot" || input.reserveSlot ? 1 : 0,
+          scheduledAt ? localDateKey(Date.parse(scheduledAt), account.timezone) : null,
+          resetSteps ? 1 : 0,
+          nowIso,
+          row.id,
+          account.id,
+          row.status,
+          row.updated_at,
+        );
+
+        if (updated.changes === 0) return fail("CONFLICT", "別の操作で状態が変わりました。最新の状態を確認してください", 409);
+        break;
+      } catch (error) {
+        if (!isSlotConflict(error)) throw error;
+        if (input.status !== "next_slot" || attempt === 2) return fail("CONFLICT", "この投稿枠は埋まっています。別の枠を選んでください", 409);
+        const next = await nextPostingSlot(db, account, new Date(), row.id);
+        if (!next) return fail("CONFLICT", "7日先まで空いている投稿枠がありません", 409);
+        scheduledAt = next.at;
+      }
+    }
 
     if (status === "scheduled" && scheduledAt) {
       await schedulePublish(c, account.id, scheduledAt);
@@ -310,12 +392,11 @@ export function queueRoutes() {
     }
     if (!row.scheduled_at) return fail("BAD_REQUEST", "投稿する日時がありません", 400);
 
-    await db.run(
-      "UPDATE queue SET status='scheduled', approve_deadline=NULL, updated_at=? WHERE id=? AND account_id=?",
-      new Date().toISOString(),
-      row.id,
-      account.id,
+    const approved = await db.run(
+      "UPDATE queue SET status='scheduled', approve_deadline=NULL, updated_at=? WHERE id=? AND account_id=? AND status=? AND updated_at=? AND status IN ('pending_approval','scheduled')",
+      new Date().toISOString(), row.id, account.id, row.status, row.updated_at,
     );
+    if (approved.changes === 0) return fail("CONFLICT", "別の操作で状態が変わりました。最新の状態を確認してください", 409);
     await schedulePublish(c, account.id, row.scheduled_at);
     await audit(db, c.get("userId")!, "queue.approve", { accountId: account.id, queueId: row.id });
     const next = (await loadRow(db, account.id, row.id))!;
@@ -334,12 +415,11 @@ export function queueRoutes() {
     }
 
     const nowIso = new Date().toISOString();
-    await db.run(
-      "UPDATE queue SET status='cancelled', next_step_at=NULL, updated_at=? WHERE id=? AND account_id=?",
-      nowIso,
-      row.id,
-      account.id,
+    const cancelled = await db.run(
+      "UPDATE queue SET status='cancelled', next_step_at=NULL, updated_at=? WHERE id=? AND account_id=? AND status=? AND updated_at=? AND status NOT IN ('publishing','done')",
+      nowIso, row.id, account.id, row.status, row.updated_at,
     );
+    if (cancelled.changes === 0) return fail("CONFLICT", "投稿処理または別の操作が始まったため、取り消せませんでした", 409);
     await db.run(
       "INSERT INTO ap_log (id, account_id, at, kind, message, ref_id) VALUES (?,?,?,?,?,?)",
       crypto.randomUUID(),
@@ -369,15 +449,12 @@ export function queueRoutes() {
 
     const nowIso = new Date().toISOString();
     // step と result_ids は残す。失敗からの再開で1投稿目を出し直さないため（SPEC §8.3）
-    await db.run(
-      `UPDATE queue SET status='scheduled', scheduled_at=?, next_step_at=?, error=NULL, error_raw=NULL,
-         updated_at=? WHERE id=? AND account_id=?`,
-      nowIso,
-      nowIso,
-      nowIso,
-      row.id,
-      account.id,
+    const scheduled = await db.run(
+      `UPDATE queue SET status='scheduled', scheduled_at=?, next_step_at=?, slot_managed=0, error=NULL, error_raw=NULL,
+         updated_at=? WHERE id=? AND account_id=? AND status=? AND updated_at=? AND status NOT IN ('publishing','done')`,
+      nowIso, nowIso, nowIso, row.id, account.id, row.status, row.updated_at,
     );
+    if (scheduled.changes === 0) return fail("CONFLICT", "別の操作で状態が変わりました。最新の状態を確認してください", 409);
     await schedulePublish(c, account.id, nowIso);
     const next = (await loadRow(db, account.id, row.id))!;
     return c.json(ok({ item: await itemOf(db, account.id, next) }));
@@ -420,13 +497,13 @@ export function queueRoutes() {
     const account = await loadOwnedAccount(db, c.req.param("id"), c.get("userId")!);
     if (!account) return fail("NOT_FOUND", "見つかりませんでした", 404);
     const res = await db.run(
-      "DELETE FROM queue WHERE id=? AND account_id=? AND status<>'done'",
+      "DELETE FROM queue WHERE id=? AND account_id=? AND status NOT IN ('done','publishing') AND result_ids_json='[]'",
       c.req.param("qid"),
       account.id,
     );
     if (res.changes === 0) {
       const row = await loadRow(db, account.id, c.req.param("qid"));
-      if (row) return fail("CONFLICT", "投稿済みのものは消せません", 409);
+      if (row) return fail("CONFLICT", "投稿中・一部でも公開済みのものは消せません", 409);
       return fail("NOT_FOUND", "見つかりませんでした", 404);
     }
     return c.json(ok({ deleted: true }));

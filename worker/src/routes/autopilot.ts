@@ -46,7 +46,7 @@ const putSchema = z.object({
   fixedHour: z.number().int().min(0).max(23).nullable().optional(),
   approvalMode: z.enum(["manual", "cancel", "auto"]).optional(),
   approvalWindowH: z.number().int().min(1).max(48).optional(),
-  dailyLimit: z.number().int().min(1).max(5).optional(),
+  dailyLimit: z.number().int().min(1).max(3).optional(),
   quietHours: z.boolean().optional(),
   ngWords: z.string().max(2000).optional(),
   linkPlacement: z.enum(["comment", "body", "none"]).optional(),
@@ -227,15 +227,16 @@ export function autopilotRoutes() {
       return fail("AP_BLOCKED", BLOCKER_MESSAGE[blockers[0]!], 409);
     }
 
+    const dailyLimit = input.dailyLimit ?? (input.perWeek !== undefined ? Math.min(3, Math.ceil(input.perWeek / 7)) : Math.min(3, prev.daily_limit));
     const next: AutopilotRow = {
       ...prev,
       enabled: input.enabled === undefined ? prev.enabled : input.enabled ? 1 : 0,
-      per_week: input.perWeek ?? prev.per_week,
+      per_week: dailyLimit * 7,
       slot_mode: input.slotMode ?? prev.slot_mode,
       fixed_hour: input.fixedHour === undefined ? prev.fixed_hour : input.fixedHour,
       approval_mode: input.approvalMode ?? prev.approval_mode,
       approval_window_h: input.approvalWindowH ?? prev.approval_window_h,
-      daily_limit: input.dailyLimit ?? prev.daily_limit,
+      daily_limit: dailyLimit,
       quiet_hours: input.quietHours === undefined ? prev.quiet_hours : input.quietHours ? 1 : 0,
       ng_words: input.ngWords ?? prev.ng_words,
       link_placement: input.linkPlacement ?? prev.link_placement,
@@ -248,19 +249,26 @@ export function autopilotRoutes() {
       updated_at: new Date().toISOString(),
     };
 
-    await db.run(
-      `INSERT INTO autopilot (account_id, enabled, per_week, slot_mode, fixed_hour, approval_mode,
+    // 未指定の列は現在のDB値を保つ。別タブの設定保存でOFFを再びONに戻さない。
+    const fields: Array<[string, boolean]> = [
+      ["enabled", input.enabled !== undefined],
+      ["per_week", input.perWeek !== undefined || input.dailyLimit !== undefined],
+      ["daily_limit", input.perWeek !== undefined || input.dailyLimit !== undefined],
+      ["slot_mode", input.slotMode !== undefined], ["fixed_hour", input.fixedHour !== undefined],
+      ["approval_mode", input.approvalMode !== undefined], ["approval_window_h", input.approvalWindowH !== undefined],
+      ["quiet_hours", input.quietHours !== undefined], ["ng_words", input.ngWords !== undefined],
+      ["link_placement", input.linkPlacement !== undefined], ["hook_mode", input.hookMode !== undefined],
+      ["fixed_hook", input.fixedHook !== undefined], ["score_weights", input.scoreWeights !== undefined],
+      ["consecutive_failures", input.enabled === true], ["updated_at", true],
+    ];
+    const updates = fields.map(([column, supplied]) => `${column}=${supplied ? "excluded" : "autopilot"}.${column}`).join(", ");
+    const save = {
+      sql: `INSERT INTO autopilot (account_id, enabled, per_week, slot_mode, fixed_hour, approval_mode,
           approval_window_h, daily_limit, quiet_hours, ng_words, link_placement, hook_mode, fixed_hook,
           score_weights, consecutive_failures, updated_at)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-         ON CONFLICT(account_id) DO UPDATE SET
-           enabled=excluded.enabled, per_week=excluded.per_week, slot_mode=excluded.slot_mode,
-           fixed_hour=excluded.fixed_hour, approval_mode=excluded.approval_mode,
-           approval_window_h=excluded.approval_window_h, daily_limit=excluded.daily_limit,
-           quiet_hours=excluded.quiet_hours, ng_words=excluded.ng_words,
-           link_placement=excluded.link_placement, hook_mode=excluded.hook_mode,
-           fixed_hook=excluded.fixed_hook, score_weights=excluded.score_weights,
-           consecutive_failures=excluded.consecutive_failures, updated_at=excluded.updated_at`,
+         ON CONFLICT(account_id) DO UPDATE SET ${updates}`,
+      params: [
       next.account_id,
       next.enabled,
       next.per_week,
@@ -277,7 +285,18 @@ export function autopilotRoutes() {
       next.score_weights,
       next.consecutive_failures,
       next.updated_at,
-    );
+      ],
+    };
+    if (input.enabled === false) {
+      await db.batch([save, {
+        sql: `UPDATE queue SET status='draft', scheduled_at=NULL, approve_deadline=NULL, next_step_at=NULL, updated_at=?
+          WHERE account_id=? AND source='autopilot' AND status IN ('scheduled','pending_approval') AND result_ids_json='[]'`,
+        params: [next.updated_at, account.id],
+      }]);
+    } else {
+      await db.run(save.sql, ...save.params);
+    }
+    const saved = await loadAutopilot(db, account.id);
 
     if (input.enabled !== undefined && Boolean(input.enabled) !== Boolean(prev.enabled)) {
       await apLog(
@@ -292,7 +311,7 @@ export function autopilotRoutes() {
       });
     }
 
-    return c.json(ok(toResponse(next, blockers)));
+    return c.json(ok(toResponse(saved, blockers)));
   });
 
   return r;

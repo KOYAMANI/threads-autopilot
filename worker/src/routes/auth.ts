@@ -15,7 +15,7 @@ import { fail, type AppEnv } from "../app";
 import { ACCOUNT_COLUMNS, toAccountSummary, type AccountRow } from "../lib/accounts";
 import { audit } from "../lib/audit";
 import type { Db } from "../lib/db";
-import { hashPassword, sha256Hex, verifyPassword } from "../lib/crypto";
+import { hashPassword, passwordHashNeedsUpgrade, sha256Hex, upgradeLegacyPasswordHash, verifyPassword } from "../lib/crypto";
 import { sendEmail } from "../lib/email";
 import {
   clearSessionCookie,
@@ -194,7 +194,7 @@ export function authRoutes() {
       return fail("EMAIL_TAKEN", "このメールアドレスは登録済みです", 409);
     }
 
-    const { hash, salt } = await hashPassword(password);
+    const { hash, salt } = await hashPassword(password, c.env.PASSWORD_PEPPER);
     const userId = crypto.randomUUID();
     const nowIso = now.toISOString();
 
@@ -246,7 +246,7 @@ export function authRoutes() {
     const me = await buildMe(db, userId);
     return new Response(JSON.stringify(ok({ user: me!.user })), {
       status: 201,
-      headers: { "Content-Type": "application/json", "Set-Cookie": sessionCookie(session.id) },
+      headers: { "Content-Type": "application/json", "Set-Cookie": sessionCookie(session.token) },
     });
   });
 
@@ -277,6 +277,7 @@ export function authRoutes() {
     const good = await verifyPassword(
       password,
       user ? { hash: user.pass_hash, salt: user.pass_salt } : DUMMY_PASSWORD,
+      c.env.PASSWORD_PEPPER,
     );
 
     if (!user || !good) {
@@ -294,10 +295,22 @@ export function authRoutes() {
       return fail("LICENSE_REVOKED", "ライセンスが無効化されています", 403);
     }
 
+    const stored = { hash: user.pass_hash, salt: user.pass_salt };
+    if (passwordHashNeedsUpgrade(stored)) {
+      const upgraded = await upgradeLegacyPasswordHash(stored, c.env.PASSWORD_PEPPER);
+      const migrated = await db.run(
+        "UPDATE users SET pass_hash=? WHERE id=? AND pass_hash=? AND pass_salt=?",
+        upgraded.hash, user.id, user.pass_hash, user.pass_salt,
+      );
+      // A concurrent password change must not be overwritten with the verified old password.
+      if (!migrated.changes) return fail("LOGIN_FAILED", "もう一度ログインしてください", 401);
+      stored.hash = upgraded.hash;
+    }
     await rateClear(db, key);
     const nowIso = now.toISOString();
     await db.run("UPDATE users SET last_login_at=? WHERE id=?", nowIso, user.id);
-    const session = await createSession(db, user.id, c.req.header("User-Agent") ?? null, now);
+    const session = await createSession(db, user.id, c.req.header("User-Agent") ?? null, now, stored);
+    if (!session) return fail("LOGIN_FAILED", "もう一度ログインしてください", 401);
     // SPEC §13 M7「ログイン」を監査に残す。UA は端末の見分けがつく程度に切る
     await audit(db, user.id, "login", {
       ua: (c.req.header("User-Agent") ?? "").slice(0, 120),
@@ -307,7 +320,7 @@ export function authRoutes() {
       JSON.stringify(ok({ user: toUserSummary({ ...user, last_login_at: nowIso }) })),
       {
         status: 200,
-        headers: { "Content-Type": "application/json", "Set-Cookie": sessionCookie(session.id) },
+        headers: { "Content-Type": "application/json", "Set-Cookie": sessionCookie(session.token) },
       },
     );
   });
@@ -338,11 +351,11 @@ export function authRoutes() {
     const user = await db.first<{ pass_hash: string; pass_salt: string }>(
       "SELECT pass_hash, pass_salt FROM users WHERE id=?", userId,
     );
-    if (!user || !(await verifyPassword(current_password, { hash: user.pass_hash, salt: user.pass_salt }))) {
+    if (!user || !(await verifyPassword(current_password, { hash: user.pass_hash, salt: user.pass_salt }, c.env.PASSWORD_PEPPER))) {
       return fail("PASSWORD_INCORRECT", "現在のパスワードが違います", 400);
     }
     if (current_password === new_password) return fail("PASSWORD_UNCHANGED", "現在とは異なるパスワードを設定してください", 400);
-    const { hash, salt } = await hashPassword(new_password);
+    const { hash, salt } = await hashPassword(new_password, c.env.PASSWORD_PEPPER);
     const now = new Date().toISOString();
     // CAS prevents concurrent changes from overwriting a password verified earlier.
     // Every revocation is guarded by this request's unique salted hash, in one D1 transaction.
@@ -474,7 +487,7 @@ export function authRoutes() {
     if (Date.parse(row.expires_at) <= now.getTime()) return invalid();
     if (row.token_hash !== (await sha256Hex(token))) return invalid();
 
-    const { hash, salt } = await hashPassword(password);
+    const { hash, salt } = await hashPassword(password, c.env.PASSWORD_PEPPER);
     const nowIso = now.toISOString();
 
     const claimId = crypto.randomUUID();
