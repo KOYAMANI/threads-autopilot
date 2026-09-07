@@ -4,7 +4,7 @@
 
 - GitHub: 非公開 `KOYAMANI/threads-autopilot` を作成し、既存履歴を SSH で保存。`main` は開始時点、`staging` と `codex/staging-foundation` に今回の変更を保存する。
 - ステージング: https://threads-autopilot-staging.yama-threads-apps.workers.dev
-- 最終 Worker version: `1be260ee-46e8-4122-92aa-cd5e8efafaae`。既存stageコードにThreads OAuth用Secretを追加して配信。D1 は 0007/0008/0009 適用済み。
+- 最終 Worker version: `df13a1ec-7a47-4b78-9edd-35b8dcf07dec`。Threads OAuth用Secretと専用テストアカウント初回接続対応を配信。D1 は 0007/0008/0009 適用済み。
 - 本番: 投稿枠・認証強化等の新コードは未配信。既存コードにThreads OAuth用Secretだけを追加した `f7e5b77f-4583-474c-b039-7b776640244f` を配信。実ユーザーのトークン・APのON/OFF・DBスキーマは変更していない。
 - GitHub Actions: 自動承認レビューが有効化を拒否。自動テスト限定での有効化についてユーザー確認待ち。CIはまだ稼働していない。Cloudflare配信用のCI Secretも未登録。
 
@@ -73,3 +73,11 @@ Cron監視は上記確認時点でもnot_observedで未検証のまま。
 2. GitHub Actions有効化の許可後、自動テストを稼働させる。stage配信は環境限定の権限を設定してから。本番の自動配信は無効のまま。
 3. 実Cron到達を確認・原因調査し、実投稿を避けた運用テストを完了する。
 4. 本番の新しいバックアップ取得、PASSWORD_PEPPER登録、0007〜0009適用、最終確認済みコードの配信、既存PWログイン・読取確認を行う。認証変更後は利用者の再ログインが必要。
+
+## 2026-09-08 初回OAuth接続とMetaエラー
+
+`yama_threads.sub` のThreadsテスター招待承諾をMeta管理画面で確認。ID未取得時のみ認証済みプロフィールの指定ユーザー名を照合できるようにし、stageへ配信。関連32テスト・型チェック・stage構成検査が成功。数値IDが取得できたらIDで固定し、ユーザー名の初回照合設定を空にすること。実投稿・削除・メール禁止は維持。コードはfd13ddcを開発・stagingブランチに保存済み。
+
+本人はローカル保存済みstage認証ファイルでログインできたと回答。更新後のstage OAuth開始200、両環境configured=trueを確認。2026-09-07T15:48:51Z時点でCronはnot_observed。CUAはChrome Canaryのウィンドウ名だけを返し、AXもスクリーンショットも取得不可。前面化・再初期化でも改善せず。
+
+本人によるOAuth操作でMetaエラー1349168（redirect URIがホワイトリスト未登録）が発生。アプリ側のclient_id・stage redirect_uriは検証済み。Metaで以前保存操作後にチップ表示までは確認したが、再読込後の永続化確認は不十分だった。Meta設定ページを新しいタブで開いたが、UI内容の取得不可が続いており登録内容を再確認できていない。URLの保存・反映不備か不一致かは未確定。OAuth完了、ID固定、分析同期は未検証。
