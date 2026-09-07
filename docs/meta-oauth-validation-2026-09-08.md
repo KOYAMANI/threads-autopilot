@@ -25,6 +25,10 @@ Validation: 14 callback tests; 55 tests including related account, maintenance, 
 
 The staging button now reaches Meta's consent screen for `yama_threads.sub`; the previous redirect whitelist error is gone. Consent redirects back to the staging callback (HTTP 200). The subsequent app `/api/threads/oauth/complete` request currently returns 502; no staging account has been saved. Investigation is ongoing. Do not claim connection, synchronization, or token renewal has passed yet.
 
+A safe stage-specific diagnostic patch is deployed to staging version `a18dff86-a6d2-4393-a202-24f534b68e1a`. It distinguishes short-token exchange, long-token exchange and profile/save, logging only constant class labels and numeric provider/budget metadata. The patch passed 35 related tests and worker typecheck. The next browser reproduction is blocked because the Mac is locked; the user has been asked to unlock it. No actual failing-stage result has been observed with this patch yet.
+
+Remote post-deployment read-only checks: production retains 1 user, 1 account, 2,599 posts and 0 queued posts; staging has 1 user and 0 connected accounts. Both databases have 31 Meta guards and 0 received callback subjects. No legitimate lifecycle callback or real account deletion was used for verification.
+
 The staging-only username bootstrap remains in place until a successful connection supplies the immutable Threads user ID. Then pin the numeric ID and remove the username fallback.
 
 ## Reference investigation
