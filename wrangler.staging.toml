@@ -34,6 +34,7 @@ crons = ["* * * * *"] # Arrival monitor only; APP_ENV=staging never enqueues job
 [vars]
 APP_ENV = "staging"
 STAGING_THREADS_USER_ID = ""
+STAGING_THREADS_USERNAME = "yama_threads.sub" # Bootstrap; pin authenticated numeric ID after first connection.
 MAINTENANCE_MODE = "0" # set to 1 and deploy before database recovery
 APP_ORIGIN = "https://threads-autopilot-staging.yama-threads-apps.workers.dev"
 DEFAULT_TZ = "Asia/Tokyo"

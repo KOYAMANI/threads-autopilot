@@ -4,8 +4,8 @@
 
 - GitHub: 非公開 `KOYAMANI/threads-autopilot` を作成し、既存履歴を SSH で保存。`main` は開始時点、`staging` と `codex/staging-foundation` に今回の変更を保存する。
 - ステージング: https://threads-autopilot-staging.yama-threads-apps.workers.dev
-- 最終 Worker version: `1fd3c83b-789b-441a-8c3d-a15fe373f063`。D1 は 0007/0008/0009 適用済み。
-- 本番: 今回の変更は未配信。既存の環境・実ユーザー・APIキー・APのON/OFFは変更していない。
+- 最終 Worker version: `1be260ee-46e8-4122-92aa-cd5e8efafaae`。既存stageコードにThreads OAuth用Secretを追加して配信。D1 は 0007/0008/0009 適用済み。
+- 本番: 投稿枠・認証強化等の新コードは未配信。既存コードにThreads OAuth用Secretだけを追加した `f7e5b77f-4583-474c-b039-7b776640244f` を配信。実ユーザーのトークン・APのON/OFF・DBスキーマは変更していない。
 - GitHub Actions: 自動承認レビューが有効化を拒否。自動テスト限定での有効化についてユーザー確認待ち。CIはまだ稼働していない。Cloudflare配信用のCI Secretも未登録。
 
 ## 実装
@@ -46,7 +46,19 @@ UI: 完全なモックAPIを使用して1440px PC / 390pxスマホで確認。10
 
 ## Metaアプリ作成
 
-ユーザーが新しいアプリの作成を明示依頼。ログイン済みChrome Canaryで「Threads Autopilot」、Threads API用途を選び作成確認まで入力。Facebookがパスワード再入力を要求したため本人操作待ち。その後Macがロックされ、アプリID・Secretはまだ取得していない。アプリが作成済みとは扱わない。
+2026-09-08: Chrome Canaryで新規「Threads Autopilot」の作成完了を確認。Meta管理用アプリIDは `1584346690092191`、OAuthに使用するThreads専用アプリIDは `924086796982144`（両者を取り違えない）。既存アプリは変更していない。
+
+threads_basicに加え、実装が要求するthreads_content_publish / threads_manage_insights / threads_read_replies / threads_manage_repliesを追加し、全5権限の「テスト準備完了」を確認。下記のstage/prodリダイレクトURLを保存し、設定画面に両方が残っていることを確認した。
+
+本人によるFacebook再認証後、Threads App Secretを画面から取得。CUAのemit:falseで実値を出力せず、Cloudflareのstage/prod両方にTHREADS_APP_IDとTHREADS_APP_SECRETをSecretとして登録した。ブラウザのパスワード保存は断った。秘密値はGit・会話・ローカルファイルに保存していない。
+
+DashboardでのSecret登録は新しい未配信バージョンを作るだけだったため、登録前後のバージョンを比較。既存bindingsとscript_runtimeは同一、script情報の差分はlast_deployed_fromのみで、新規bindingsは認証用Secretの2項目だけであることを確認して、stage→prodの順でそのバージョンを配信した。本番へ開発中の新コードは配信していない。
+
+2026-09-07T15:36:29Z: 両環境で本人ログイン後のGET /api/threads/oauth/statusが200・configured=true。stageのPOST /api/threads/oauth/startは200で、認証ホストthreads.net、Threads専用アプリID、stage戻り先URL、5スコープが正しいことを確認。チェック用セッションはログアウト済み。認可の同意・トークン交換・実アカウント接続はまだ未検証。
+
+Metaアプリは未公開。公開画面はプライバシーポリシーURL不足を表示し、「公開する」が無効。ユースケースとアプリレビュー承認の確認も案内されている。アプリには公開済みプライバシーポリシーの実装がまだ見当たらない。指定された `yama_threads.sub` をThreadsテスターとして追加。本人から招待承諾の連絡後、Metaを再読込して「承認待ち」が消えたことを確認済み。stageは初回接続時のみ認証済みプロフィールの指定ユーザー名を照合し、その後に数値IDへ固定する準備を進める。Chrome Canaryのstageは未ログイン、Threadsは確認時点でyama_threadsだったため、stageとsubアカウントへの本人ログインを依頼済み。yama_threadsでの投稿テストは行わない。
+
+Cron監視は上記確認時点でもnot_observedで未検証のまま。
 
 戻り先URL:
 

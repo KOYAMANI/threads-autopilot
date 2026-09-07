@@ -325,7 +325,13 @@ export async function connectThreadsAccount(c: Context<AppEnv>, token: string, a
     const now = new Date();
     const options: CallOptions = { budget: c.get("budget"), env: c.env };
 
-    if (c.env.APP_ENV === "staging" && !c.env.STAGING_THREADS_USER_ID) {
+    const stagingId = c.env.STAGING_THREADS_USER_ID?.trim();
+    const normalizeUsername = (value: string | undefined) => value?.trim().replace(/^@/, "").toLowerCase() ?? "";
+    const normalizedStagingUsername = normalizeUsername(c.env.STAGING_THREADS_USERNAME);
+    const stagingUsername = /^[a-z0-9._]{1,30}$/.test(normalizedStagingUsername)
+      ? normalizedStagingUsername
+      : "";
+    if (c.env.APP_ENV === "staging" && !stagingId && !stagingUsername) {
       return fail("STAGING_ACCOUNT_REQUIRED", "ステージング用のThreadsアカウントが未設定です。本番のトークンは入力しないでください", 409);
     }
     // 接続確認
@@ -334,7 +340,12 @@ export async function connectThreadsAccount(c: Context<AppEnv>, token: string, a
       return fail("THREADS_ERROR", "Threadsのアカウント情報を取得できませんでした", 502);
     }
 
-    if (c.env.APP_ENV === "staging" && profile.id !== c.env.STAGING_THREADS_USER_ID) {
+    // Only trust the profile returned for the authenticated token, never request input.
+    // Once pinned, the immutable ID is authoritative even when the username also matches.
+    const stagingAccountMatches = stagingId
+      ? profile.id === stagingId
+      : Boolean(stagingUsername) && normalizeUsername(profile.username) === stagingUsername;
+    if (c.env.APP_ENV === "staging" && !stagingAccountMatches) {
       return fail("STAGING_ACCOUNT_REQUIRED", "ステージング専用アカウントのみ接続できます", 403);
     }
     const existing = await db.first<AccountRow>(
