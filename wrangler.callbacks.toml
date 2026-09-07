@@ -1,0 +1,20 @@
+# Dedicated Meta lifecycle callbacks; no app assets, scheduled jobs, or publishing.
+name = "threads-autopilot-meta-callbacks"
+account_id = "983c65a0c3fccb8c1a40ac8ca7e8c3d4"
+main = "callbacks/src/index.ts"
+compatibility_date = "2026-08-01"
+
+[vars]
+CALLBACK_ORIGIN = "https://threads-autopilot-meta-callbacks.yama-threads-apps.workers.dev"
+
+[[d1_databases]]
+binding = "DB_PRODUCTION"
+database_name = "threads-autopilot"
+database_id = "89935cef-db44-49c9-b0aa-50cc8105a786"
+
+[[d1_databases]]
+binding = "DB_STAGING"
+database_name = "threads-autopilot-staging"
+database_id = "dcce5294-b2de-4c72-9a81-5dc6f6d2e00a"
+
+# THREADS_APP_SECRET is set as a Cloudflare Worker secret; never commit its value.

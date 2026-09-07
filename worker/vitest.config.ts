@@ -9,15 +9,18 @@ export default defineConfig(async () => {
   // マイグレーションを読み、setup で各テストの D1 に流し込む（SPEC §14）
   const migrations = await readD1Migrations(path.join(dir, "migrations"));
 
+  const callbackMigrations = await readD1Migrations(path.join(dir, "../ops"));
+
   return {
     plugins: [
       cloudflareTest({
         miniflare: {
           compatibilityDate: "2026-08-01",
           compatibilityFlags: ["nodejs_compat"],
-          d1Databases: { DB: "test-db" },
+          d1Databases: { DB: "test-db", DB_PRODUCTION: "test-meta-prod", DB_STAGING: "test-meta-stage" },
           bindings: {
             TEST_MIGRATIONS: migrations,
+            TEST_META_CALLBACK_MIGRATIONS: callbackMigrations,
             APP_ORIGIN: "http://localhost:5173",
             DEFAULT_TZ: "Asia/Tokyo",
             MAX_SUBREQUESTS: "300",
