@@ -15,3 +15,7 @@
 ユーザー名は変更・再利用される可能性があるため、名前での照合は初回接続のための一時設定とする。ID固定後は同じテストアカウントが改名しても接続できる。
 
 この設定は投稿許可ではない。ステージングのThreads POST/DELETE拒否、メール送信停止、Cronの監視専用動作はそのまま維持する。本番設定への追加は不要。
+
+## Bootstrap completed (2026-09-08 JST)
+
+The browser OAuth flow authenticated `yama_threads.sub` as Threads user `28121200714239994`. Staging now pins that immutable ID and clears the username fallback. Initial synchronization completed with 445 posts and the profile avatar present. The stage remains unable to publish or send email.

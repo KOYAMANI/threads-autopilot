@@ -8,6 +8,7 @@ import {
   sheetsSyncJob,
   SHEET_TABS,
 } from "../src/jobs/sheets";
+import { createBudget } from "../src/lib/budget";
 import { googleRequest } from "../src/lib/google";
 
 beforeEach(async () => {
@@ -32,6 +33,7 @@ function installGoogle() {
   vi.stubGlobal(
     "fetch",
     async (input: RequestInfo | URL, init?: RequestInit) => {
+      new Request(String(input), init); // Validate real Workers request options before mocking transport.
       const url = String(input),
         body = String(init?.body ?? "");
       calls.push({ url, body });
@@ -356,4 +358,17 @@ it("repair is owned by the current user and only resets a failed connection", as
     a.userId,
   );
   expect(row).toEqual({ spreadsheet_id: null, status: "connected" });
+});
+
+it("never forwards Google credentials to a redirect target", async () => {
+  const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(String(input), init);
+    expect(request.redirect).toBe("manual");
+    return new Response(null, {status:302,headers:{Location:"https://attacker.example/?secret=private-marker"}});
+  });
+  vi.stubGlobal("fetch", fetcher);
+  await expect(googleRequest(testDb(),createBudget(),"https://oauth2.googleapis.com/token",{
+    method:"POST",body:new URLSearchParams({client_secret:"synthetic-secret"}),
+  })).rejects.toMatchObject({kind:"temporary"});
+  expect(fetcher).toHaveBeenCalledTimes(1);
 });
