@@ -29,13 +29,15 @@ database_id = "dcce5294-b2de-4c72-9a81-5dc6f6d2e00a"
 migrations_dir = "worker/migrations"
 
 [triggers]
-crons = ["* * * * *"] # Monitor by default; dispatches only explicitly enabled reviewer manual posts.
+crons = ["* * * * *"] # Dispatch only explicitly granted reviewer/student manual posts.
 
 [vars]
 APP_ENV = "staging"
+STAGING_BETA_PUBLISHING = "1"
+STAGING_BETA_UNTIL = "2026-12-31T23:59:59Z"
 STAGING_THREADS_USER_ID = "28121200714239994"
 STAGING_THREADS_USERNAME = "" # OAuth-verified immutable ID is pinned above.
-# Dedicated Meta reviewer only. Ordinary staging logins remain unable to publish.
+# Dedicated Meta reviewer; student grants are separately scoped in D1.
 STAGING_REVIEW_PUBLISHING = "1"
 STAGING_REVIEW_USER_ID = "86ff2600-c8a7-4d04-9ed2-a8480b2c6bae"
 STAGING_REVIEW_UNTIL = "2027-10-01T00:00:00Z"

@@ -5,7 +5,8 @@
  * ステップの組み立ては `jobs/publish.ts`（SPEC §8.3）。
  */
 import { DEV, type Env } from "../env";
-import { canPublishForUser } from "./staging-review-policy";
+import { publishingEnabledForUser, canPublishForAccount } from "./staging-beta-policy";
+import { createDb } from "./db";
 import type { Budget } from "./budget";
 import { redact } from "./redact";
 import {
@@ -38,6 +39,7 @@ export type CallOptions = {
   env: Env;
   /** Set only by the account-owned publishing job; never read from request input. */
   publishingUserId?: string;
+  publishingThreadsUserId?: string;
   /** テストで時刻・待機を差し替えるための注入点 */
   now?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -85,13 +87,14 @@ export async function call(
   const { budget, env } = options;
   const p = path.startsWith("/") ? path : `/${path}`;
   if (env.APP_ENV === "staging" && method !== "GET") {
-    if (!canPublishForUser(env, options.publishingUserId, options.now ?? Date.now())
+    const publishingDb = createDb(env.DB, budget);
+    if (!await publishingEnabledForUser(env, publishingDb, options.publishingUserId, options.now ?? Date.now())
       || method !== "POST" || !["/me/threads", "/me/threads_publish"].includes(p)) {
       throw new ThreadsApiError({code:403, message:"ステージングではThreadsへの投稿操作を停止しています", raw:""});
     }
     // Verify the actual token owner immediately before each irreversible request.
     const identity = await call(token, "GET", "/me", {fields:"id"}, options) as {id?:string};
-    if (identity.id !== env.STAGING_THREADS_USER_ID) {
+    if (!identity.id || (options.publishingThreadsUserId && identity.id !== options.publishingThreadsUserId) || !await canPublishForAccount(env, publishingDb, options.publishingUserId!, identity.id, options.now ?? Date.now())) {
       throw new ThreadsApiError({code:403, message:"審査用プロフィールと一致しないため投稿を停止しました", raw:""});
     }
   }

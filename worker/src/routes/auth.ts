@@ -1,3 +1,4 @@
+import { publishingEnabledForUser } from "../lib/staging-beta-policy";
 /**
  * 認証（SPEC §5.1 / §5.3 / §5.4 / §7）。
  * register / login / logout / me / forgot / reset。
@@ -160,8 +161,8 @@ async function buildMe(db: Db, userId: string): Promise<MeResponse | null> {
 
 export function authRoutes() {
   const r = new Hono<AppEnv>();
-  r.get("/publishing-capability", c => c.json(ok({
-    enabled: canPublishForUser(c.env, c.get("userId")),
+  r.get("/publishing-capability", async c => c.json(ok({
+    enabled: await publishingEnabledForUser(c.env, c.get("db"), c.get("userId")),
     review: c.env.APP_ENV === "staging" && canPublishForUser(c.env, c.get("userId")),
   })));
 

@@ -1,3 +1,4 @@
+import { betaPublishingActive, claimBetaProfile } from "../lib/staging-beta-policy";
 /**
  * アカウント（SPEC §7.1）。
  * すべて `accounts.user_id` が本人かを確かめてから触る。
@@ -331,7 +332,7 @@ export async function connectThreadsAccount(c: Context<AppEnv>, token: string, a
     const stagingUsername = /^[a-z0-9._]{1,30}$/.test(normalizedStagingUsername)
       ? normalizedStagingUsername
       : "";
-    if (c.env.APP_ENV === "staging" && !stagingId && !stagingUsername) {
+    if (c.env.APP_ENV === "staging" && !stagingId && !stagingUsername && !betaPublishingActive(c.env)) {
       return fail("STAGING_ACCOUNT_REQUIRED", "ステージング用のThreadsアカウントが未設定です。本番のトークンは入力しないでください", 409);
     }
     // 接続確認
@@ -345,8 +346,8 @@ export async function connectThreadsAccount(c: Context<AppEnv>, token: string, a
     const stagingAccountMatches = stagingId
       ? profile.id === stagingId
       : Boolean(stagingUsername) && normalizeUsername(profile.username) === stagingUsername;
-    if (c.env.APP_ENV === "staging" && !stagingAccountMatches) {
-      return fail("STAGING_ACCOUNT_REQUIRED", "ステージング専用アカウントのみ接続できます", 403);
+    if (c.env.APP_ENV === "staging" && !stagingAccountMatches && !await claimBetaProfile(c.env, db, userId, profile)) {
+      return fail("STAGING_ACCOUNT_REQUIRED", "このログインで許可された検証用Threadsアカウントのみ接続できます。招待キーと接続先アカウントを確認してください", 403);
     }
     const existing = await db.first<AccountRow>(
       `SELECT ${ACCOUNT_COLUMNS} FROM accounts WHERE user_id=? AND threads_user_id=?`,

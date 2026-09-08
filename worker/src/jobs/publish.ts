@@ -15,7 +15,7 @@
  * 二重投稿の防止: Threads への publish が1回成功するたびに、**次に進む前に**
  * `result_ids_json` を保存する。途中で落ちても、再開時は保存済みの step から続く。
  */
-import { canPublishForUser } from "../lib/staging-review-policy";
+import { canPublishForAccount } from "../lib/staging-beta-policy";
 import { buildTags, startOfTzDay, validatePost, type PostTags } from "@tap/shared";
 import { accountToken, loadAccount, type AccountRow } from "../lib/accounts";
 import { apLog, loadAutopilot } from "../lib/autopilot";
@@ -696,8 +696,7 @@ export async function publishJob(ctx: JobContext, job: RunningJob): Promise<void
   if (!job.accountId) return;
   const account = await loadAccount(ctx.db, job.accountId);
   if (!account) return;
-  if (!canPublishForUser(ctx.env, account.user_id, ctx.now.getTime())) return;
-  if (ctx.env.APP_ENV === "staging" && account.threads_user_id !== ctx.env.STAGING_THREADS_USER_ID) return;
+  if (!await canPublishForAccount(ctx.env, ctx.db, account.user_id, account.threads_user_id, ctx.now.getTime())) return;
 
   if (await licenseRevoked(ctx, account)) {
     await ctx.db.run("UPDATE autopilot SET enabled=0, updated_at=? WHERE account_id=?", ctx.now.toISOString(), account.id);
@@ -714,7 +713,7 @@ export async function publishJob(ctx: JobContext, job: RunningJob): Promise<void
   if (account.status !== "ok") return;
 
   const token = await accountToken(ctx.env, account);
-  const call: CallOptions = { budget: ctx.budget, env: ctx.env, now: ctx.now.getTime(), publishingUserId: account.user_id };
+  const call: CallOptions = { budget: ctx.budget, env: ctx.env, now: ctx.now.getTime(), publishingUserId: account.user_id, publishingThreadsUserId: account.threads_user_id };
   const nowIso = ctx.now.toISOString();
 
   for (let i = 0; i < (ctx.env.WORKERS_PLAN === "free" ? 1 : MAX_STEPS_PER_RUN); i++) {

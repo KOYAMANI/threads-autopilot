@@ -1,3 +1,7 @@
+# 更新案内
+
+2026-09-08に審査用投稿と生徒3人・5プロフィール限定投稿を追加済み。以下は初回ブートストラップ時の記録。現在の運用は [ナレッジ](threads-autopilot-knowledge.md) を参照。
+
 # ステージング専用Threadsアカウントの初回接続
 
 初回のOAuth接続では、まだ数値のThreadsユーザーIDが分からないため、`STAGING_THREADS_USER_ID` が空の場合に限り `STAGING_THREADS_USERNAME` を照合できる。今回の指定は `yama_threads.sub`。
