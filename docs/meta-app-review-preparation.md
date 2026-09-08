@@ -4,7 +4,7 @@
 
 ## 1. 申請前に解消するブロッカー
 
-**Meta管理画面で Tech Provider 登録が要求されている。** `threads_basic` → アクション → アプリレビューに追加を実行した際に、`To add a permission or feature to App Review, become a Tech Provider` と表示された。Business Verification、Access Verification、データの取り扱い・保護に関する回答を求める画面で、Tech Provider と認定された後は決定を取り消せない旨の注意がある。Continue は押していない。運営者が不可逆の登録内容を確認・判断し、必要な事業者情報と証明資料を用意する必要がある。コード修正だけでは完了しない。
+**Meta管理画面で Tech Provider 登録が要求されている。** `threads_basic` → アクション → アプリレビューに追加を実行した際に、`To add a permission or feature to App Review, become a Tech Provider` と表示された。Business Verification、Access Verification、データの取り扱い・保護に関する回答を求める画面で、Tech Provider と認定された後は決定を取り消せない旨の注意がある。ユーザーの明示承認を受け、2026-09-08に Continue を実行した。「認証」「アプリレビュー」のメニューが表示される状態になった。その後、ユーザー指定の既存ポートフォリオ `yama_skill`（ID `608992394964510`）へ接続し、「アプリは現在yama_skillによって管理されています」の完了表示と再読み込み後の所有先を確認した。ビジネス認証は未認証。アクセス認証の開始にはビジネス認証の完了が必要と表示されている。Tech Providerの必要な認証がすべて完了した状態ではない。事業者情報と証明資料の確認を続ける。
 
 管理画面が案内する公式資料: [Tech Providers](https://developers.facebook.com/docs/development/release/tech-providers/)、[Business Verification](https://developers.facebook.com/docs/development/release/business-verification/)、[Access Verification](https://developers.facebook.com/docs/development/release/access-verification/)、[App Review概要](https://developers.facebook.com/documentation/resp-plat-initiatives/individual-processes/app-review)、[App Reviewの提出内容](https://developers.facebook.com/documentation/resp-plat-initiatives/individual-processes/app-review/content)。Tech Provider資料の機械取得は429で制限されたため、不可逆の登録要求は実際の管理画面の表示を根拠にしている。後者2件の公式App Review資料はブラウザで確認済み。**審査日数・承認日は未確認。固定日数や承認保証を案内しない。** 登録審査、権限審査、差し戻し対応を分けて進捗管理する。
 
@@ -20,6 +20,14 @@
 - 審査用のアプリログイン、Meta側で使用するテストプロフィール、必要なアクセス範囲を決める。ステージングの招待キーだけでは、Metaの開発モードのテスター登録や招待承認を代替しない。今回4人分のキーを発行したが、キー自体は本書に含めない。
 
 最新の実測結果は [OAuth検証記録](meta-oauth-validation-2026-09-08.md) と [投稿ボタンのステージング検証](publish-actions-staging-2026-09-08.md)、通知処理の制約は [Meta callbacks](meta-callbacks.md) を参照。
+
+### 2026-09-08 認証フォームの実確認
+
+- Business Suiteの認証開始ウィザードを開いた。ビジネス名・住所・電話番号・メール・Webサイトで公的記録を検索し、記録が見つからない場合は書類提出、続いて本人と事業の関係を確認する流れ。
+- ユーザーは個人事業主と回答。提供された事業紹介ページは https://koyamani.github.io/lp/ 。同ページに販売事業者名と連絡先の掲載があるが、書類との一致・現在の正確性は未確認。架空の法人名・法人番号は入力しない。
+- Meta公式の書類案内 https://business.facebook.com/business/help/159334372093366 をブラウザで確認。正式名称と住所または電話番号が必要。登録・ライセンス書類、公的税務書類、事業用銀行明細等を案内し、公共料金は住所・電話の認証のみ。日本語対応。Webサイトのみでこの書類確認を代替できるとは記載されていない。日本の個人事業主で実際に受理される書類は、本人の所持書類と認証フローで確認が必要。
+- LPは講座紹介であり、Threads Autopilotの製品説明・データ処理に合わせたポリシーは別途必要。
+- Meta App Reviewには5権限の未申請リクエストが表示された。申請下書きIDは `1584686080058252`。審査提出・事業者認証の承認は未完了。
 
 ## 2. アプリ説明（英語・提出候補）
 
