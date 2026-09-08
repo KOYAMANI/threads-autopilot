@@ -37,6 +37,8 @@ async function saveKey(
   return api("PUT", "/api/ai/settings", {
     cookie,
     body: {
+      acceptDataPolicy: true,
+      geminiBillingConfirmed: true,
       provider: options.provider ?? "gemini",
       key: options.key ?? "AIzaTESTKEY0123456789",
       storeOnServer: options.storeOnServer,
@@ -140,15 +142,15 @@ describe("/api/ai/settings（SPEC §7.6）", () => {
     expect((await testDb().first<{key_enc:string}>("SELECT key_enc FROM ai_settings WHERE user_id=?",userId))?.key_enc).toBe(before?.key_enc);
   });
 
-  it("モデルだけ変えるときはサーバー保存のキーを消さない", async () => {
+  it("条件の再確認でキーを省略してもサーバー保存のキーを消さない", async () => {
     const { cookie, userId } = await setup("ai4");
     await saveKey(cookie, { storeOnServer: true, key: "AIzaKEEPME0123456789" });
     const res = await api("PUT", "/api/ai/settings", {
       cookie,
-      body: { provider: "gemini", model: "gemini-2.5-pro", storeOnServer: true },
+      body: { acceptDataPolicy: true, geminiBillingConfirmed: true, provider: "gemini", model: "gemini-2.5-flash", storeOnServer: true },
     });
     expect(res.body.data.hasKey).toBe(true);
-    expect(res.body.data.model).toBe("gemini-2.5-pro");
+    expect(res.body.data.model).toBe("gemini-2.5-flash");
     const row = await testDb().first<{ key_enc: string | null }>(
       "SELECT key_enc FROM ai_settings WHERE user_id=?",
       userId,

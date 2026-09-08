@@ -29,6 +29,7 @@ import {
   recentAutoTags,
   type AutopilotRow,
 } from "../lib/autopilot";
+import { hasAiDataConsent } from "@tap/shared";
 import { AiError, buildContext, defaultModel, generateRaw, readCandidates, systemPrompt } from "../lib/ai";
 import { decrypt } from "../lib/crypto";
 import type { Db } from "../lib/db";
@@ -126,8 +127,9 @@ async function serverKey(ctx: JobContext, userId: string): Promise<ResolvedKey> 
     key_enc: string | null;
     model: string | null;
     store_on_server: number;
+    data_policy_version: string | null;
   }>(
-    "SELECT provider, key_enc, model, store_on_server FROM ai_settings WHERE user_id=?",
+    "SELECT provider, key_enc, model, store_on_server, data_policy_version FROM ai_settings WHERE user_id=?",
     userId,
   );
   if (!row || !row.store_on_server || !row.key_enc) {
@@ -136,6 +138,7 @@ async function serverKey(ctx: JobContext, userId: string): Promise<ResolvedKey> 
       "AIキーがサーバーに保存されていません（オートパイロットにはサーバー保存が必要です）",
     );
   }
+  if (!hasAiDataConsent(row)) throw new AiError("AI_KEY_REQUIRED", "設定でAIの送信先と利用条件を確認して保存してください", null, false);
   const provider = row.provider as "gemini" | "openrouter";
   return {
     provider,

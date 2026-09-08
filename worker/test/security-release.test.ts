@@ -129,7 +129,7 @@ it("logout removes only the current device push registration; AI deletion clears
     (
       await api("PUT", "/api/ai/settings", {
         cookie: a.cookie,
-        body: { provider: "gemini", key: "test-only-key", storeOnServer: true },
+        body: { acceptDataPolicy: true, geminiBillingConfirmed: true, provider: "gemini", key: "test-only-key", storeOnServer: true },
       })
     ).status,
   ).toBe(200);

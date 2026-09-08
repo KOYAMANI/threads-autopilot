@@ -157,7 +157,7 @@ describe("daily autopilot limits", () => {
   });
   it("fills three slots in separate Free jobs, preserves manual approval and stops at the target", async () => {
     const f = await fixture(); await setTimes(f);
-    await api("PUT", "/api/ai/settings", { cookie: f.cookie, body: { provider: "gemini", key: "AIzaTESTKEY0123456789", storeOnServer: true } });
+    await api("PUT", "/api/ai/settings", { cookie: f.cookie, body: { acceptDataPolicy: true, geminiBillingConfirmed: true, provider: "gemini", key: "AIzaTESTKEY0123456789", storeOnServer: true } });
     for (let i = 0; i < 5; i++) await api("POST", "/api/sources", { cookie: f.cookie, body: { type: "text", title: `ネタ源${i + 1}`, content: `内容${i + 1}` } });
     const enabled = await api("PUT", `${f.base}/autopilot`, { cookie: f.cookie, body: { enabled: true, dailyLimit: 3, approvalMode: "manual", linkPlacement: "none" } });
     expect(enabled.status).toBe(200);

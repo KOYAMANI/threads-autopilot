@@ -9,7 +9,7 @@
  * 生成と修正以外に AI は使わない（§10 冒頭）。
  */
 import { Hono } from "hono";
-import { classifyHook, ok } from "@tap/shared";
+import { classifyHook, ok, AI_DATA_POLICY_VERSION, hasAiDataConsent, isAllowedAiModel } from "@tap/shared";
 import type { AiCandidate, AiHistoryTurn, AiProvider } from "@tap/shared";
 import { z } from "zod";
 import { fail, type AppEnv } from "../app";
@@ -60,6 +60,8 @@ async function aiRateLimit(
 const TEMPLATE_COUNT = 3;
 
 const putSchema = z.object({
+  acceptDataPolicy: z.literal(true),
+  geminiBillingConfirmed: z.boolean().optional(),
   provider: z.enum(PROVIDERS),
   key: z.string().trim().max(500).optional(),
   model: z.string().trim().max(200).optional(),
@@ -105,11 +107,12 @@ type AiSettingsRow = {
   model: string | null;
   store_on_server: number;
   updated_at: string;
+  data_policy_version: string | null;
 };
 
 async function loadSettings(db: Db, userId: string): Promise<AiSettingsRow | null> {
   return db.first<AiSettingsRow>(
-    "SELECT user_id, provider, key_enc, model, store_on_server, updated_at FROM ai_settings WHERE user_id=?",
+    "SELECT user_id, provider, key_enc, model, store_on_server, updated_at, data_policy_version FROM ai_settings WHERE user_id=?",
     userId,
   );
 }
@@ -122,6 +125,7 @@ function toSummary(row: AiSettingsRow | null) {
       hasKey: false,
       storeOnServer: true,
       autopilotAvailable: false,
+      dataPolicyAccepted: false,
     };
   }
   const storeOnServer = Boolean(row.store_on_server);
@@ -132,7 +136,8 @@ function toSummary(row: AiSettingsRow | null) {
     hasKey,
     storeOnServer,
     // サーバーが自動生成のときにキーを読めないので、端末保存ではオートパイロットを使えない
-    autopilotAvailable: hasKey,
+    autopilotAvailable: hasKey && hasAiDataConsent(row),
+    dataPolicyAccepted: hasAiDataConsent(row),
   };
 }
 
@@ -145,6 +150,7 @@ async function resolveKey(
   if (!row) {
     throw new AiError("AI_KEY_REQUIRED", "AIキーが設定されていません。設定から登録してください");
   }
+  if (!hasAiDataConsent(row)) throw new AiError("AI_KEY_REQUIRED", "設定でAIの送信先と利用条件を確認して保存してください", null, false);
   const provider = row.provider as AiProvider;
   const model = row.model && row.model.trim() !== "" ? row.model : defaultModel(provider);
 
@@ -260,6 +266,8 @@ export function aiRoutes() {
     const parsed = putSchema.safeParse(body);
     if (!parsed.success) return fail("BAD_REQUEST", "入力に誤りがあります", 400);
     const input = parsed.data;
+    if (!isAllowedAiModel(input.provider, input.model)) return fail("BAD_REQUEST", "対応モデルを選んでください", 400);
+    if (input.provider === "gemini" && input.geminiBillingConfirmed !== true) return fail("BAD_REQUEST", "Geminiは課金が有効なプロジェクトのキーであることを確認してください", 400);
     const db = c.get("db");
     const userId = c.get("userId")!;
     const prev = await loadSettings(db, userId);
@@ -275,17 +283,18 @@ export function aiRoutes() {
     }
 
     await db.run(
-      `INSERT INTO ai_settings (user_id, provider, key_enc, model, store_on_server, updated_at)
-         VALUES (?,?,?,?,?,?)
+      `INSERT INTO ai_settings (user_id, provider, key_enc, model, store_on_server, updated_at, data_policy_version)
+         VALUES (?,?,?,?,?,?,?)
          ON CONFLICT(user_id) DO UPDATE SET
            provider=excluded.provider, key_enc=excluded.key_enc, model=excluded.model,
-           store_on_server=excluded.store_on_server, updated_at=excluded.updated_at`,
+           store_on_server=excluded.store_on_server, updated_at=excluded.updated_at, data_policy_version=excluded.data_policy_version`,
       userId,
       input.provider,
       keyEnc,
       input.model && input.model !== "" ? input.model : defaultModel(input.provider),
       input.storeOnServer ? 1 : 0,
       new Date().toISOString(),
+      AI_DATA_POLICY_VERSION,
     );
 
     const next = await loadSettings(db, userId);
@@ -294,6 +303,8 @@ export function aiRoutes() {
       provider: input.provider,
       storeOnServer: input.storeOnServer,
       keyReplaced: Boolean(input.key && input.key !== ""),
+      dataPolicyVersion: AI_DATA_POLICY_VERSION,
+      geminiBillingConfirmed: input.provider === "gemini" && input.geminiBillingConfirmed === true,
     });
     return c.json(ok(toSummary(next)));
   });
@@ -301,7 +312,7 @@ export function aiRoutes() {
   r.delete("/settings/key", async (c) => {
     const db = c.get("db"), userId = c.get("userId")!;
     await db.batch([
-      { sql: "UPDATE ai_settings SET key_enc=NULL, store_on_server=1, updated_at=? WHERE user_id=?", params: [new Date().toISOString(), userId] },
+      { sql: "UPDATE ai_settings SET key_enc=NULL, data_policy_version=NULL, store_on_server=1, updated_at=? WHERE user_id=?", params: [new Date().toISOString(), userId] },
       { sql: "UPDATE autopilot SET enabled=0 WHERE account_id IN (SELECT id FROM accounts WHERE user_id=?)", params: [userId] },
     ]);
     await audit(db, userId, "ai_key_delete", {});

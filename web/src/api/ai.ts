@@ -48,6 +48,8 @@ export function useSaveAiSettings() {
       key?: string;
       model?: string;
       storeOnServer: boolean;
+      acceptDataPolicy: true;
+      geminiBillingConfirmed?: boolean;
     }) => api.put<AiSettingsResponse>("/ai/settings", body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: aiSettingsKey });

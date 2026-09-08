@@ -11,7 +11,7 @@
  * - キーの所在: `store_on_server=1` なら DB の `key_enc`、`0` ならリクエストの `clientKey`
  */
 import type { AiCandidate, AiHistoryTurn, AiProvider } from "@tap/shared";
-import { AI_DEFAULT_MODEL } from "@tap/shared";
+import { AI_DEFAULT_MODEL, isAllowedAiModel } from "@tap/shared";
 import { DEV, type Env } from "../env";
 import type { Budget } from "./budget";
 import { redact } from "./redact";
@@ -232,16 +232,17 @@ const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 /** リクエストの組み立て。テストはここを直接見る。 */
 export function buildRequest(input: AiCallInput): AiRequestPlan {
+  if (!isAllowedAiModel(input.provider, input.model)) throw new AiError("AI_KEY_REQUIRED", "このモデルは利用できません。設定で対応モデルを選び直してください", null, false);
   if (input.provider === "gemini") {
     const parts: unknown[] = [{ text: input.user }];
     for (const url of input.youtubeUrls ?? []) {
       parts.push({ file_data: { file_uri: url } });
     }
     return {
-      url: `${GEMINI_BASE}/${encodeURIComponent(input.model)}:generateContent?key=${encodeURIComponent(input.apiKey)}`,
+      url: `${GEMINI_BASE}/${encodeURIComponent(input.model)}:generateContent`,
       init: {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-goog-api-key": input.apiKey },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: input.system }] },
           contents: [{ role: "user", parts }],
@@ -263,6 +264,7 @@ export function buildRequest(input: AiCallInput): AiRequestPlan {
       },
       body: JSON.stringify({
         model: input.model,
+        provider: { only: ["amazon-bedrock/us"], order: ["amazon-bedrock/us"], allow_fallbacks: false, require_parameters: true, data_collection: "deny", zdr: true },
         messages: [
           { role: "system", content: input.system },
           { role: "user", content: input.user },
@@ -314,7 +316,7 @@ async function callOnce(
   const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? AI_TIMEOUT_MS);
   options.budget?.subrequests.use();
   try {
-    const res = await doFetch(plan.url, { ...plan.init, signal: controller.signal });
+    const res = await doFetch(plan.url, { ...plan.init, redirect: "error", signal: controller.signal });
     const text = await res.text();
     if (res.status === 429) throw new AiError("AI_FAILED", "AIサービスの利用制限に達しました。時間を置くか、プロバイダーの利用枠をご確認ください", null, false);
     if (!res.ok) {

@@ -88,7 +88,7 @@ export default function Create() {
   const keyReady = useMemo(() => {
     const s = settings.data;
     if (!s || !s.provider) return false;
-    return s.storeOnServer && s.hasKey;
+    return s.storeOnServer && s.hasKey && s.dataPolicyAccepted;
   }, [settings.data]);
 
   if (!account) return <p className="muted">アカウントがありません。</p>;
@@ -292,13 +292,13 @@ export default function Create() {
           </button>
         ) : (
           <div className="msg msg-warn section" role="status">
-            <p>AIキーがまだ設定されていません。</p>
+            <p>{settings.data?.hasKey ? "AIの送信先と利用条件の確認が必要です。設定で確認して保存してください。" : "AIキーがまだ設定されていません。"}</p>
             <button
               type="button"
               className="btn section"
               onClick={() => navigate("/app/settings")}
             >
-              設定でキーを登録する
+              AI設定を確認する
             </button>
           </div>
         )}

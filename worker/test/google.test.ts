@@ -177,7 +177,7 @@ it("creates a private sheet and exports only the current users allowlisted data 
     );
   await api("PUT", "/api/ai/settings", {
     cookie: a.cookie,
-    body: { provider: "gemini", key: "test-ai-secret", storeOnServer: true },
+    body: { acceptDataPolicy: true, geminiBillingConfirmed: true, provider: "gemini", key: "test-ai-secret", storeOnServer: true },
   });
   const calls = installGoogle();
   const job: RunningJob = {

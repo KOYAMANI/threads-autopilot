@@ -30,7 +30,7 @@ it("legacy local credentials are never added to an AI request", () => {
         hasKey: false,
         provider: "gemini",
         model: null,
-        autopilotAvailable: false,
+        dataPolicyAccepted: false, autopilotAvailable: false,
       },
       { instruction: "hello" },
     ),

@@ -390,7 +390,7 @@ describe("監査ログ audit_log", () => {
     expect(
       (await api("PUT", "/api/ai/settings", {
         cookie: user.cookie,
-        body: { provider: "gemini", key: "AIzaSecretKeyValue123456", storeOnServer: true },
+        body: { acceptDataPolicy: true, geminiBillingConfirmed: true, provider: "gemini", key: "AIzaSecretKeyValue123456", storeOnServer: true },
       })).status,
     ).toBe(200);
 

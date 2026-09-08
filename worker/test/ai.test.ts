@@ -39,12 +39,13 @@ const GOOD = JSON.stringify({
 /* ── リクエストの組み立て（SPEC §10.1） ─────────────── */
 
 describe("buildRequest（SPEC §10.1）", () => {
-  it("Gemini は generateContent にキーをクエリで付け、JSON 固定にする", () => {
+  it("Gemini はキーをURLに含めずヘッダーへ付け、JSON 固定にする", () => {
     const plan = buildRequest({ ...BASE, provider: "gemini" });
     expect(plan.url).toContain(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
     );
-    expect(plan.url).toContain("key=AIza-test-key-000");
+    expect(plan.url).not.toContain("key=");
+    expect(new Headers(plan.init.headers).get("x-goog-api-key")).toBe(BASE.apiKey);
     const body = JSON.parse(String(plan.init.body));
     expect(body.generationConfig.responseMimeType).toBe("application/json");
     expect(body.systemInstruction.parts[0].text).toBe("システム");
@@ -168,7 +169,7 @@ describe("callAi（SPEC §10.1 タイムアウト60秒・1回リトライ）", (
   it("2回とも失敗したら AI_FAILED（リトライは1回だけ）", async () => {
     const fetchImpl = vi.fn().mockImplementation(async () => new Response("boom", { status: 500 }));
     const e = (await callAi(
-      { ...BASE, provider: "openrouter" },
+      { ...BASE, provider: "openrouter", model: "anthropic/claude-sonnet-4.6" },
       { fetchImpl: fetchImpl as unknown as typeof fetch },
     ).catch((x) => x)) as AiError;
     expect(fetchImpl).toHaveBeenCalledTimes(2);
@@ -181,14 +182,14 @@ describe("callAi（SPEC §10.1 タイムアウト60秒・1回リトライ）", (
       .mockResolvedValueOnce(Response.json({ nope: 1 }))
       .mockResolvedValueOnce(openrouterOk(GOOD));
     const raw = await callAi(
-      { ...BASE, provider: "openrouter" },
+      { ...BASE, provider: "openrouter", model: "anthropic/claude-sonnet-4.6" },
       { fetchImpl: fetchImpl as unknown as typeof fetch },
     );
     expect(readCandidates(raw, 1)[0]!.hook).toBe("警告型");
 
     const always = vi.fn().mockImplementation(async () => Response.json({ nope: 1 }));
     const e = (await callAi(
-      { ...BASE, provider: "openrouter" },
+      { ...BASE, provider: "openrouter", model: "anthropic/claude-sonnet-4.6" },
       { fetchImpl: always as unknown as typeof fetch },
     ).catch((x) => x)) as AiError;
     expect(e.code).toBe("AI_BAD_OUTPUT");

@@ -353,6 +353,7 @@ export const AI_DEFAULT_MODEL: Record<AiProvider, string> = {
 
 /** `GET /ai/settings` / `PUT /ai/settings` の応答（SPEC §7.6）。 */
 export type AiSettingsResponse = {
+  dataPolicyAccepted: boolean;
   provider: AiProvider | null;
   model: string | null;
   hasKey: boolean;
@@ -362,6 +363,8 @@ export type AiSettingsResponse = {
 };
 
 export type PutAiSettingsRequest = {
+  acceptDataPolicy: true;
+  geminiBillingConfirmed?: boolean;
   provider: AiProvider;
   key?: string;
   model?: string;

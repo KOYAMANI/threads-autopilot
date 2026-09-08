@@ -47,7 +47,7 @@ async function fixture(suffix: string, options: { sources?: number } = {}): Prom
   const accountId = await insertAccount({ userId: u.userId, token: mockToken(suffix) });
   await api("PUT", "/api/ai/settings", {
     cookie: u.cookie,
-    body: { provider: "gemini", key: "AIzaTESTKEY0123456789", storeOnServer: true },
+    body: { acceptDataPolicy: true, geminiBillingConfirmed: true, provider: "gemini", key: "AIzaTESTKEY0123456789", storeOnServer: true },
   });
   const n = options.sources ?? 2;
   for (let i = 0; i < n; i++) {
@@ -83,7 +83,7 @@ describe("GET/PUT /autopilot（SPEC §7.7）", () => {
     const got = await api("GET", `/api/accounts/${f.accountId}/autopilot`, { cookie: f.cookie });
     expect(got.body.data.canEnable).toBe(false);
     expect(got.body.data.blockers).toContain("no_key");
-    expect(got.body.data.blockerMessages[0]).toContain("サーバーに保存されていません");
+    expect(got.body.data.blockerMessages[0]).toContain("送信先・利用条件を確認");
 
     const put = await enableAp(f);
     expect(put.status).toBe(409);
