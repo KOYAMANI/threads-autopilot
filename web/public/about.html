@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Threads Autopilot — サービスと運営者について</title>
+<style>body{margin:0;background:#f7f8fb;color:#19212d;font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;line-height:1.8}main{max-width:860px;margin:auto;padding:48px 24px 80px}header{display:flex;align-items:center;gap:14px}header img{width:48px;height:48px;border-radius:12px}h1{line-height:1.3;font-size:clamp(30px,5vw,46px);letter-spacing:-.04em}h2{font-size:22px;margin-top:40px}.lead{font-size:20px;color:#475569}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(225px,1fr));gap:18px}.card{background:white;border:1px solid #e1e5ed;border-radius:16px;padding:22px}.card h3{margin-top:0}a{color:#2245cf}.button{display:inline-block;background:#284ce5;color:white;border-radius:10px;padding:10px 20px;text-decoration:none;margin:12px 12px 12px 0}.muted{color:#586579;font-size:14px}dt{font-weight:650}dd{margin:0 0 14px}section{margin-top:28px}footer{border-top:1px solid #dce1e9;margin-top:40px;padding-top:20px;font-size:14px}</style></head>
+<body><main>
+<header><img src="/icon-192.png" alt=""><strong>Threads Autopilot</strong></header>
+<h1>自分のThreadsを振り返り、<br>次の投稿につなげる。</h1>
+<p class="lead">投稿の分析、下書きの作成、予約・公開をまとめて扱う、クリエイター向けのWebアプリです。</p>
+<a class="button" href="/login">検証環境にログイン</a><a href="/legal/privacy.html">プライバシーポリシー・削除手順</a>
+<p class="muted">現在は招待制のベータ検証を行っています。この検証環境では、接続できるアカウントや実投稿・通知などの機能を制限しています。</p>
+<section class="grid" aria-label="機能">
+<div class="card"><h3>投稿を分析する</h3><p>接続した本人の投稿と、APIから取得できる閲覧数・反応・フォロワー等の指標を表示。期間の切り替えとランキングから、自分の投稿を振り返ります。</p></div>
+<div class="card"><h3>下書きを作る</h3><p>自分の投稿や入力した参考資料から、構成の参考・リライトを行います。任意のAI機能では、利用者が設定した提供者に必要な材料を送信します。</p></div>
+<div class="card"><h3>公開の準備をする</h3><p>下書き保存、予約・投稿スロット、今すぐ投稿の確認を分けて操作します。投稿機能が有効な環境では、利用者が指示・設定した本人の投稿をThreads APIで公開します。</p></div>
+</section>
+<section><h2>Threadsとの接続とデータ</h2><p>公式のThreads OAuth、または利用者が取得したアクセストークンで連携します。本サービスにThreadsのパスワードを入力する必要はありません。接続した本人のプロフィール・投稿・本人のツリーの続き・指標を扱い、利用者のアプリログインごとに管理します。</p><p>保存するトークンとAIキーは暗号化し、API呼び出しのためにサーバーで復号します。Cloudflareを提供基盤に使用し、AIやメールの機能では外部提供者へ必要な情報を送信します。送信先、保存と削除、国外での処理、AI提供者の条件は<a href="/legal/privacy.html">プライバシーポリシー</a>で説明しています。</p></section>
+<section><h2>運営者</h2><dl><dt>サービス名</dt><dd>Threads Autopilot（Threads オートパイロット）</dd><dt>運営</dt><dd>小山雄太朗（個人事業主）</dd><dt>所在地</dt><dd>〒556-0022 大阪府大阪市浪速区桜川4-5-12</dd><dt>お問い合わせ</dt><dd><a href="mailto:info@yama-threads.com">info@yama-threads.com</a></dd></dl><p>利用に関するお問い合わせ、情報の開示・訂正・削除のご請求は、登録したメールアドレスからご連絡ください。パスワード・APIキー・アクセストークンを送る必要はありません。</p></section>
+<section lang="en"><h2>About this service</h2><p>Threads Autopilot is a web application operated by Yutaro Koyama, a sole proprietor in Japan. It helps individual creators review their own Threads posts and performance, prepare drafts, and organize publication. Users authorize their own Threads profile through official Threads OAuth or provide a user access token. The application does not collect Threads passwords.</p><p>Profile, post and metric data are associated with the owning application user. Optional AI drafting sends the selected material to the configured AI provider. When publishing is enabled, the application publishes the user's chosen content to their own profile through the Threads API. This staging website is currently restricted for beta testing; external publication and email delivery are disabled. Review access and publishing demonstrations are being prepared separately.</p><p>Operator: 小山雄太朗 / Yutaro Koyama. Contact: <a href="mailto:info@yama-threads.com">info@yama-threads.com</a>. Please see the <a href="/legal/privacy.html">privacy policy and data deletion instructions</a> for data flows and account management.</p></section>
+<footer>2026年9月8日更新 · Threads Autopilotは独立したサービスであり、Metaが提供・運営するサービスではありません。</footer>
+</main></body></html>
