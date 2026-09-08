@@ -16,6 +16,7 @@ import { ACCOUNT_COLUMNS, toAccountSummary, type AccountRow } from "../lib/accou
 import { audit } from "../lib/audit";
 import type { Db } from "../lib/db";
 import { hashPassword, passwordHashNeedsUpgrade, sha256Hex, upgradeLegacyPasswordHash, verifyPassword } from "../lib/crypto";
+import { canPublishForUser } from "../lib/staging-review-policy";
 import { sendEmail } from "../lib/email";
 import {
   clearSessionCookie,
@@ -159,6 +160,11 @@ async function buildMe(db: Db, userId: string): Promise<MeResponse | null> {
 
 export function authRoutes() {
   const r = new Hono<AppEnv>();
+  r.get("/publishing-capability", c => c.json(ok({
+    enabled: canPublishForUser(c.env, c.get("userId")),
+    review: c.env.APP_ENV === "staging" && canPublishForUser(c.env, c.get("userId")),
+  })));
+
 
   /* ── 登録（SPEC §5.1） ─────────────────────────── */
   r.post("/register", async (c) => {

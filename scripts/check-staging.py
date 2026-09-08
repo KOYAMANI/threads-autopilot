@@ -2,6 +2,8 @@
 """Fail closed when staging is pointed at any production resource."""
 from pathlib import Path
 import tomllib
+import re
+from datetime import datetime, timezone
 ROOT=Path(__file__).resolve().parent.parent
 stage=tomllib.loads((ROOT/"wrangler.staging.toml").read_text())
 prod=tomllib.loads((ROOT/"wrangler.production.toml").read_text())
@@ -14,8 +16,16 @@ checks={
  "origin":stage["vars"]["APP_ORIGIN"]=="https://threads-autopilot-staging.yama-threads-apps.workers.dev",
  "environment":stage["vars"].get("APP_ENV")=="staging",
  "release-build":stage["define"]["__DEV__"]=="false" and stage["vars"]["THREADS_MOCK"]==stage["vars"]["AI_MOCK"]=="0",
- "monitor-only-cron":stage.get("triggers",{}).get("crons",[])==["* * * * *"],
+ "single-staging-cron":stage.get("triggers",{}).get("crons",[])==["* * * * *"],
 }
+review_enabled=stage["vars"].get("STAGING_REVIEW_PUBLISHING")=="1"
+if review_enabled:
+    try:
+        expiry=datetime.fromisoformat(stage["vars"].get("STAGING_REVIEW_UNTIL", "").replace("Z", "+00:00"))
+        valid_expiry=expiry.tzinfo is not None and expiry>datetime.now(timezone.utc)
+    except ValueError:
+        valid_expiry=False
+    checks["review-scope"]=bool(re.fullmatch(r"[a-f0-9-]{36}",stage["vars"].get("STAGING_REVIEW_USER_ID", ""))) and bool(re.fullmatch(r"\d+",stage["vars"].get("STAGING_THREADS_USER_ID", ""))) and valid_expiry
 failed=[name for name,ok in checks.items() if not ok]
 if failed: raise SystemExit("Blocked staging deploy: "+", ".join(failed))
-print("Staging targets isolated; external publishing/email disabled; one monitor-only cron trigger.")
+print("Staging targets isolated; email disabled; "+("publishing restricted to the dedicated reviewer and pinned profile until configured expiry." if review_enabled else "publishing disabled; Cron monitors trigger arrival only."))

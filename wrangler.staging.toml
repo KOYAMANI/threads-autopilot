@@ -29,12 +29,16 @@ database_id = "dcce5294-b2de-4c72-9a81-5dc6f6d2e00a"
 migrations_dir = "worker/migrations"
 
 [triggers]
-crons = ["* * * * *"] # Arrival monitor only; APP_ENV=staging never enqueues jobs.
+crons = ["* * * * *"] # Monitor by default; dispatches only explicitly enabled reviewer manual posts.
 
 [vars]
 APP_ENV = "staging"
 STAGING_THREADS_USER_ID = "28121200714239994"
 STAGING_THREADS_USERNAME = "" # OAuth-verified immutable ID is pinned above.
+# Dedicated Meta reviewer only. Ordinary staging logins remain unable to publish.
+STAGING_REVIEW_PUBLISHING = "1"
+STAGING_REVIEW_USER_ID = "86ff2600-c8a7-4d04-9ed2-a8480b2c6bae"
+STAGING_REVIEW_UNTIL = "2027-10-01T00:00:00Z"
 MAINTENANCE_MODE = "0" # set to 1 and deploy before database recovery
 APP_ORIGIN = "https://threads-autopilot-staging.yama-threads-apps.workers.dev"
 DEFAULT_TZ = "Asia/Tokyo"

@@ -9,6 +9,7 @@ import { createApp } from "./app";
 import { createJobContext, createSchedulerContext, enqueueForCron, runJobs, dispatchJobs } from "./lib/jobs";
 import { createSchedulerHealthDb, recordSchedulerStart, recordSchedulerFinish } from "./lib/scheduler-health";
 import { enqueueSheetSyncs } from "./jobs/sheets";
+import { dispatchReviewPublishing } from "./lib/review-scheduler";
 import { handleAction } from "./routes/action";
 
 const app = createApp();
@@ -62,9 +63,10 @@ export default {
             await recordSchedulerFinish(healthDb, event.cron, runId, "paused");
             return;
           }
-          // Staging's sole Cron proves trigger delivery only. Never enqueue,
-          // dispatch, notify, refresh tokens, or invoke external APIs here.
-          if (env.APP_ENV !== "staging") {
+          // Staging dispatches only the explicitly enabled reviewer's manual posts.
+          if (env.APP_ENV === "staging") {
+            await dispatchReviewPublishing(createSchedulerContext(env));
+          } else {
             const jobCtx = createSchedulerContext(env);
             await enqueueForCron(jobCtx, event.cron);
             await enqueueSheetSyncs(jobCtx);

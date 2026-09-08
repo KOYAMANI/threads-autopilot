@@ -2,6 +2,9 @@
 export type Env = {
   APP_ENV?: "staging" | "production";
   STAGING_THREADS_USER_ID?: string;
+  STAGING_REVIEW_PUBLISHING?: string;
+  STAGING_REVIEW_USER_ID?: string;
+  STAGING_REVIEW_UNTIL?: string;
   /** Bootstrap only until the dedicated test account ID is known; ID always wins. */
   STAGING_THREADS_USERNAME?: string;
   /** Emergency stop during database recovery. */

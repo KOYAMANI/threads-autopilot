@@ -21,6 +21,7 @@ import { audit } from "../lib/audit";
 import { canPublishAccount, loadOwnedAccount } from "../lib/accounts";
 import { canReservePostingSlot, isSlotConflict, isValidScheduleDate, loadPostingSchedule, nextPostingSlot } from "../lib/posting-schedule";
 import { jobContextFrom } from "../lib/jobs";
+import { canPublishForUser, STAGING_PUBLISHING_MESSAGE } from "../lib/staging-review-policy";
 import { enqueuePublish } from "../jobs/publish";
 import {
   attachMetrics,
@@ -206,6 +207,7 @@ export function queueRoutes() {
     if (!account) return fail("NOT_FOUND", "見つかりませんでした", 404);
 
     const input = parsed.data;
+    if (input.status !== "draft" && !canPublishForUser(c.env, account.user_id)) return fail("CONFLICT", STAGING_PUBLISHING_MESSAGE, 409);
     if (input.idempotencyKey) {
       const previous = await db.first<QueueRow>(`SELECT ${QUEUE_SELECT} FROM queue WHERE account_id=? AND request_id=?`, account.id, input.idempotencyKey);
       if (previous) return c.json(ok({ item: await itemOf(db, account.id, previous) }));
@@ -321,6 +323,7 @@ export function queueRoutes() {
       if (!next) return fail("CONFLICT", "7日先まで空いている投稿枠がありません", 409);
       scheduledAt = next.at;
     }
+    if (["scheduled", "pending_approval"].includes(status) && !canPublishForUser(c.env, account.user_id)) return fail("CONFLICT", STAGING_PUBLISHING_MESSAGE, 409);
     if ((status === "scheduled" || status === "pending_approval") && !canPublishAccount(account)) return fail("CONFLICT", "Threads APIを設定で連携し直してから予約してください", 409);
     if (status === "scheduled" && !scheduledAt) {
       return fail("BAD_REQUEST", "投稿する日時を指定してください", 400);
@@ -386,6 +389,7 @@ export function queueRoutes() {
     if (!account) return fail("NOT_FOUND", "見つかりませんでした", 404);
     const row = await loadRow(db, account.id, c.req.param("qid"));
     if (!row) return fail("NOT_FOUND", "見つかりませんでした", 404);
+    if (!canPublishForUser(c.env, account.user_id)) return fail("CONFLICT", STAGING_PUBLISHING_MESSAGE, 409);
     if (!canPublishAccount(account)) return fail("CONFLICT", "Threads APIを設定で連携し直してから予約してください", 409);
     if (row.status !== "pending_approval" && row.status !== "scheduled") {
       return fail("CONFLICT", "この下書きは承認できる状態ではありません", 409);
@@ -441,6 +445,7 @@ export function queueRoutes() {
     if (!account) return fail("NOT_FOUND", "見つかりませんでした", 404);
     const row = await loadRow(db, account.id, c.req.param("qid"));
     if (!row) return fail("NOT_FOUND", "見つかりませんでした", 404);
+    if (!canPublishForUser(c.env, account.user_id)) return fail("CONFLICT", STAGING_PUBLISHING_MESSAGE, 409);
     if (!canPublishAccount(account)) return fail("CONFLICT", "Threads APIを設定で連携し直してから予約してください", 409);
     if (row.status === "publishing" || row.status === "done") return fail("CONFLICT", "すでに投稿中または投稿済みです", 409);
 

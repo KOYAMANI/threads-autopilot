@@ -1,4 +1,5 @@
 /** Arrival/dispatch evidence, not a claim that asynchronous account jobs finished. */
+import { reviewPublishingActive } from "./staging-review-policy";
 import type { Env } from "../env";
 import { createBudget } from "./budget";
 import { createDb, type Db } from "./db";
@@ -51,7 +52,7 @@ export async function readSchedulerStatus(db: Db, env: Env, now = new Date()) {
   const expected = env.APP_ENV === "staging" ? [MINUTELY] : [...PRODUCTION_CRONS];
   return {
     environment: env.APP_ENV ?? "local",
-    mode: env.APP_ENV === "staging" ? "trigger_monitor_only" : "job_dispatch",
+    mode: env.APP_ENV === "staging" ? (reviewPublishingActive(env, now.getTime()) ? "review_publish_only" : "trigger_monitor_only") : "job_dispatch",
     checkedAt: now.toISOString(),
     maintenance: env.MAINTENANCE_MODE === "1",
     // Only known fixed fields/Crons. Never return IDs, provider errors or job data.

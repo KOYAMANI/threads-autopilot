@@ -1,4 +1,5 @@
 import { useEnvironment } from "../api/environment";
+import { usePublishingCapability } from "../api/publishing";
 import Sheet from "./Sheet";
 
 /** 即時公開は予約と分離し、対象アカウントと全ツリーを確認してから送信する。 */
@@ -16,8 +17,9 @@ export default function PublishNowSheet({
   resume?: boolean;
 }) {
   const environment = useEnvironment();
-  const staging = environment.data?.environment === "staging";
-  const enabled = canPublish && environment.isSuccess && !staging && !busy;
+  const capability = usePublishingCapability();
+  const staging = environment.data?.environment === "staging" && !capability.data?.enabled;
+  const enabled = canPublish && environment.isSuccess && capability.data?.enabled === true && !busy;
   return <Sheet open={open} onClose={() => { if (!busy) onClose(); }} title="今すぐ投稿の確認">
     <p><strong>@{username}</strong> に投稿します。</p>
     <div className="publish-preview section">
@@ -25,7 +27,7 @@ export default function PublishNowSheet({
         <p className="muted">{index + 1}投稿目</p><p className="publish-preview-text">{text}</p>
       </div>)}
     </div>
-    {staging ? <p className="msg msg-warn section" role="status">ステージングでは実投稿を停止しています。下書き保存と予約操作をテストできます。</p>
+    {staging ? <p className="msg msg-warn section" role="status">この検証用ログインでは実投稿・予約実行を停止しています。下書きとして保存してください。</p>
       : environment.isError ? <p className="msg msg-bad section" role="alert">環境を確認できないため投稿できません。<button type="button" className="btn btn-sub section" onClick={() => void environment.refetch()}>再確認する</button></p>
       : environment.isPending ? <p className="muted section" role="status">投稿環境を確認しています…</p>
       : <p className="muted section">確定すると、予約時刻を待たずに投稿処理を開始します。反映まで少し時間がかかることがあります。{resume && "すでに公開済みの部分は残し、続きから再開します。"}</p>}

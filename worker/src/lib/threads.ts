@@ -5,6 +5,7 @@
  * ステップの組み立ては `jobs/publish.ts`（SPEC §8.3）。
  */
 import { DEV, type Env } from "../env";
+import { canPublishForUser } from "./staging-review-policy";
 import type { Budget } from "./budget";
 import { redact } from "./redact";
 import {
@@ -35,6 +36,8 @@ export type ThreadsParams = Record<string, string | number | boolean | undefined
 export type CallOptions = {
   budget: Budget;
   env: Env;
+  /** Set only by the account-owned publishing job; never read from request input. */
+  publishingUserId?: string;
   /** テストで時刻・待機を差し替えるための注入点 */
   now?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -80,11 +83,18 @@ export async function call(
   options: CallOptions,
 ): Promise<unknown> {
   const { budget, env } = options;
-  // Staging cannot publish, repost, or delete even if a real token is accidentally configured.
-  if (env.APP_ENV === "staging" && method !== "GET") {
-    throw new ThreadsApiError({code:403, message:"ステージングではThreadsへの投稿操作を停止しています", raw:""});
-  }
   const p = path.startsWith("/") ? path : `/${path}`;
+  if (env.APP_ENV === "staging" && method !== "GET") {
+    if (!canPublishForUser(env, options.publishingUserId, options.now ?? Date.now())
+      || method !== "POST" || !["/me/threads", "/me/threads_publish"].includes(p)) {
+      throw new ThreadsApiError({code:403, message:"ステージングではThreadsへの投稿操作を停止しています", raw:""});
+    }
+    // Verify the actual token owner immediately before each irreversible request.
+    const identity = await call(token, "GET", "/me", {fields:"id"}, options) as {id?:string};
+    if (identity.id !== env.STAGING_THREADS_USER_ID) {
+      throw new ThreadsApiError({code:403, message:"審査用プロフィールと一致しないため投稿を停止しました", raw:""});
+    }
+  }
 
   // `__DEV__` は esbuild の define で置き換わるビルド時定数（worker/src/globals.d.ts）。
   // ここは **識別子を直接** 書く。別モジュールの定数（env.ts の DEV）や shouldUseMock()

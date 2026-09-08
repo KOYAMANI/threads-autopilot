@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useSuggestSlot } from "../api/queue";
 import { ApiError } from "../api/client";
 import { fromDateTimeLocal, mdhm, toDateTimeLocal } from "../lib/format";
+import { usePublishingCapability } from "../api/publishing";
 import Sheet from "./Sheet";
 
 export type SchedulePick = { kind: "at" | "next_slot"; at: string | null };
@@ -21,6 +22,7 @@ export default function ScheduleSheet({
   initialAt?: string | null;
   busy?: boolean;
 }) {
+  const capability = usePublishingCapability();
   const [mode, setMode] = useState<"at" | "slot">("slot");
   const [local, setLocal] = useState("");
   const slot = useSuggestSlot(accountId, open && mode === "slot");
@@ -32,7 +34,7 @@ export default function ScheduleSheet({
 
   const atIso = mode === "at" ? fromDateTimeLocal(local, tz) : (slot.data?.at ?? null);
   const invalidDate = mode === "at" && (!atIso || new Date(atIso).getTime() <= Date.now());
-  const ready = mode === "at" ? !invalidDate : Boolean(slot.data && !slot.isError);
+  const ready = capability.data?.enabled === true && (mode === "at" ? !invalidDate : Boolean(slot.data && !slot.isError));
 
   function confirm() {
     if (!ready) return;
@@ -40,6 +42,8 @@ export default function ScheduleSheet({
   }
 
   return <Sheet open={open} onClose={onClose} title={title}>
+    {capability.data?.enabled === false && <p className="msg msg-warn" role="status">この検証用ログインでは予約実行を停止しています。下書きとして保存してください。</p>}
+    {capability.isError && <p className="msg msg-bad" role="alert">投稿可否を確認できません。画面を再読み込みしてください。</p>}
     <div className="choices" role="radiogroup" aria-label="投稿する日時">
       <button type="button" className="choice" role="radio" aria-checked={mode === "slot"} disabled={busy} onClick={() => setMode("slot")}>
         <span className="choice-title">次の空き枠へ</span>
