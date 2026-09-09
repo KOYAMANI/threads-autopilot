@@ -347,14 +347,12 @@ function AiKeyCard() {
   const [provider, setProvider] = useState<AiProvider>("gemini");
   const [model, setModel] = useState("");
   const [accepted, setAccepted] = useState(false);
-  const [billingConfirmed, setBillingConfirmed] = useState(false);
   const [key, setKey] = useState("");
   useEffect(() => {
     if (settings.data) {
       setProvider(settings.data.provider ?? "gemini");
       setModel(settings.data.model ?? "");
       setAccepted(false);
-      setBillingConfirmed(false);
     }
   }, [settings.data]);
   const dirty =
@@ -385,7 +383,6 @@ function AiKeyCard() {
             setProvider(p);
             setModel(AI_DEFAULT_MODEL[p]);
             setAccepted(false);
-            setBillingConfirmed(false);
           }}
         >
           {PROVIDERS.map((p) => (
@@ -409,7 +406,7 @@ function AiKeyCard() {
           type="password"
           autoComplete="off"
           value={key}
-          onChange={(e) => { setKey(e.target.value); setAccepted(false); setBillingConfirmed(false); }}
+          onChange={(e) => { setKey(e.target.value); setAccepted(false); }}
           placeholder={
             settings.data?.hasKey
               ? "登録済み。変更するときだけ入力"
@@ -417,14 +414,13 @@ function AiKeyCard() {
           }
         />
       </label>
-      <p className="muted section">{provider === "gemini" ? "送信先はGoogleです。課金が有効なGoogle CloudプロジェクトのGeminiキーをご利用ください。" : "送信先はOpenRouterとAmazon Bedrock（米国の推論経路）です。Claude Sonnet 4.6を利用します。他の提供会社への自動切り替えを止め、学習利用不可・ZDRに対応する経路だけを利用します。対応経路がなければ生成は停止します。"} 参考投稿・参考資料・指示・本文を生成と修正のために送信します。自動運用を有効にした場合も同じ条件です。国外で処理される場合があります。</p>
+      <p className="muted section">{provider === "gemini" ? "送信先はGoogleです。無料枠のキーも利用できます。無料枠では入力・出力がGoogleの製品や機械学習の改善に使われ、人が確認する場合があります。個人情報・機密情報は入力しないでください。利用枠はGoogle側の設定に従い、上限に達すると生成を停止します。当アプリが課金を有効にすることはありません。" : "送信先はOpenRouterとAmazon Bedrock（米国の推論経路）です。Claude Sonnet 4.6を利用します。他の提供会社への自動切り替えを止め、学習利用不可・ZDRに対応する経路だけを利用します。対応経路がなければ生成は停止します。"} 参考投稿・参考資料・指示・本文を生成と修正のために送信します。自動運用を有効にした場合も同じ条件です。国外で処理される場合があります。</p>
       {!settings.data?.dataPolicyAccepted && settings.data?.hasKey && <p className="msg msg-warn">登録済みのキーは保持しています。以下を確認して保存するまでAI生成・修正・自動生成は停止しています。</p>}
       <label className="field"><span><input type="checkbox" checked={accepted} onChange={e => setAccepted(e.target.checked)} /> 送信先と<a href="/legal/privacy.html" target="_blank" rel="noreferrer">データの利用条件</a>を確認しました</span></label>
-      {provider === "gemini" && <label className="field"><span><input type="checkbox" checked={billingConfirmed} onChange={e => setBillingConfirmed(e.target.checked)} /> このキーのGoogle Cloudプロジェクトは課金が有効です</span><span className="muted">当アプリで課金を開始することはありません。課金状態は利用者による確認で、当アプリが検証したものではありません。</span></label>}
       <div className="section" style={{ display: "grid", gap: 12 }}>
         <button
           className="btn"
-          disabled={save.isPending || !accepted || (provider === "gemini" && !billingConfirmed)}
+          disabled={save.isPending || !accepted}
           onClick={() =>
             save.mutate(
               {
@@ -433,7 +429,6 @@ function AiKeyCard() {
                 key: key.trim() || undefined,
                 storeOnServer: true,
                 acceptDataPolicy: true,
-                geminiBillingConfirmed: provider === "gemini" && billingConfirmed,
               },
               {
                 onSuccess: () => {

@@ -267,7 +267,7 @@ export function aiRoutes() {
     if (!parsed.success) return fail("BAD_REQUEST", "入力に誤りがあります", 400);
     const input = parsed.data;
     if (!isAllowedAiModel(input.provider, input.model)) return fail("BAD_REQUEST", "対応モデルを選んでください", 400);
-    if (input.provider === "gemini" && input.geminiBillingConfirmed !== true) return fail("BAD_REQUEST", "Geminiは課金が有効なプロジェクトのキーであることを確認してください", 400);
+    if (input.key && !/^[\x21-\x7e]+$/.test(input.key)) return fail("BAD_REQUEST", "APIキーに空白・改行・全角文字が含まれています。キーだけをコピーして入力してください", 400);
     const db = c.get("db");
     const userId = c.get("userId")!;
     const prev = await loadSettings(db, userId);

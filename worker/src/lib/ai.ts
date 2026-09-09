@@ -311,7 +311,8 @@ async function callOnce(
   options: AiCallOptions,
 ): Promise<string> {
   const doFetch = options.fetchImpl ?? fetch;
-  const plan = buildRequest(input);
+  if (!/^[\x21-\x7e]+$/.test(input.apiKey.trim())) throw new AiError("AI_KEY_REQUIRED", "APIキーに空白・改行・全角文字が含まれています。設定からキーだけを入力し直してください", null, false);
+  const plan = buildRequest({...input, apiKey: input.apiKey.trim()});
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? AI_TIMEOUT_MS);
   options.budget?.subrequests.use();
@@ -340,7 +341,7 @@ async function callOnce(
       "AI_FAILED",
       aborted
         ? "AIの応答が60秒以内に返りませんでした。もう一度お試しください"
-        : "AIの呼び出しに失敗しました。キーとモデル名をご確認ください",
+        : "AIサービスとの通信に失敗しました。時間を置いて再試行し、続く場合は運営へご連絡ください",
       e instanceof Error ? e.message : String(e),
     );
   } finally {

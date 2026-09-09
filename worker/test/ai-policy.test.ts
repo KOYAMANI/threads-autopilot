@@ -26,18 +26,28 @@ describe("AI routing and data consent", () => {
   });
   it("does not infer consent for legacy or unapproved settings", () => {
     expect(hasAiDataConsent({provider:"gemini"})).toBe(false);
+    expect(hasAiDataConsent({provider:"gemini",data_policy_version:"2026-09-08-v1"})).toBe(false);
     expect(hasAiDataConsent({provider:"gemini",data_policy_version:AI_DATA_POLICY_VERSION})).toBe(true);
     expect(hasAiDataConsent({provider:"other",data_policy_version:AI_DATA_POLICY_VERSION})).toBe(false);
   });
-  it("requires explicit consent and Gemini billing confirmation without replacing an existing key", async () => {
+  it("allows a free-tier key with explicit consent without replacing it on invalid updates", async () => {
     const u=await registerUser();
     const body={provider:"gemini",key:"test-only-secret",storeOnServer:true};
     expect((await api("PUT","/api/ai/settings",{cookie:u.cookie,body})).status).toBe(400);
-    expect((await api("PUT","/api/ai/settings",{cookie:u.cookie,body:{...body,acceptDataPolicy:true}})).status).toBe(400);
+    expect((await api("PUT","/api/ai/settings",{cookie:u.cookie,body:{...body,acceptDataPolicy:true}})).status).toBe(200);
     expect((await api("PUT","/api/ai/settings",{cookie:u.cookie,body:{...body,acceptDataPolicy:true,geminiBillingConfirmed:true}})).status).toBe(200);
     const before=await testDb().first<{key_enc:string}>("SELECT key_enc FROM ai_settings WHERE user_id=?",u.userId);
     expect((await api("PUT","/api/ai/settings",{cookie:u.cookie,body:{...body,key:"replacement",model:"other",acceptDataPolicy:true,geminiBillingConfirmed:true}})).status).toBe(400);
     expect((await testDb().first<{key_enc:string}>("SELECT key_enc FROM ai_settings WHERE user_id=?",u.userId))?.key_enc).toBe(before?.key_enc);
+  });
+  it("rejects malformed keys without calling a provider or overwriting stored settings", async () => {
+    const fetchImpl = vi.fn();
+    await expect(callAi({...input, apiKey:"key\nsecret"},{fetchImpl})).rejects.toMatchObject({code:"AI_KEY_REQUIRED", retryable:false});
+    expect(fetchImpl).not.toHaveBeenCalled();
+    const u=await registerUser();
+    const res=await api("PUT","/api/ai/settings",{cookie:u.cookie,body:{provider:"gemini",key:"キーをここに入力",acceptDataPolicy:true,storeOnServer:true}});
+    expect(res.status).toBe(400);
+    expect(await testDb().first("SELECT user_id FROM ai_settings WHERE user_id=?",u.userId)).toBeNull();
   });
   it("blocks test, generation and rewriting when existing consent is absent", async () => {
     const u=await registerUser();const accountId=await insertAccount({userId:u.userId,token:mockToken("policy")});

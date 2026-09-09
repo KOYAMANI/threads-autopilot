@@ -146,3 +146,10 @@ Graph API Explorerでもプロフィール・インサイト・返信取得、�
 - リモートD1：許可5プロフィール、指定ライセンス3つ、未使用キー3つ、初回接続はまだ0件を確認。
 - 配布後のHTTP確認：ヘルス200、通常オーナーの投稿不可、審査専用ログインの投稿可を確認。
 - 生徒本人の接続・実投稿は未実施。招待承認・本人登録・接続後に、生徒自身が本文と投稿先を確認して実行する。
+
+
+## 2026-09-09: Gemini free-tier support
+
+Staging now accepts free-tier Gemini keys, with explicit disclosure of Google improvement use and human review and a warning not to submit personal/confidential information. Consent version 2026-09-09-v2 requires existing users to review and save settings again; stored keys are retained. Malformed keys are rejected before sending. Network errors no longer incorrectly blame the key/model.
+
+The reported original network exception remains unconfirmed. yonashi_kahannshinyase uses gemini-2.5-flash. No student key was decrypted or used for a proxy test. Student retest after saving is required. Typecheck, AI routes/policy tests and build passed. Staging health returned 200. Version: 13800f26-0cec-4eea-8206-fce494009338. Production and submitted Meta review are unchanged; the prior paid-only review description should be reconciled during review follow-up.
