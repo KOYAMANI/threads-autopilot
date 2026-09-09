@@ -22,6 +22,7 @@ import PostFields, {
   trimComments,
   type PostDraft,
 } from "../components/PostFields";
+import GenerationChat from "../components/GenerationChat";
 import PostPicker from "../components/PostPicker";
 import ScheduleSheet, { type SchedulePick } from "../components/ScheduleSheet";
 import PublishNowSheet from "../components/PublishNowSheet";
@@ -63,6 +64,13 @@ export default function Create() {
 
   const [candidates, setCandidates] = useState<AiCandidate[]>([]);
   const [notes, setNotes] = useState<string[]>([]);
+  const [conversation, setConversation] = useState<AiHistoryTurn[]>([]);
+  const [question, setQuestion] = useState("");
+  const generationSequence = useRef(0);
+  useEffect(() => {
+    generationSequence.current++;
+    setConversation([]); setQuestion(""); setNotes([]);
+  }, [account?.id, pickMode, referenceOrigin, referenceText, instruction, picks.join("|"), sourceIds.join("|")]);
   const [active, setActive] = useState(0);
   const [draft, setDraft] = useState<PostDraft>(emptyDraft);
   const [reviseText, setReviseText] = useState("");
@@ -110,11 +118,15 @@ export default function Create() {
     setReviseText("");
   }
 
-  function runGenerate() {
+  function runGenerate(followup?: {answer:string; delegate:boolean}) {
+    const sequence = ++generationSequence.current;
+    const nextConversation: AiHistoryTurn[] = followup ? [...conversation, {role:"user" as const, text: followup.answer || "残りは全部任せます"}].slice(-8) : [];
+    setConversation(nextConversation);
+    if (!followup) {setQuestion("");setNotes([]);}
     const context: AiGenerationContext = {
       pickMode, picks: pickMode !== "information" && referenceOrigin === "own" ? picks : [],
       referenceText: referenceOrigin === "paste" ? referenceText : undefined,
-      sourceIds, instruction,
+      sourceIds, instruction, conversation: nextConversation, clarificationMode: followup?.delegate ? "delegate" : "ask",
     };
     generate.mutate(
       withClientKey(settings.data, {
@@ -124,8 +136,15 @@ export default function Create() {
       }),
       {
         onSuccess: (r) => {
-          if (!mounted.current) return;
-          if (!r.candidates.length) { setNotes(r.notes ?? []); return; }
+          if (!mounted.current || sequence !== generationSequence.current) return;
+          if (!r.candidates.length) {
+            const nextQuestion = r.clarification?.question ?? r.notes?.[0] ?? "どんな投稿にしたいですか？";
+            setQuestion(nextQuestion);
+            setConversation([...nextConversation, {role:"assistant" as const,text:nextQuestion}].slice(-8));
+            setNotes((r.notes ?? []).filter(note => note !== nextQuestion));
+            return;
+          }
+          setQuestion("");
           setGenerationContext(context);
           setAnalysis(r.analysis ?? "");
           setCandidates(r.candidates);
@@ -135,7 +154,7 @@ export default function Create() {
           if (r.candidates[0]) setDraft(draftOf(r.candidates[0]));
           if (r.candidates.length) toast.show(`${r.candidates.length}案できました`, "ok");
         },
-        onError: (e) => fail(e, "生成できませんでした"),
+        onError: (e) => { if (sequence === generationSequence.current) { if (followup) setConversation(conversation); fail(e, "生成できませんでした"); } },
       },
     );
   }
@@ -286,7 +305,7 @@ export default function Create() {
             type="button"
             className="btn section"
             disabled={busy || (referenceOrigin === "own" ? (pickMode === "rewrite" ? picks.length !== 1 : !picks.length) : !referenceText.trim())}
-            onClick={runGenerate}
+            onClick={() => runGenerate()}
           >
             {generate.isPending ? "構成を分析して、3つの切り口で書いています…" : `生成する（${N_CANDIDATES}案）`}
           </button>
@@ -303,6 +322,7 @@ export default function Create() {
           </div>
         )}
 
+        {question && <GenerationChat messages={conversation} busy={busy} onContinue={(answer, delegate) => runGenerate({answer,delegate})} />}
         {notes.map((n) => (
           <p className="msg msg-warn section" key={n} role="status">
             {n}

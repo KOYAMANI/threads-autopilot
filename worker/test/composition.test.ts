@@ -95,3 +95,39 @@ describe("固定する骨組みと可変部分", () => {
     expect(() => readCompositionPlan(JSON.stringify({ ...plan, anchors: ["りんご"] }), input)).toThrow("骨組みに項目が足りません");
   });
 });
+
+
+describe("生成前の会話とおまかせ", () => {
+  it("質問を構造化して返す", async () => {
+    const result=await compose(input,async()=>JSON.stringify({status:"needs_input",question:"誰に向けて書きますか？"}));
+    expect(result.clarification?.question).toBe("誰に向けて書きますか？");
+  });
+  it("ユーザーの回答を事実の根拠にし、AIの質問は根拠にしない", async () => {
+    const seen:any[]=[];
+    await compose({...input,conversation:[{role:"assistant",text:"医師の実績は？"},{role:"user",text:"会社員向けです"}]},async(_system,user)=>{
+      const q=JSON.parse(user);seen.push(q);
+      return JSON.stringify(q.task==="composition-plan"?plan:output(samples[q.index]!));
+    });
+    expect(seen[0].instruction).toContain("会社員向けです");
+    expect(seen[0].instruction).not.toContain("医師の実績");
+  });
+  it("おまかせでは再質問を一度だけやり直して生成へ進む", async () => {
+    let plans=0;
+    const result=await compose({...input,sources:[],instruction:"果物について。全部任せる"},async(system,user)=>{
+      const q=JSON.parse(user);
+      expect(q.clarificationMode).toBe("delegate");
+      if(q.task==="composition-plan") {
+        expect(system).toContain("追加質問は禁止");
+        if(++plans===1)return JSON.stringify({status:"needs_input",question:"何を選ぶ？"});
+        return JSON.stringify(plan);
+      }
+      return JSON.stringify(output(samples[q.index]!));
+    });
+    expect(result.candidates).toHaveLength(3);expect(result.clarification).toBeUndefined();expect(plans).toBe(2);
+  });
+  it("おまかせ時の質問ループを制限する",async()=>{
+    let calls=0;
+    await expect(compose({...input,clarificationMode:"delegate"},async()=>{calls++;return JSON.stringify({status:"needs_input",question:"情報は？"});})).rejects.toThrow("おまかせ");
+    expect(calls).toBe(2);
+  });
+});

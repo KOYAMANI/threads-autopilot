@@ -163,3 +163,8 @@ The actual workerd Request constructor rejects redirect:error with TypeError (on
 ## 2026-09-09: All registered staging users can publish
 
 Owner explicitly requested publication for all staging users, including yutaro.koyama93@gmail.com. STAGING_ALL_USERS_PUBLISHING=1 now permits every active licensed login to connect its own verified Threads account and manually publish or schedule. The former five-profile and per-key beta grants/expiry are bypassed in this mode. Account ownership, active license, actual token identity checks and no cross-user posting remain enforced. Cron dispatch includes all owned active profiles (max three per tick). Autopilot and email remain disabled. Meta tester acceptance/permission requirements still apply separately. Tests: 32 passed plus typecheck/build.
+
+
+## 2026-09-09: Generation clarification chat
+
+Replaced blocking clarification notices with an inline chat. Users may answer or delegate remaining choices. Conversation (max 8 turns, 1000 chars each) is passed with generation input. User answers become factual input; assistant questions do not. Delegate mode is explicit or recognized from all-hands-off instructions, asks the model to finish a general proposal without invented personal results/experience/medical guarantees, and retries a repeated question only once. Account/source/instruction changes invalidate old clarification responses. Existing generated drafts are retained. UI mock-browser checks passed for reply/delegation with partial answer, loading, desktop/mobile overflow. Composition and AI-route tests: 38 passed. Typecheck/build passed. Real student-key generation not performed. Staging deployment: 7e8d4e32-99ae-4652-ba97-e72080f543a3.

@@ -388,6 +388,8 @@ export type AiCandidate = {
 export type AiPickMode = "template" | "rewrite" | "information";
 
 export type AiGenerateRequest = {
+  clarificationMode?: "ask" | "delegate";
+  conversation?: AiHistoryTurn[];
   accountId: string;
   picks?: string[];
   pickMode?: AiPickMode;
@@ -401,6 +403,7 @@ export type AiGenerateRequest = {
 };
 
 export type AiGenerateResponse = {
+  clarification?: { question: string };
   candidates: AiCandidate[];
   analysis?: string;
   /** OpenRouter に YouTube を渡せないときなど、画面に出す案内 */
