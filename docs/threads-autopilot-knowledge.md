@@ -158,3 +158,8 @@ The reported original network exception remains unconfirmed. yonashi_kahannshiny
 ## 2026-09-09: AI transport root cause confirmed
 
 The actual workerd Request constructor rejects redirect:error with TypeError (only follow/manual supported). Reproduced in a failing runtime test, explaining the pre-network generic AI failure. Changed AI fetch to manual and explicitly reject all 3xx without following or retrying; seven runtime regression cases cover both providers and redirects. AI tests: 38 passed; typecheck/build passed. No student API key used. Staging owner login has enabled:false, while scoped beta grants remain enabled; UI now distinguishes loading/errors and login-specific permission from a blanket staging shutdown.
+
+
+## 2026-09-09: All registered staging users can publish
+
+Owner explicitly requested publication for all staging users, including yutaro.koyama93@gmail.com. STAGING_ALL_USERS_PUBLISHING=1 now permits every active licensed login to connect its own verified Threads account and manually publish or schedule. The former five-profile and per-key beta grants/expiry are bypassed in this mode. Account ownership, active license, actual token identity checks and no cross-user posting remain enforced. Cron dispatch includes all owned active profiles (max three per tick). Autopilot and email remain disabled. Meta tester acceptance/permission requirements still apply separately. Tests: 32 passed plus typecheck/build.

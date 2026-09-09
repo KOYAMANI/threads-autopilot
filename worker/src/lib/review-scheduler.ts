@@ -1,7 +1,7 @@
 import type { JobContext } from "./jobs";
 import { enqueuePublish } from "../jobs/publish";
 import { reviewPublishingActive } from "./staging-review-policy";
-import { betaPublishingActive } from "./staging-beta-policy";
+import { betaPublishingActive, allStagingUsers } from "./staging-beta-policy";
 
 /** Dispatch only manual work for the reviewer or explicitly granted student profiles. */
 export async function dispatchReviewPublishing(ctx: JobContext): Promise<void> {
@@ -11,17 +11,17 @@ export async function dispatchReviewPublishing(ctx: JobContext): Promise<void> {
   const now = ctx.now.toISOString();
   const accounts = await ctx.sys.all<{id:string}>(`SELECT a.id FROM accounts a
     JOIN users u ON u.id=a.user_id JOIN licenses l ON l.id=u.license_id
-    WHERE a.status='ok' AND l.status='active' AND (
+    WHERE a.status='ok' AND l.status='active' AND (?=1 OR (
       (?=1 AND a.user_id=? AND a.threads_user_id=?) OR
       (?=1 AND EXISTS (SELECT 1 FROM staging_beta_licenses b WHERE b.license_id=l.id)
        AND EXISTS (SELECT 1 FROM staging_beta_profiles p WHERE p.user_id=a.user_id
-        AND p.threads_user_id=a.threads_user_id AND p.enabled=1)))
+        AND p.threads_user_id=a.threads_user_id AND p.enabled=1))))
     AND EXISTS (SELECT 1 FROM queue q WHERE q.account_id=a.id AND q.source<>'autopilot'
       AND q.status IN ('scheduled','publishing') AND q.scheduled_at<=?
       AND (q.next_step_at IS NULL OR q.next_step_at<=?))
     ORDER BY (SELECT MIN(COALESCE(q.next_step_at,q.scheduled_at)) FROM queue q
       WHERE q.account_id=a.id AND q.source<>'autopilot' AND q.status IN ('scheduled','publishing'))
-    LIMIT 3`, reviewer ? 1 : 0, ctx.env.STAGING_REVIEW_USER_ID ?? '',
+    LIMIT 3`, allStagingUsers(ctx.env) ? 1 : 0, reviewer ? 1 : 0, ctx.env.STAGING_REVIEW_USER_ID ?? '',
     ctx.env.STAGING_THREADS_USER_ID ?? '', beta ? 1 : 0, now, now);
   for (const account of accounts) {
     await ctx.sys.run(`UPDATE jobs SET status='pending',dispatched_until=NULL

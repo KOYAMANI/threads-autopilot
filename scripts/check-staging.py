@@ -19,7 +19,8 @@ checks={
  "single-staging-cron":stage.get("triggers",{}).get("crons",[])==["* * * * *"],
 }
 review_enabled=stage["vars"].get("STAGING_REVIEW_PUBLISHING")=="1"
-if review_enabled:
+all_users=stage["vars"].get("STAGING_ALL_USERS_PUBLISHING")=="1"
+if review_enabled and not all_users:
     try:
         expiry=datetime.fromisoformat(stage["vars"].get("STAGING_REVIEW_UNTIL", "").replace("Z", "+00:00"))
         valid_expiry=expiry.tzinfo is not None and expiry>datetime.now(timezone.utc)
@@ -28,9 +29,9 @@ if review_enabled:
     checks["review-scope"]=bool(re.fullmatch(r"[a-f0-9-]{36}",stage["vars"].get("STAGING_REVIEW_USER_ID", ""))) and bool(re.fullmatch(r"\d+",stage["vars"].get("STAGING_THREADS_USER_ID", ""))) and valid_expiry
 failed=[name for name,ok in checks.items() if not ok]
 if failed: raise SystemExit("Blocked staging deploy: "+", ".join(failed))
-print("Staging targets isolated; email disabled; "+("publishing restricted to the dedicated reviewer and pinned profile until configured expiry." if review_enabled else "publishing disabled; Cron monitors trigger arrival only."))
+print("Staging targets isolated; email disabled; all active logins can manually publish/schedule their own connected profiles." if all_users else "Staging targets isolated; email disabled; "+("publishing restricted to the dedicated reviewer and pinned profile until configured expiry." if review_enabled else "publishing disabled; Cron monitors trigger arrival only."))
 
-if stage["vars"].get("STAGING_BETA_PUBLISHING")=="1":
+if not all_users and stage["vars"].get("STAGING_BETA_PUBLISHING")=="1":
     expiry=datetime.fromisoformat(stage["vars"].get("STAGING_BETA_UNTIL", "").replace("Z", "+00:00"))
     if expiry.tzinfo is None or expiry<=datetime.now(timezone.utc):
         raise SystemExit("Blocked staging deploy: invalid/expired beta scope")

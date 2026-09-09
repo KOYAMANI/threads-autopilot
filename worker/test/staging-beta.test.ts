@@ -92,3 +92,25 @@ it('accepts a granted manual reservation and dispatches it, while rejecting othe
  await dispatchReviewPublishing(createJobContext(stage({JOB_QUEUE:{sendBatch} as unknown as Env['JOB_QUEUE']}),new Date(now+600000)));
  expect(sendBatch).not.toHaveBeenCalled();
 });
+
+it('allows every active staging login but only its own connected account, without beta grants',async()=>{
+ const {owner,other,db}=await setup();
+ const open=stage({STAGING_ALL_USERS_PUBLISHING:'1',STAGING_BETA_PUBLISHING:'0',STAGING_BETA_UNTIL:'expired'});
+ const account=await insertAccount({userId:other.userId,threadsUserId:'new-profile'});
+ expect(await betaUserAllowed(open,db,other.userId)).toBe(true);
+ expect(await claimBetaProfile(open,db,other.userId,{id:'another-profile',username:'not_preapproved'})).toBe(true);
+ expect(await canPublishForAccount(open,db,other.userId,'new-profile')).toBe(true);
+ expect(await canPublishForAccount(open,db,owner.userId,'new-profile')).toBe(false);
+ expect(await claimBetaProfile(open,db,owner.userId,{id:'new-profile'})).toBe(false);
+ const sendBatch=vi.fn().mockResolvedValue(undefined);
+ await db.run("UPDATE queue SET status='done' WHERE status IN ('scheduled','publishing')");
+ const at=new Date(now).toISOString();
+ await db.run("INSERT INTO queue(id,account_id,status,scheduled_at,body,source,created_at,updated_at) VALUES ('all-users-test',?,'scheduled',?,'test','manual',?,?)",account,at,at,at);
+ await dispatchReviewPublishing(createJobContext({...open,JOB_QUEUE:{sendBatch} as unknown as Env['JOB_QUEUE']},new Date(now)));
+ expect(sendBatch).toHaveBeenCalledTimes(1);
+ const jobId=sendBatch.mock.calls[0]![0][0].body.jobId;
+ expect(await db.first('SELECT account_id FROM jobs WHERE id=?',jobId)).toEqual({account_id:account});
+ await db.run("UPDATE licenses SET status='revoked' WHERE user_id=?",other.userId);
+ expect(await betaUserAllowed(open,db,other.userId)).toBe(false);
+ expect(await canPublishForAccount(open,db,other.userId,'new-profile')).toBe(false);
+});

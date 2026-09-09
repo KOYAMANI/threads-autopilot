@@ -33,6 +33,7 @@ crons = ["* * * * *"] # Dispatch only explicitly granted reviewer/student manual
 
 [vars]
 APP_ENV = "staging"
+STAGING_ALL_USERS_PUBLISHING = "1"
 STAGING_BETA_PUBLISHING = "1"
 STAGING_BETA_UNTIL = "2026-12-31T23:59:59Z"
 STAGING_THREADS_USER_ID = "28121200714239994"

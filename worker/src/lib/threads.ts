@@ -90,12 +90,12 @@ export async function call(
     const publishingDb = createDb(env.DB, budget);
     if (!await publishingEnabledForUser(env, publishingDb, options.publishingUserId, options.now ?? Date.now())
       || method !== "POST" || !["/me/threads", "/me/threads_publish"].includes(p)) {
-      throw new ThreadsApiError({code:403, message:"ステージングではThreadsへの投稿操作を停止しています", raw:""});
+      throw new ThreadsApiError({code:403, message:"このログインまたは操作には投稿権限がありません", raw:""});
     }
     // Verify the actual token owner immediately before each irreversible request.
     const identity = await call(token, "GET", "/me", {fields:"id"}, options) as {id?:string};
     if (!identity.id || (options.publishingThreadsUserId && identity.id !== options.publishingThreadsUserId) || !await canPublishForAccount(env, publishingDb, options.publishingUserId!, identity.id, options.now ?? Date.now())) {
-      throw new ThreadsApiError({code:403, message:"審査用プロフィールと一致しないため投稿を停止しました", raw:""});
+      throw new ThreadsApiError({code:403, message:"接続アカウントの所有者またはトークンが一致しないため投稿を停止しました", raw:""});
     }
   }
 
