@@ -317,7 +317,12 @@ async function callOnce(
   const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? AI_TIMEOUT_MS);
   options.budget?.subrequests.use();
   try {
-    const res = await doFetch(plan.url, { ...plan.init, redirect: "error", signal: controller.signal });
+    const res = await doFetch(plan.url, { ...plan.init, redirect: "manual", signal: controller.signal });
+    // workerd supports follow/manual only. Never forward credentials to a redirect target.
+    if (res.status >= 300 && res.status < 400) {
+      await res.body?.cancel();
+      throw new AiError("AI_FAILED", "AIサービスが別の接続先を返したため、安全のため通信を停止しました。運営へご連絡ください", null, false);
+    }
     const text = await res.text();
     if (res.status === 429) throw new AiError("AI_FAILED", "AIサービスの利用制限に達しました。時間を置くか、プロバイダーの利用枠をご確認ください", null, false);
     if (!res.ok) {

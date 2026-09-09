@@ -17,7 +17,7 @@ describe("AI routing and data consent", () => {
   });
   it("does not redirect secrets or retry with a looser provider policy", async () => {
     const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
-      expect(init?.redirect).toBe("error");
+      expect(init?.redirect).toBe("manual");
       expect(JSON.parse(String(init?.body)).provider.only).toEqual(["amazon-bedrock/us"]);
       return new Response("No eligible endpoints", {status:404});
     });

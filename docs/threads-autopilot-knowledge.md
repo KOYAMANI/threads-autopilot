@@ -153,3 +153,8 @@ Graph API Explorerでもプロフィール・インサイト・返信取得、�
 Staging now accepts free-tier Gemini keys, with explicit disclosure of Google improvement use and human review and a warning not to submit personal/confidential information. Consent version 2026-09-09-v2 requires existing users to review and save settings again; stored keys are retained. Malformed keys are rejected before sending. Network errors no longer incorrectly blame the key/model.
 
 The reported original network exception remains unconfirmed. yonashi_kahannshinyase uses gemini-2.5-flash. No student key was decrypted or used for a proxy test. Student retest after saving is required. Typecheck, AI routes/policy tests and build passed. Staging health returned 200. Version: 13800f26-0cec-4eea-8206-fce494009338. Production and submitted Meta review are unchanged; the prior paid-only review description should be reconciled during review follow-up.
+
+
+## 2026-09-09: AI transport root cause confirmed
+
+The actual workerd Request constructor rejects redirect:error with TypeError (only follow/manual supported). Reproduced in a failing runtime test, explaining the pre-network generic AI failure. Changed AI fetch to manual and explicitly reject all 3xx without following or retrying; seven runtime regression cases cover both providers and redirects. AI tests: 38 passed; typecheck/build passed. No student API key used. Staging owner login has enabled:false, while scoped beta grants remain enabled; UI now distinguishes loading/errors and login-specific permission from a blanket staging shutdown.
