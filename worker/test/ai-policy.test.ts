@@ -61,3 +61,10 @@ describe("AI routing and data consent", () => {
     }
   });
 });
+
+it("sends required response properties to Gemini without changing the credential route",()=>{
+ const schema={type:"object",properties:{slots:{type:"object",properties:{intro_A:{type:"string"}},required:["intro_A"]}},required:["slots"]};
+ const plan=buildRequest({...input,provider:"gemini",model:"gemini-2.5-flash",responseJsonSchema:schema});
+ expect(JSON.parse(String(plan.init.body)).generationConfig.responseJsonSchema).toEqual(schema);
+ expect(plan.url).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent");
+});

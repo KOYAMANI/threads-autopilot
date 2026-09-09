@@ -19,3 +19,9 @@ it.each([301,302,303,307,308])('never follows or retries HTTP %s with credential
  expect(fetchImpl).toHaveBeenCalledTimes(1);
  expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent');
 });
+
+it('reports the actual Gemini free daily quota without retrying',async()=>{
+ const fetchImpl=vi.fn(async()=>Response.json({error:{details:[{violations:[{quotaId:'GenerateRequestsPerDayPerProjectPerModel-FreeTier',quotaValue:'20'}]}]}},{status:429}));
+ await expect(callAi(base,{fetchImpl:fetchImpl as typeof fetch})).rejects.toThrow('1日の上限（20回）');
+ expect(fetchImpl).toHaveBeenCalledTimes(1);
+});

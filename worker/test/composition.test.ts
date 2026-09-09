@@ -3,7 +3,7 @@ import { compose, readCompositionPlan, candidateIssues, candidatesTooSimilar, re
 import { pickedPosts } from "../src/routes/ai";
 import { insertAccount, registerUser, testDb, mockToken } from "./helpers";
 
-const input: CompositionInput = { mode: "template", references: ["参考の本文\n【続き】\n参考の答え"], sources: [{ title: "自分のメモ", content: "りんご・みかん・ぶどうの比較" }], youtubeUrls: [], links: [], instruction: "果物について", n: 3, constraints: { emoji: "none", ngWords: "", linkPlacement: "comment" } };
+const input: CompositionInput = { clarificationMode:"ask", mode: "template", references: ["参考の本文\n【続き】\n参考の答え"], sources: [{ title: "自分のメモ", content: "りんご・みかん・ぶどうの比較" }], youtubeUrls: [], links: [], instruction: "果物について", n: 3, constraints: { emoji: "none", ngWords: "", linkPlacement: "comment" } };
 const plan: CompositionPlan = { status: "ok", summary: "投稿は型、メモは情報", structure: "導入と説明", style: "端的", partCount: 2, anchors: [], variants: [{ label: "原型", approach: "順に紹介" }, { label: "比較", approach: "判断を助ける" }, { label: "短く", approach: "簡潔にまとめる" }] };
 plan.variants = plan.variants.map(v => ({ ...v, blueprint: { posts: ["{{body}}", "{{comment}}"], slots: [{ id: "body", task: "本文", maxChars: 450 }, { id: "comment", task: "続き", maxChars: 450 }] } }));
 const samples = [
@@ -130,4 +130,40 @@ describe("生成前の会話とおまかせ", () => {
     await expect(compose({...input,clarificationMode:"delegate"},async()=>{calls++;return JSON.stringify({status:"needs_input",question:"情報は？"});})).rejects.toThrow("おまかせ");
     expect(calls).toBe(2);
   });
+});
+
+
+describe("実Gemini返答で見つかった構成の互換性",()=>{
+ it("大文字を含むスロット名を骨組みと照合して差し込める",()=>{
+  const bp={posts:["{{intro_A}}"],slots:[{id:"intro_A",task:"導入",maxChars:40}]};
+  const p={...plan,partCount:1,variants:[{...plan.variants[0]!,blueprint:bp}]};
+  expect(readCompositionPlan(JSON.stringify(p),{...input,n:1}).variants).toHaveLength(1);
+  expect(renderBlueprint(bp,JSON.stringify({slots:{intro_A:"朝食を選ぼう"}}))).toEqual(["朝食を選ぼう"]);
+ });
+ it("おまかせの新提案を提供資料の固定事実として検証しない",()=>{
+  const p={...plan,anchors:["ユーザーが提供していない提案"]};
+  expect(readCompositionPlan(JSON.stringify(p),{...input,clarificationMode:"delegate"}).anchors).toEqual([]);
+  expect(()=>readCompositionPlan(JSON.stringify(p),input)).toThrow("素材にない");
+ });
+ it("十分な素材があれば標準モードでも確認なしに生成",async()=>{
+  const result=await compose({...input,clarificationMode:undefined},async(_system,user)=>{
+   const q=JSON.parse(user);expect(q.clarificationMode).toBe("ask");
+   return JSON.stringify(q.task==="composition-plan"?plan:output(samples[q.index]!));
+  });
+  expect(result.candidates).toHaveLength(3);
+ });
+});
+
+it("各案の必要項目をAPIスキーマに指定し、他の案の情報を混ぜない",async()=>{
+ let calls=0;
+ await compose(input,async(_system,user,_urls,schema)=>{
+  const q=JSON.parse(user);
+  if(q.task==="composition-plan")return JSON.stringify(plan);
+  calls++;
+  expect(q.plan.variants).toBeUndefined();
+  expect((schema as any).properties.slots.required).toEqual(q.requiredSlots.map((s:any)=>s.id));
+  expect((schema as any).properties.slots.additionalProperties).toBe(false);
+  return JSON.stringify(output(samples[q.index]!));
+ });
+ expect(calls).toBe(3);
 });

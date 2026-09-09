@@ -420,7 +420,7 @@ export function aiRoutes() {
     const sources = clipSources(fullSources);
     if (sources.reduce((n, s) => n + s.content.length, 0) < fullSources.reduce((n, s) => n + s.content.length, 0)) notes.push("参考情報は各3,000文字・合計9,000文字まで使用しています。重要な内容を先頭にまとめてください。");
     const result = await compose({ mode: pickMode, references, sources, youtubeUrls, links, instruction: input.instruction ?? "", clarificationMode: input.clarificationMode, conversation: input.conversation, n, constraints },
-      (system, user, videoUrls) => generateRaw(c.env, { ...key, system, user, youtubeUrls: videoUrls, appOrigin: c.env.APP_ORIGIN }, { budget: c.get("budget"), retries: 0 }));
+      (system, user, videoUrls, responseJsonSchema) => generateRaw(c.env, { ...key, system, user, responseJsonSchema, youtubeUrls: videoUrls, appOrigin: c.env.APP_ORIGIN }, { budget: c.get("budget"), retries: 0 }));
     const { candidates } = result;
 
     if (candidates.length && sourceRows.length > 0) {

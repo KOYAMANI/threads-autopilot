@@ -61,6 +61,7 @@ export default function Create() {
   const [generationContext, setGenerationContext] = useState<AiGenerationContext>();
   const [sourceIds, setSourceIds] = useState<string[]>([]);
   const [instruction, setInstruction] = useState("");
+  const [generationMode, setGenerationMode] = useState<"delegate" | "ask">("ask");
 
   const [candidates, setCandidates] = useState<AiCandidate[]>([]);
   const [notes, setNotes] = useState<string[]>([]);
@@ -70,7 +71,7 @@ export default function Create() {
   useEffect(() => {
     generationSequence.current++;
     setConversation([]); setQuestion(""); setNotes([]);
-  }, [account?.id, pickMode, referenceOrigin, referenceText, instruction, picks.join("|"), sourceIds.join("|")]);
+  }, [account?.id, pickMode, referenceOrigin, referenceText, instruction, generationMode, picks.join("|"), sourceIds.join("|")]);
   const [active, setActive] = useState(0);
   const [draft, setDraft] = useState<PostDraft>(emptyDraft);
   const [reviseText, setReviseText] = useState("");
@@ -126,7 +127,7 @@ export default function Create() {
     const context: AiGenerationContext = {
       pickMode, picks: pickMode !== "information" && referenceOrigin === "own" ? picks : [],
       referenceText: referenceOrigin === "paste" ? referenceText : undefined,
-      sourceIds, instruction, conversation: nextConversation, clarificationMode: followup?.delegate ? "delegate" : "ask",
+      sourceIds, instruction, conversation: nextConversation, clarificationMode: followup ? "delegate" : generationMode,
     };
     generate.mutate(
       withClientKey(settings.data, {
@@ -298,6 +299,10 @@ export default function Create() {
           />
         </label>
 
+        <label className="field"><span>進め方</span><select className="input" value={generationMode} disabled={busy} onChange={event => setGenerationMode(event.target.value as "delegate"|"ask")}>
+          <option value="delegate">AIに任せて、そのまま3案を作る</option>
+          <option value="ask">必要なら相談してから作る</option>
+        </select></label>
         {settings.isPending ? (
           <p className="muted section">読み込んでいます…</p>
         ) : keyReady ? (

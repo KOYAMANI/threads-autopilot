@@ -215,6 +215,7 @@ export function buildRevisePrompt(
 /* ── プロバイダ（SPEC §10.1） ────────────────────────── */
 
 export type AiCallInput = {
+  responseJsonSchema?: Record<string, unknown>;
   provider: AiProvider;
   model: string;
   apiKey: string;
@@ -246,7 +247,7 @@ export function buildRequest(input: AiCallInput): AiRequestPlan {
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: input.system }] },
           contents: [{ role: "user", parts }],
-          generationConfig: { responseMimeType: "application/json", temperature: 0.9 },
+          generationConfig: { responseMimeType: "application/json", temperature: 0.9, ...(input.responseJsonSchema ? {responseJsonSchema:input.responseJsonSchema} : {}) },
         }),
       },
     };
@@ -324,7 +325,17 @@ async function callOnce(
       throw new AiError("AI_FAILED", "AIサービスが別の接続先を返したため、安全のため通信を停止しました。運営へご連絡ください", null, false);
     }
     const text = await res.text();
-    if (res.status === 429) throw new AiError("AI_FAILED", "AIサービスの利用制限に達しました。時間を置くか、プロバイダーの利用枠をご確認ください", null, false);
+    if (res.status === 429) {
+      let dailyLimit: string | undefined;
+      try {
+        const error=JSON.parse(text) as {error?:{details?:Array<{violations?:Array<{quotaId?:string;quotaValue?:string}>}>}};
+        const violation=error.error?.details?.flatMap(d=>d.violations??[]).find(v=>/PerDay.*FreeTier/.test(v.quotaId??""));
+        if(violation) dailyLimit=/^\d{1,8}$/.test(violation.quotaValue??"") ? violation.quotaValue : "";
+      } catch { /* use the generic rate-limit message */ }
+      throw new AiError("AI_FAILED", dailyLimit !== undefined
+        ? `Gemini無料枠の1日の上限${dailyLimit ? `（${dailyLimit}回）` : ""}に達しました。Google側で翌日の利用枠が更新されるまで待ってください。同じプロジェクトの接続確認・生成は共通の枠を使います。`
+        : "AIサービスの利用制限に達しました。時間を置くか、プロバイダーの利用枠をご確認ください", null, false);
+    }
     if (!res.ok) {
       throw new AiError(
         "AI_FAILED",
