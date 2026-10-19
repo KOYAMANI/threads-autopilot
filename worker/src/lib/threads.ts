@@ -113,7 +113,13 @@ export async function call(
     const headers: HeadersInit = tokenEndpoint ? {} : { Authorization: `Bearer ${token}` };
     const remainingMs = Math.max(1, Math.min(15000, budget.timeMs.limit - budget.timeMs.elapsed));
     budget.timeMs.check();
-    const res = await fetch(url, { method, headers, redirect: "error", signal: AbortSignal.timeout(remainingMs) });
+    // Never follow a redirect: it would carry the bearer token to another host.
+    // Workers rejects redirect:"error" ("follow" | "manual" only), so take the
+    // 3xx back with "manual" and fail it here instead.
+    const res = await fetch(url, { method, headers, redirect: "manual", signal: AbortSignal.timeout(remainingMs) });
+    if (res.status >= 300 && res.status < 400) {
+      throw new ThreadsApiError({ code: res.status, message: "Threads API がリダイレクトを返しました", raw: "" });
+    }
     const bodyText = await res.text();
 
     if (res.ok) {

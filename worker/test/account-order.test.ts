@@ -20,6 +20,18 @@ describe("PUT /api/accounts/order（ドロワーの並べ替え）", () => {
     expect(ids((await api("GET", "/api/auth/me", { cookie: u.cookie })).body)).toEqual([c, a, b]);
   });
 
+  it("接続の上限（3件）より多くつないでいても並べ替えられる", async () => {
+    const u = await registerUser();
+    const six: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      six.push(await insertAccount({ userId: u.userId, createdAt: `2026-09-0${i + 1}T00:00:00.000Z` }));
+    }
+    const reversed = [...six].reverse();
+    const res = await api("PUT", "/api/accounts/order", { cookie: u.cookie, body: { ids: reversed } });
+    expect(res.status).toBe(200);
+    expect(ids(res.body)).toEqual(reversed);
+  });
+
   it("並べ替えたあとに増えたアカウントは最後に付く", async () => {
     const u = await registerUser();
     const a = await insertAccount({ userId: u.userId, createdAt: "2026-09-01T00:00:00.000Z" });

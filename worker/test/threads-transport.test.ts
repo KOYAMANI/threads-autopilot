@@ -12,8 +12,18 @@ describe("Threads credential transport", () => {
     expect(String(url)).not.toContain("token");
     expect(new URL(String(url)).searchParams.get("fields")).toBe("id");
     expect(new Headers(options?.headers).get("Authorization")).toBe("Bearer test-private-token");
-    expect(options?.redirect).toBe("error");
+    // Workers rejects redirect:"error"; "manual" plus the 3xx check below keeps credentials from following.
+    expect(options?.redirect).toBe("manual");
     expect(options?.signal).toBeInstanceOf(AbortSignal);
+  });
+  it("fails a redirect instead of following it with the bearer token", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, { status: 302, headers: { Location: "https://evil.example/steal" } }),
+    );
+    await expect(
+      call("test-private-token", "GET", "/me", { fields: "id" }, { env, budget: createBudget() }),
+    ).rejects.toMatchObject({ code: 302 });
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
   it.each(["/access_token", "/refresh_access_token"])("retains required OAuth parameters for %s", async path => {
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response('{"access_token":"test"}'));

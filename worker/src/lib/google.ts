@@ -66,9 +66,11 @@ export async function googleRequest<T>(
   try {
     const res = await fetch(url, {
       ...init,
-      redirect: "error",
+      // Workers accepts only "follow" | "manual"; never follow (credentials), fail 3xx instead.
+      redirect: "manual",
       signal: abort.signal,
     });
+    if (res.status >= 300 && res.status < 400) throw new GoogleError("temporary");
     if (res.status === 429) throw new GoogleError("rate");
     if (res.status === 401) throw new GoogleError("reauth");
     // Read errors only to classify; never propagate Google bodies (may contain credentials).

@@ -42,8 +42,10 @@ const connectSchema = z.object({
   app_secret: z.string().trim().min(1).max(200).optional(),
 });
 
+// 上限は ACCOUNT_LIMIT にしない。上限より前からある利用者や、検証用に上限を超えて
+// つないだ環境もあるため。中身は下で「本人のアカウントと過不足なく一致」を確かめる
 const orderSchema = z.object({
-  ids: z.array(z.string().min(1).max(64)).min(1).max(ACCOUNT_LIMIT),
+  ids: z.array(z.string().min(1).max(64)).min(1).max(50),
 });
 
 const patchSchema = z.object({
