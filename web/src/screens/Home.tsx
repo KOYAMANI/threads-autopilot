@@ -105,9 +105,18 @@ export default function Home() {
         <strong>{sync.data?.status === "failed" ? "同期できませんでした" : sync.data?.running ? "データを取り込んでいます" : "最初の同期をしましょう"}</strong>
         <p>{sync.data?.status === "failed" ? sync.data.message : sync.data?.running ? `${sync.data.posts}件の投稿を保存しました。数字は順に反映されます。` : "Threads から投稿と数字を取り込みます。数分かかることがあります。"}</p>
       </div>
-      {!sync.data?.running && (
+      {/* 失敗は、ほかの取り込みが動いている最中でも出る（GET /sync は failed と running を別々に見る）ので、
+          失敗したら常にやり直せるようにする */}
+      {sync.data?.status === "failed" ? (
+        <div className="notice-actions">
+          <button className="btn btn-fit" aria-busy={startSync.isPending} disabled={startSync.isPending} onClick={runSync}>
+            {startSync.isPending ? "開始しています…" : "もう一度同期する"}
+          </button>
+          <button type="button" className="btn-link" onClick={() => navigate("/app/settings")}>診断を開く</button>
+        </div>
+      ) : !sync.data?.running && (
         <button className="btn btn-fit" aria-busy={startSync.isPending} disabled={startSync.isPending} onClick={runSync}>
-          {startSync.isPending ? "開始しています…" : sync.data?.status === "failed" ? "もう一度同期する" : "今すぐ同期"}
+          {startSync.isPending ? "開始しています…" : "今すぐ同期"}
         </button>
       )}
     </div>

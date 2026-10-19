@@ -32,6 +32,12 @@ export type AccountRow = {
 export const ACCOUNT_COLUMNS =
   "id, user_id, threads_user_id, username, name, avatar_url, color, token_enc, token_obtained_at, token_long_lived, token_last_refresh_at, status, timezone, settings_json, last_full_sync_at, created_at";
 
+/**
+ * アカウント一覧の並び（`GET /accounts` と `GET /auth/me` で共通）。`a` は accounts の別名。
+ * ドロワーで並べ替えた順（sort_order）が先、並べ替えたことのない行は接続した順で後ろに続く。
+ */
+export const ACCOUNT_ORDER_BY = "a.sort_order IS NULL, a.sort_order ASC, a.created_at ASC";
+
 /** SPEC §7.1: 同一ユーザーで3件まで。 */
 export const ACCOUNT_LIMIT = 3;
 

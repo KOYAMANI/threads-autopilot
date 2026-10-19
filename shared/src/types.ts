@@ -65,6 +65,9 @@ export type AccountSummary = {
   autopilotEnabled: boolean;
 };
 
+/** `PUT /accounts/order`。本人のアカウント ID を、見せたい順に過不足なく並べる。 */
+export type PutAccountOrderRequest = { ids: string[] };
+
 export type AiSettingsSummary = {
   provider: "gemini" | "openrouter" | null;
   model: string | null;

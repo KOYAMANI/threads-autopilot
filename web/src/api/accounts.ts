@@ -15,6 +15,8 @@ import type {
   ConnectAccountResponse,
   DashboardPeriod,
   DashboardResponse,
+  MeResponse,
+  PutAccountOrderRequest,
   SyncStatus,
 } from "@tap/shared";
 import { ApiError, api } from "./client";
@@ -75,6 +77,37 @@ export function useAccounts(enabled = true) {
     queryKey: ["accounts", "list", null] as const,
     enabled,
     queryFn: async () => (await api.get<{ accounts: AccountSummary[] }>("/accounts")).accounts,
+  });
+}
+
+/**
+ * アカウントの並べ替え（ドロワーのドラッグ）。指を離した時点で画面の順番を先に変え、
+ * 保存に失敗したら元の順に戻す。並びはサーバーに残るので、ほかの端末でも同じ順になる。
+ */
+export function useReorderAccounts() {
+  const qc = useQueryClient();
+  const listKey = ["accounts", "list", null] as const;
+  const sortBy = <T extends { id: string }>(list: T[], ids: string[]) =>
+    [...list].sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+  return useMutation({
+    mutationFn: async (ids: string[]) =>
+      (await api.put<{ accounts: AccountSummary[] }>("/accounts/order", { ids } satisfies PutAccountOrderRequest)).accounts,
+    onMutate: async (ids) => {
+      await Promise.all([qc.cancelQueries({ queryKey: meKey }), qc.cancelQueries({ queryKey: listKey })]);
+      const me = qc.getQueryData<MeResponse>(meKey);
+      const list = qc.getQueryData<AccountSummary[]>(listKey);
+      if (me) qc.setQueryData<MeResponse>(meKey, { ...me, accounts: sortBy(me.accounts, ids) });
+      if (list) qc.setQueryData<AccountSummary[]>(listKey, sortBy(list, ids));
+      return { me, list };
+    },
+    onError: (_e, _ids, previous) => {
+      if (previous?.me) qc.setQueryData(meKey, previous.me);
+      if (previous?.list) qc.setQueryData(listKey, previous.list);
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: meKey });
+      void qc.invalidateQueries({ queryKey: listKey });
+    },
   });
 }
 

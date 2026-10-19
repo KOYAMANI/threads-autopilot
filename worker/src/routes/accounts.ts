@@ -10,6 +10,7 @@ import {
   ACCOUNT_COLORS,
   ACCOUNT_COLUMNS,
   ACCOUNT_LIMIT,
+  ACCOUNT_ORDER_BY,
   accountToken,
   deleteAccountData,
   loadOwnedAccount,
@@ -39,6 +40,10 @@ import { unixSec } from "../lib/time";
 const connectSchema = z.object({
   token: z.string().trim().min(10).max(1000),
   app_secret: z.string().trim().min(1).max(200).optional(),
+});
+
+const orderSchema = z.object({
+  ids: z.array(z.string().min(1).max(64)).min(1).max(ACCOUNT_LIMIT),
 });
 
 const patchSchema = z.object({
@@ -73,24 +78,38 @@ export function accountRoutes() {
   const r = new Hono<AppEnv>();
 
   /* ── 一覧 ────────────────────────────────────────── */
-  r.get("/", async (c) => {
-    const db = c.get("db");
-    const rows = await db.all<AccountRow & { ap_enabled: number | null }>(
+  async function listAccounts(c: Context<AppEnv>) {
+    const rows = await c.get("db").all<AccountRow & { ap_enabled: number | null }>(
       `SELECT ${ACCOUNT_COLUMNS.split(", ")
         .map((x) => `a.${x}`)
         .join(", ")}, ap.enabled AS ap_enabled
          FROM accounts a LEFT JOIN autopilot ap ON ap.account_id=a.id
-        WHERE a.user_id=? ORDER BY a.created_at ASC`,
+        WHERE a.user_id=? ORDER BY ${ACCOUNT_ORDER_BY}`,
       c.get("userId")!,
     );
     const nowMs = Date.now();
-    return c.json(
-      ok({
-        accounts: rows.map((a) =>
-          toAccountSummary(a, { autopilotEnabled: Boolean(a.ap_enabled), nowMs }),
-        ),
-      }),
+    return rows.map((a) => toAccountSummary(a, { autopilotEnabled: Boolean(a.ap_enabled), nowMs }));
+  }
+
+  r.get("/", async (c) => c.json(ok({ accounts: await listAccounts(c) })));
+
+  /* ── 並べ替え（ドロワーのドラッグ） ──────────────────── */
+  // `ids` は本人のアカウントを過不足なく1回ずつ。途中で接続・削除があった古い並びは受けない
+  r.put("/order", async (c) => {
+    const parsed = orderSchema.safeParse(await readJson(c));
+    if (!parsed.success) return fail("BAD_REQUEST", "並び順が正しくありません", 400);
+    const db = c.get("db");
+    const userId = c.get("userId")!;
+    const owned = await db.all<{ id: string }>("SELECT id FROM accounts WHERE user_id=?", userId);
+    const ids = parsed.data.ids;
+    const ownedIds = new Set(owned.map((row) => row.id));
+    if (new Set(ids).size !== ids.length || ids.length !== ownedIds.size || ids.some((id) => !ownedIds.has(id))) {
+      return fail("CONFLICT", "アカウントの一覧が変わりました。画面を読み込み直してください", 409);
+    }
+    await db.batch(
+      ids.map((id, i) => ({ sql: "UPDATE accounts SET sort_order=? WHERE id=? AND user_id=?", params: [i, id, userId] })),
     );
+    return c.json(ok({ accounts: await listAccounts(c) }));
   });
 
   /* ── 接続（SPEC §7.1 / §6.3） ─────────────────────── */

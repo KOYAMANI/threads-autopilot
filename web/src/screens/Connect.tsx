@@ -9,7 +9,7 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "motion/react";
-import { useConnectAccount, useSyncStatus } from "../api/accounts";
+import { useConnectAccount, useStartSync, useSyncStatus } from "../api/accounts";
 import { ApiError, api } from "../api/client";
 import { useMutation } from "@tanstack/react-query";
 import { activeAccountStorageKey } from "../lib/active-account";
@@ -41,6 +41,7 @@ export default function Connect() {
 
   const connect = useConnectAccount();
   const sync = useSyncStatus(connectedId, connectedId !== null);
+  const startSync = useStartSync(connectedId);
 
   // 同期が終わったらホームへ（進捗バーを一瞬でも見せるため、終わってから送り出す）
   useEffect(() => {
@@ -97,9 +98,24 @@ export default function Connect() {
             {sync.data?.status === "failed" ? sync.data.message : `投稿の取り込み ${Math.round(progress / total * 100)}% · 保存済み ${sync.data?.posts ?? 0}件（続いて分析データを取得します）`}
           </p>
           {/* 取り込みは5分ごとのジョブで進む（SPEC §8.2）。終わるまで足止めしない */}
-          <div style={{ marginTop: "calc(var(--sp) * 2)" }}>
+          <div className="notice-actions" style={{ marginTop: "calc(var(--sp) * 2)" }}>
+            {sync.data?.status === "failed" && (
+              <button
+                className="btn btn-fit"
+                type="button"
+                aria-busy={startSync.isPending}
+                disabled={startSync.isPending}
+                onClick={() =>
+                  startSync.mutate(undefined, {
+                    onError: (e) => toast.show(e instanceof ApiError ? e.message : "同期を開始できませんでした", "bad"),
+                  })
+                }
+              >
+                {startSync.isPending ? "開始しています…" : "もう一度同期する"}
+              </button>
+            )}
             <button
-              className="btn"
+              className={sync.data?.status === "failed" ? "btn btn-sub btn-fit" : "btn"}
               type="button"
               onClick={() => navigate("/app/home", { replace: true })}
             >

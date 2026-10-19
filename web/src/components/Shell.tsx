@@ -1,4 +1,3 @@
-import AccountAvatar from "./AccountAvatar";
 /**
  * アプリの外枠（SPEC §12.2）。TopBar / ApBar / 本文 / Tabs / Drawer。
  *
@@ -12,6 +11,7 @@ import type { AccountSummary } from "@tap/shared";
 import { useLogout, useMe } from "../api/auth";
 import { useActiveAccount } from "../lib/active-account";
 import { CROSSFADE, SPRING, useReducedMotion } from "../lib/motion";
+import AccountList from "./AccountList";
 import Drawer from "./Drawer";
 import Tabs, { TABS } from "./Tabs";
 import TopBar from "./TopBar";
@@ -71,28 +71,14 @@ export default function Shell() {
           </p>
         )}
 
-        {accounts.map((a) => (
-          <button
-            key={a.id}
-            type="button"
-            className="menu-item"
-            aria-current={a.id === active?.id}
-            onClick={() => {
-              setActiveId(a.id);
-              setDrawerOpen(false);
-            }}
-          >
-            <AccountAvatar account={a} />
-            <span style={{ minWidth: 0, flex: "1 1 auto" }}>
-              <span style={{ display: "block", fontSize: "0.8125rem", fontWeight: 600 }}>
-                @{a.username}
-              </span>
-              <span className="muted" style={{ fontSize: "0.6875rem" }}>
-                {a.status === "needs_reauth" ? "要再接続" : (a.name ?? "　")}
-              </span>
-            </span>
-          </button>
-        ))}
+        <AccountList
+          accounts={accounts}
+          activeId={active?.id ?? null}
+          onSelect={(id) => {
+            setActiveId(id);
+            setDrawerOpen(false);
+          }}
+        />
 
         <button
           type="button"

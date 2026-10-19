@@ -12,7 +12,7 @@ import type {
 } from "@tap/shared";
 import { ok } from "@tap/shared";
 import { fail, type AppEnv } from "../app";
-import { ACCOUNT_COLUMNS, toAccountSummary, type AccountRow } from "../lib/accounts";
+import { ACCOUNT_COLUMNS, ACCOUNT_ORDER_BY, toAccountSummary, type AccountRow } from "../lib/accounts";
 import { audit } from "../lib/audit";
 import type { Db } from "../lib/db";
 import { hashPassword, passwordHashNeedsUpgrade, sha256Hex, upgradeLegacyPasswordHash, verifyPassword } from "../lib/crypto";
@@ -119,7 +119,7 @@ async function buildMe(db: Db, userId: string): Promise<MeResponse | null> {
   const accountRows = await db.all<AccountRow & { ap_enabled: number | null }>(
     `SELECT ${ACCOUNT_COLUMNS.split(", ").map(column => `a.${column}`).join(", ")}, ap.enabled AS ap_enabled
        FROM accounts a LEFT JOIN autopilot ap ON ap.account_id = a.id
-      WHERE a.user_id=? ORDER BY a.created_at ASC`,
+      WHERE a.user_id=? ORDER BY ${ACCOUNT_ORDER_BY}`,
     userId,
   );
   const accounts = accountRows.map(account => toAccountSummary(account, { autopilotEnabled: Boolean(account.ap_enabled) }));
