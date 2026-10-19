@@ -11,7 +11,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "motion/react";
 import { useConnectAccount, useSyncStatus } from "../api/accounts";
 import { ApiError, api } from "../api/client";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { activeAccountStorageKey } from "../lib/active-account";
 import { useToast } from "../components/Toast";
 import { CROSSFADE, SPRING, useReducedMotion } from "../lib/motion";
@@ -36,8 +36,7 @@ export default function Connect() {
   const [error, setError] = useState<string | null>(null);
   const [connectedId, setConnectedId] = useState<string | null>(params.get("connected"));
 
-  const oauth = useQuery({queryKey:["threads-oauth"],queryFn:()=>api.get<{configured:boolean}>("/threads/oauth/status")});
-  const startOAuth = useMutation({mutationFn:()=>api.post<{url:string}>("/threads/oauth/start"),onSuccess:({url})=>{window.location.assign(url);},onError:(e)=>setError(e instanceof ApiError ? e.message : "接続を開始できませんでした")});
+  const startOAuth = useMutation({mutationFn:()=>api.post<{url:string}>("/threads/oauth/start"),onSuccess:({url})=>{window.location.assign(url);},onError:(e)=>toast.show(e instanceof ApiError ? e.message : "接続を開始できませんでした","bad")});
   useEffect(()=>{if (connectedId) {try {localStorage.setItem(activeAccountStorageKey,connectedId);} catch {}}},[connectedId]);
 
   const connect = useConnectAccount();
@@ -68,7 +67,6 @@ export default function Connect() {
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "つなげませんでした";
       setError(message);
-      toast.show(message, "bad");
     }
   }
 
@@ -115,13 +113,18 @@ export default function Connect() {
 
   return (
     <main className="screen-plain">
-      <div className="connect-heading"><span className="eyebrow">CONNECT YOUR ACCOUNT</span><button className="btn-quiet" onClick={() => navigate("/app/settings")}>設定・パスワード変更 →</button></div><h1>Threads をつなぐ</h1>
+      <div className="connect-heading">{isAdd ? <span className="muted">アカウントを追加</span> : <span />}<button className="btn-link" onClick={() => navigate("/app/settings")}>設定を開く</button></div><h1>Threads をつなぐ</h1>
       <p className="muted" style={{ marginTop: "0.375rem", marginBottom: "calc(var(--sp) * 3)" }}>
-        ご自身の Meta アプリで作ったトークンを貼り付けます。パスワードは預かりません。
+        下のボタンから Threads の画面に移り、「許可」を押すだけです。パスワードは預かりません。
       </p>
 
-      <div className="card" style={{marginBottom:"1.5rem"}}><h2>Threadsでかんたん接続</h2><p className="muted" style={{margin:"1rem 0"}}>Threadsの画面で許可するだけ。トークンの取得・長期化・更新はアプリが行います。</p><button className="btn" disabled={!oauth.data?.configured || startOAuth.isPending} onClick={()=>startOAuth.mutate()}>{startOAuth.isPending ? "Threadsへ移動中…" : "Threadsで接続する"}</button>{!oauth.data?.configured && <p className="muted" style={{marginTop:".75rem"}}>管理者のMetaアプリ設定が済むまで、下のトークン接続を使えます。</p>}{params.get("threads") === "failed" && <p className="msg msg-bad" role="alert">Threadsに接続できませんでした。許可する権限とアプリ設定を確認して、接続をやり直してください。</p>}</div>
-      <h2 style={{marginBottom:"1rem"}}>アクセストークンで接続</h2>
+      <div className="card" style={{ marginBottom: "1.5rem" }}>
+        <h2>Threads でかんたん接続</h2>
+        <p className="muted" style={{ margin: "0.5rem 0 1rem" }}>トークンの取得と更新はアプリが行います。</p>
+        <button aria-busy={startOAuth.isPending} className="btn" disabled={startOAuth.isPending} onClick={() => startOAuth.mutate()}>{startOAuth.isPending ? "Threads へ移動しています…" : "Threads で接続する"}</button>
+        {params.get("threads") === "failed" && <p className="msg msg-bad" role="alert">Threads に接続できませんでした。許可する権限とアプリ設定を確かめて、もう一度接続してください。</p>}
+      </div>
+      <h2 style={{marginBottom:"1rem"}}>トークンを貼り付けて接続（上級者向け）</h2>
       <div className="card">
         <ol className="steps">
           {STEPS.map((s) => (
@@ -143,9 +146,15 @@ export default function Connect() {
               spellCheck={false}
               required
               placeholder="THAA…"
+              aria-invalid={error !== null}
+              aria-describedby={error ? "token-error" : undefined}
               value={token}
-              onChange={(e) => setToken(e.target.value)}
+              onChange={(e) => {
+                setToken(e.target.value);
+                setError(null);
+              }}
             />
+            {error && <span className="field-error" id="token-error" role="alert">{error}</span>}
           </label>
 
           <button
@@ -172,16 +181,11 @@ export default function Connect() {
             </label>
           )}
 
-          {error && (
-            <p className="msg msg-bad" role="alert">
-              {error}
-            </p>
-          )}
-
           <div style={{ marginTop: "calc(var(--sp) * 3)" }}>
-            <button className="btn" type="submit" disabled={connect.isPending || token.trim().length < 10}>
+            <button aria-busy={connect.isPending} className="btn" type="submit" disabled={connect.isPending || token.trim().length < 10}>
               {connect.isPending ? "確認しています…" : "つなぐ"}
             </button>
+            {!connect.isPending && token.trim().length < 10 && <p className="btn-hint">トークンを貼り付けると押せます。</p>}
           </div>
 
           {isAdd && (

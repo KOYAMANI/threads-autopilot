@@ -54,7 +54,7 @@ export default function ScheduleSheet({
         <span className="choice-title">今すぐ</span><span className="choice-note">保存後、サーバーの次の実行で投稿します</span>
       </button>
     </div>
-    <button type="button" className="btn section" disabled={busy || !ready} onClick={confirm}>{busy ? "送っています…" : mode === "now" ? "今すぐ投稿する" : mode === "slot" ? "次の空き枠に入れる" : confirmLabel}</button>
+    <button type="button" className="btn section" aria-busy={busy} disabled={busy || !ready} onClick={confirm}>{busy ? "送っています…" : mode === "now" ? "今すぐ投稿する" : mode === "slot" ? "次の空き枠に入れる" : confirmLabel}</button>
     {mode === "slot" && slot.data && !slot.isError && <p className="muted section">保存する時点の空き枠に入ります。他の投稿が先に入った場合は、その次の枠を使います。</p>}
     {mode === "at" && !invalidDate && atIso && <p className="muted section">{mdhm(atIso, tz)} に出します</p>}
   </Sheet>;

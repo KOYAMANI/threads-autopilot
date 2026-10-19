@@ -12,7 +12,6 @@ import type { AccountSummary } from "@tap/shared";
 import { useLogout, useMe } from "../api/auth";
 import { useActiveAccount } from "../lib/active-account";
 import { CROSSFADE, SPRING, useReducedMotion } from "../lib/motion";
-import ApBar from "./ApBar";
 import Drawer from "./Drawer";
 import Tabs, { TABS } from "./Tabs";
 import TopBar from "./TopBar";
@@ -47,7 +46,7 @@ export default function Shell() {
         onAccountTap={() => setDrawerOpen(true)}
         onAdd={() => navigate("/connect?add=1")}
       />
-      <ApBar accountId={active?.id ?? null} enabled={Boolean(active?.autopilotEnabled)} />
+      {/* ApBar（オートパイロット帯）は機能の公開まで出さない。--apbar-h は workspace.css で 0 */}
 
       <motion.main
         key={`${data?.user.id}:${active?.id}:${pathname}`}

@@ -20,7 +20,6 @@ const Connect = lazy(() => import("./screens/Connect"));
 const Home = lazy(() => import("./screens/Home"));
 const Create = lazy(() => import("./screens/Create"));
 const Queue = lazy(() => import("./screens/Queue"));
-const Autopilot = lazy(() => import("./screens/Autopilot"));
 const Settings = lazy(() => import("./screens/Settings"));
 
 function Loading() {
@@ -86,7 +85,8 @@ export default function App() {
           <Route path="home" element={<Home />} />
           <Route path="create" element={<Create />} />
           <Route path="queue" element={<Queue />} />
-          <Route path="autopilot" element={<Autopilot />} />
+          {/* オートパイロットは開発中。画面（screens/Autopilot.tsx）は残し、入口だけ閉じる */}
+          <Route path="autopilot" element={<Navigate to="/app/home" replace />} />
           <Route path="settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/app/home" replace />} />
         </Route>

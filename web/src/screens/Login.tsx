@@ -10,6 +10,17 @@ import { useForgot, useLogin, useRegister, useReset } from "../api/auth";
 
 type Mode = "login" | "register" | "forgot";
 
+type Field = "email" | "password" | "license";
+
+/** API のエラーを、直すべき欄に結びつける。どの欄でもないものは null（フォームの下に出す）。 */
+function errorField(e: unknown, mode: Mode): Field | null {
+  if (!(e instanceof ApiError)) return null;
+  if (e.code === "EMAIL_TAKEN") return "email";
+  if (e.code === "WEAK_PASSWORD") return "password";
+  if (e.code === "LICENSE_INVALID" || e.code === "LICENSE_REVOKED") return mode === "register" ? "license" : null;
+  return null;
+}
+
 function errorMessage(e: unknown): string {
   if (e instanceof ApiError) return e.message;
   return "処理に失敗しました。しばらくしてからもう一度お試しください";
@@ -31,10 +42,11 @@ function Shell({ title, lead, children }: { title: string; lead: string; childre
   return (
     <main className="auth-layout">
       <aside className="auth-story"><div className="brand"><span className="brand-symbol">a</span><span>autopilot<span className="brand-sub">for Threads</span></span></div>
-        <div><p className="eyebrow">YOUR WORDS. MORE POSSIBILITIES.</p><h2>伝わる投稿を。<br />続けられる仕組みを。</h2><p>振り返る、書く、届ける。<br />あなたのThreadsを、ひとつの場所で。</p>
+        <div><h2>伝わる投稿を。<br />続けられる仕組みを。</h2><p>振り返る、書く、届ける。<br />あなたのThreadsを、ひとつの場所で。</p>
         <div className="auth-flow"><span>01<b>分析する</b></span><span>02<b>投稿をつくる</b></span><span>03<b>予約する</b></span></div></div>
         <small>Threads オートパイロット</small></aside>
       <div className="auth-form-wrap"><div className="auth-form-inner">
+      <div className="brand auth-mobile-brand"><span className="brand-symbol">a</span><span>autopilot<span className="brand-sub">for Threads</span></span></div>
       <h1 style={{ fontSize: 24 }}>{title}</h1>
       <p className="muted" style={{ marginTop: 6, marginBottom: "calc(var(--sp) * 3)" }}>
         {lead}
@@ -52,6 +64,9 @@ function AuthForm() {
   const [password, setPassword] = useState("");
   const [licenseKey, setLicenseKey] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [field, setField] = useState<Field | null>(null);
+  // ログインの失敗はメールとパスワードのどちらが違うか言えない（言わない）ので、両方に印をつける
+  const [loginFailed, setLoginFailed] = useState(false);
   const [notice, setNotice] = useState<string | null>(params.get("changed") === "1" ? "パスワードを変更しました。新しいパスワードでログインしてください。" : null);
 
   const login = useLogin();
@@ -64,12 +79,16 @@ function AuthForm() {
     setParams(next === "register" ? { mode: "register" } : {}, { replace: true });
     setPassword("");
     setError(null);
+    setField(null);
+    setLoginFailed(false);
     setNotice(null);
   };
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    setField(null);
+    setLoginFailed(false);
     setNotice(null);
     try {
       if (mode === "forgot") {
@@ -85,8 +104,14 @@ function AuthForm() {
       // The auth hook replaces the document after clearing the previous user state.
     } catch (err) {
       setError(errorMessage(err));
+      setField(errorField(err, mode));
+      setLoginFailed(err instanceof ApiError && err.code === "LOGIN_FAILED");
     }
   }
+
+  const invalid = (f: Field) => field === f || (loginFailed && f !== "license");
+  const fieldError = (f: Field) =>
+    field === f && error ? <span className="field-error" role="alert">{error}</span> : null;
 
   const title = mode === "register" ? "はじめる" : mode === "forgot" ? "パスワードの再設定" : "ログイン";
   const lead =
@@ -108,9 +133,11 @@ function AuthForm() {
             name="email"
             autoComplete="email"
             required
+            aria-invalid={invalid("email")}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
+          {fieldError("email")}
         </label>
 
         {mode !== "forgot" && (
@@ -123,9 +150,11 @@ function AuthForm() {
               autoComplete={mode === "register" ? "new-password" : "current-password"}
               required
               minLength={mode === "register" ? 8 : undefined}
+              aria-invalid={invalid("password")}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
+            {fieldError("password")}
           </label>
         )}
 
@@ -140,13 +169,15 @@ function AuthForm() {
               autoComplete="off"
               spellCheck={false}
               required
+              aria-invalid={invalid("license")}
               value={licenseKey}
               onChange={(e) => setLicenseKey(e.target.value.toUpperCase())}
             />
+            {fieldError("license")}
           </label>
         )}
 
-        {error && (
+        {error && !field && (
           <p className="msg msg-bad" role="alert">
             {error}
           </p>
@@ -158,7 +189,7 @@ function AuthForm() {
         )}
 
         <div style={{ marginTop: "calc(var(--sp) * 3)" }}>
-          <button className="btn" type="submit" disabled={busy}>
+          <button aria-busy={busy} className="btn" type="submit" disabled={busy}>
             {busy ? "送信中…" : mode === "register" ? "登録する" : mode === "forgot" ? "リンクを送る" : "ログイン"}
           </button>
         </div>
@@ -245,7 +276,7 @@ function ResetForm({ token, onDone }: { token: string; onDone: () => void }) {
         )}
 
         <div style={{ marginTop: "calc(var(--sp) * 3)" }}>
-          <button className="btn" type="submit" disabled={reset.isPending}>
+          <button aria-busy={reset.isPending} className="btn" type="submit" disabled={reset.isPending}>
             {reset.isPending ? "設定中…" : "設定する"}
           </button>
         </div>

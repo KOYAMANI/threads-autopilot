@@ -8,7 +8,6 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { AnimatePresence, motion } from "motion/react";
 import {
   Bar,
   BarChart,
@@ -30,8 +29,9 @@ import Sheet from "../components/Sheet";
 import Pagination, { usePagination } from "../components/Pagination";
 import { DotsIcon } from "../components/Icons";
 import { useToast } from "../components/Toast";
-import { CROSSFADE, SPRING, useReducedMotion } from "../lib/motion";
 import { fmtK, fmtN, md, mdhm, pct, signed } from "../lib/format";
+import Skeleton from "../components/Skeleton";
+import PostViewer from "../components/PostViewer";
 
 const PERIODS: Array<{ value: DashboardPeriod; label: string }> = [
   { value: 7, label: "7日" },
@@ -84,7 +84,7 @@ export default function Home() {
   const { data, isPending, isError, error, isPlaceholderData, isFetching } = useDashboard(account?.id ?? null, period);
 
   if (!account) {
-    return <div className="onboarding"><p className="eyebrow">WELCOME TO YOUR WORKSPACE</p><h1>ここから、あなたのThreadsを。</h1><p className="muted">アカウントを接続して、投稿と数字をひとつの場所に。</p><div className="onboarding-grid"><section className="card"><span className="step-number">01</span><h2>Threadsを接続</h2><p>自分のアクセストークンを使って、投稿と分析データを取り込みます。</p><button className="btn" onClick={() => navigate("/connect")}>Threadsをつなぐ →</button></section><section className="card"><span className="step-number">02</span><h2>投稿環境を整える</h2><p>AIキー、ログイン情報、通知は設定から管理できます。</p><button className="btn btn-sub" onClick={() => navigate("/app/settings")}>設定を開く →</button></section></div></div>;
+    return <div className="onboarding"><h1>はじめに、2つだけ設定します</h1><p className="muted">どちらも数分で終わります。終わると、投稿の数字と下書きづくりが使えます。</p><div className="onboarding-grid"><section className="card"><span className="step-number" aria-hidden="true">1</span><h2>Threads をつなぐ</h2><p>あなたの Threads アカウントから、投稿と数字を取り込みます。</p><button className="btn" onClick={() => navigate("/connect")}>Threads をつなぐ</button></section><section className="card"><span className="step-number" aria-hidden="true">2</span><h2>AIキーを登録する</h2><p>下書きを AI で作るときに使います。あとからでも登録できます。</p><button className="btn btn-sub" onClick={() => navigate("/app/settings")}>設定でAIキーを登録</button></section></div></div>;
   }
 
   if (isError && !data) {
@@ -96,10 +96,28 @@ export default function Home() {
     );
   }
 
+  const syncDone = sync.data?.status === "done" && !sync.data.running;
+  const runSync = () => startSync.mutate(undefined, { onError: (e) => toast.show(e instanceof ApiError ? e.message : "同期を開始できませんでした", "bad") });
+  // 同期が済むまでは、数字より先に「何をすればいいか」を出す
+  const syncNotice = syncDone ? null : (
+    <div className={`notice home-sync${sync.data?.status === "failed" ? " notice-warn" : ""}`} role="status">
+      <div>
+        <strong>{sync.data?.status === "failed" ? "同期できませんでした" : sync.data?.running ? "データを取り込んでいます" : "最初の同期をしましょう"}</strong>
+        <p>{sync.data?.status === "failed" ? sync.data.message : sync.data?.running ? `${sync.data.posts}件の投稿を保存しました。数字は順に反映されます。` : "Threads から投稿と数字を取り込みます。数分かかることがあります。"}</p>
+      </div>
+      {!sync.data?.running && (
+        <button className="btn btn-fit" aria-busy={startSync.isPending} disabled={startSync.isPending} onClick={runSync}>
+          {startSync.isPending ? "開始しています…" : sync.data?.status === "failed" ? "もう一度同期する" : "今すぐ同期"}
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <>
-      <div className="page-heading"><div><p className="eyebrow">YOUR THREADS, AT A GLANCE</p><h1>アナリティクス</h1><p className="muted">@{account.username} の成長と、次の投稿のヒント。</p></div><button className="btn btn-fit" onClick={() => navigate("/app/create")}>＋ 投稿をつくる</button></div>
-      <div className="dashboard-toolbar"><span className="toolbar-label"><span className="status-dot" />表示期間</span><div className="chips" role="group" aria-label="表示期間">
+      <div className="page-heading"><div><h1>アナリティクス</h1><p className="muted">@{account.username} の成長と、次の投稿のヒント。</p></div><button className="btn btn-fit" onClick={() => navigate("/app/create")}>投稿をつくる</button></div>
+      {syncNotice}
+      <div className="dashboard-toolbar"><span className="toolbar-label">{syncDone ? <>{sync.data?.posts}件の投稿を同期済み<button className="btn-link" aria-busy={startSync.isPending} disabled={startSync.isPending} onClick={runSync}>{startSync.isPending ? "開始中…" : "今すぐ同期"}</button></> : "表示期間"}</span><div className="chips" role="group" aria-label="表示期間">
         {PERIODS.map((p) => (
           <button
             key={String(p.value)}
@@ -116,11 +134,10 @@ export default function Home() {
       </div>
       <div className="period-feedback" role="status">{isPlaceholderData ? `${PERIODS.find(p => p.value === data?.period)?.label ?? "前の期間"}のデータを表示中 · 選択した期間を読み込み中…` : isFetching && data ? "最新の数字に更新中…" : "期間内に公開した投稿を表示します。URL別クリックは累計です。"}</div>
       {isError && data && <p className="msg msg-bad" role="alert">更新できませんでした。表示中のデータを残しています。期間を選び直してください。</p>}
-      <div className="sync-summary" role="status"><span>{sync.data?.status === "failed" ? sync.data.message : sync.data?.running ? `データを取り込み中 · ${sync.data.posts}件の投稿を保存済み。数字は順次反映します。` : sync.data?.status === "done" ? `${sync.data.posts}件の投稿を同期済み` : "接続済みです。初回のデータ同期を開始してください。"}</span><button className="btn btn-sub btn-fit" disabled={startSync.isPending} onClick={()=>startSync.mutate(undefined,{onError:e=>toast.show(e instanceof ApiError ? e.message : "同期を開始できませんでした","bad")})}>{startSync.isPending ? "同期を開始中…" : sync.data?.running ? "同期を再開" : "今すぐ同期"}</button></div>
       {isPending || !data ? (
-        <p className="muted" style={{ marginTop: "calc(var(--sp) * 3)" }}>
-          読み込んでいます…
-        </p>
+        <div className="kpis section">
+          {[0, 1, 2, 3].map((i) => <div className="kpi" key={i}><Skeleton lines={2} label="数字を読み込んでいます" /></div>)}
+        </div>
       ) : (
         <Loaded
           key={account.id}
@@ -203,9 +220,9 @@ function Loaded({
           {followerSeries.length <= 1 ? (
             <div className="chart-empty">
               <p className="muted">
-                明日から推移が出ます
+                明日から推移が出ます。
                 <br />
-                （フォロワー数は接続した日から毎日ためていきます）
+                フォロワー数は、つないだ日から毎日記録します。
               </p>
             </div>
           ) : (
@@ -234,7 +251,7 @@ function Loaded({
           <div className="chart-title">日別の表示回数</div>
           {viewSeries.length === 0 ? (
             <div className="chart-empty">
-              <p className="muted">この期間のデータがまだありません</p>
+              <p className="muted">この期間の表示回数はまだありません。<br />同期すると、ここに日ごとの数字が出ます。</p>
             </div>
           ) : (
             <ResponsiveContainer width="100%" height={220}>
@@ -274,7 +291,7 @@ function Loaded({
 
         {sorted.length === 0 ? (
           <p className="muted" style={{ marginTop: "var(--sp)" }}>
-            この期間に投稿がありません。
+            この期間に公開した投稿はありません。期間を広げると、前の投稿も並びます。
           </p>
         ) : (
           <div className="rows" style={{ marginTop: "var(--sp)" }}>
@@ -364,13 +381,12 @@ function PostRow({
   onToast: (text: string, kind?: "info" | "ok" | "bad") => void;
 }) {
   const navigate = useNavigate();
-  const reduced = useReducedMotion();
+  const { account } = useShell();
   const [open, setOpen] = useState(false);
   const [sheet, setSheet] = useState(false);
   const repost = useRepost(accountId);
 
   const metricLabel = METRICS.find((m) => m.key === metric)?.label ?? "";
-  const carry = post.children[0] ? post.children[0].views / Math.max(1, post.views) : null;
   // 並べ替えに使っている指標を先頭に出し、残りから2つ添える（同じ数字を二度出さない）
   const sideMetrics = (["views", "likes", "clicks"] as const)
     .filter((k) => k !== metric)
@@ -379,6 +395,7 @@ function PostRow({
   function toCreate(mode: CreatePreset["mode"]) {
     const preset: CreatePreset = { mode, postId: post.id, text: post.text };
     setSheet(false);
+    setOpen(false);
     navigate("/app/create", { state: { preset } });
   }
 
@@ -388,8 +405,8 @@ function PostRow({
         <button
           type="button"
           className="row-main"
-          aria-expanded={open}
-          onClick={() => setOpen((v) => !v)}
+          aria-haspopup="dialog"
+          onClick={() => setOpen(true)}
         >
           <div className="row-meta">
             <span>{mdhm(post.postedAt, tz)}</span>
@@ -420,44 +437,54 @@ function PostRow({
         </button>
       </div>
 
-      <AnimatePresence initial={false}>
-        {open && (
-          // 動かすのは transform と opacity だけ（SPEC §12.5）。高さは即座に決まる
-          <motion.div
-            className="row-panel"
-            initial={reduced ? { opacity: 0 } : { opacity: 0, y: -6 }}
-            animate={reduced ? { opacity: 1 } : { opacity: 1, y: 0 }}
-            exit={reduced ? { opacity: 0 } : { opacity: 0, y: -6 }}
-            transition={reduced ? CROSSFADE : SPRING}
-          >
-            <div className="child">
-              <span className="t">1投稿目</span>
-              <span className="num">{fmtN(post.views)} 表示</span>
-            </div>
-            {post.children.map((c, i) => (
-              <div className="child" key={c.id}>
-                <span className="t">
-                  {i + 2}投稿目: {c.text || "（本文なし）"}
-                </span>
-                <span className="num">{fmtN(c.views)} 表示</span>
-              </div>
-            ))}
-            <p className="muted" style={{ marginTop: "var(--sp)" }}>
-              返信 {fmtN(post.replies)} / リポスト {fmtN(post.reposts)} / 引用 {fmtN(post.quotes)} /
-              クリック {fmtN(post.clicks)}
-              {carry !== null && ` / 遷移率 ${pct(post.children[0]!.views, post.views)}`}
-            </p>
-            <div className="row-actions">
+      {account && (
+        <PostViewer
+          open={open}
+          onClose={() => setOpen(false)}
+          account={account}
+          title={`${mdhm(post.postedAt, tz)} の投稿`}
+          escapeDisabled={sheet}
+          meta={
+            <>
+              <span className="tag">{post.hook}</span>
+              {post.link && <span className="tag tag-link">リンク</span>}
+            </>
+          }
+          segments={[
+            { text: post.text, views: post.views },
+            ...post.children.map((c, i) => ({
+              text: c.text,
+              views: c.views,
+              ...(i === 0 ? { note: `1投稿目からの遷移率 ${pct(c.views, post.views)}` } : {}),
+            })),
+          ]}
+          stats={[
+            { label: "表示", value: fmtN(post.views) },
+            { label: "いいね", value: fmtN(post.likes) },
+            { label: "返信", value: fmtN(post.replies) },
+            { label: "リポスト", value: fmtN(post.reposts) },
+            { label: "引用", value: fmtN(post.quotes) },
+            { label: "クリック", value: fmtN(post.clicks) },
+          ]}
+          headerActions={
+            post.permalink && (
+              <a className="btn-link" href={post.permalink} target="_blank" rel="noreferrer noopener">
+                Threads で開く
+              </a>
+            )
+          }
+          actions={
+            <>
               <button type="button" className="btn btn-sub" onClick={() => toCreate("rewrite")}>
                 リライト
               </button>
-              <button type="button" className="btn btn-sub" onClick={() => toCreate("template")}>
+              <button type="button" className="btn" onClick={() => toCreate("template")}>
                 これを型にして作る
               </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            </>
+          }
+        />
+      )}
 
       <Sheet open={sheet} onClose={() => setSheet(false)} title={md(post.postedAt, tz) + " の投稿"}>
         <p className="muted" style={{ marginBottom: "var(--sp)" }}>
@@ -470,7 +497,7 @@ function PostRow({
           <button type="button" className="menu-item" onClick={() => toCreate("template")}>
             これを型にして作る
           </button>
-          <button
+          <button aria-busy={repost.isPending}
             type="button"
             className="menu-item"
             disabled={repost.isPending}

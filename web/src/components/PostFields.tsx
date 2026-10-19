@@ -31,7 +31,7 @@ export function draftIssue(draft: PostDraft): string | null {
   return res.ok ? null : (res.issues[0]?.message ?? "入力に誤りがあります");
 }
 
-function Counter({ text }: { text: string }) {
+export function Counter({ text }: { text: string }) {
   const n = bodyLength(text);
   const over = n > MAX_BODY_LENGTH;
   return (

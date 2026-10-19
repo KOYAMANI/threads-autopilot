@@ -61,7 +61,7 @@ export default function Settings() {
   const [tab, setTab] = useState(() => new URLSearchParams(window.location.search).get("tab") === "links" ? "links" : "connections");
   const tabs = [{ id: "connections", label: "接続とAI" }, { id: "links", label: "リンク" }, { id: "notifications", label: "通知" }, { id: "security", label: "ログインとセキュリティ" }];
   return <>
-    <div className="page-heading"><div><p className="eyebrow">WORKSPACE SETTINGS</p><h1>設定</h1><p className="muted">アカウントと、あなたの投稿環境を管理します。</p></div></div>
+    <div className="page-heading"><div><h1>設定</h1><p className="muted">つないだアカウント、AIキー、通知、ログイン情報をここで変えられます。</p></div></div>
     <div className="settings-tabs" role="tablist" aria-label="設定の種類">{tabs.map(t => <button key={t.id} id={`settings-tab-${t.id}`} role="tab" aria-selected={tab === t.id} aria-controls="settings-panel" className="settings-tab" tabIndex={tab === t.id ? 0 : -1} onKeyDown={e => {
       const i = tabs.findIndex(v => v.id === t.id);
       const next = e.key === "ArrowRight" ? (i + 1) % tabs.length : e.key === "ArrowLeft" ? (i + tabs.length - 1) % tabs.length : e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : -1;
@@ -84,23 +84,30 @@ function PasswordCard() {
   const [next, setNext] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // どの欄の誤りか（欄の下に理由を出す）。欄に結びつかない誤りは下のメッセージに出す
+  const [errorField, setErrorField] = useState<"current" | "next" | "confirmation" | null>(null);
+  const fieldError = (f: "current" | "next" | "confirmation") => errorField === f && error ? <span className="field-error" role="alert">{error}</span> : null;
   return <section className="card section password-card">
     <div className="section-head"><h2>パスワードを変更</h2><span className="tag">ログイン情報</span></div>
     <p className="muted">{data?.user.email}</p>
     <form onSubmit={async e => {
-      e.preventDefault(); setError(null);
-      if (next !== confirmation) { setError("新しいパスワードが一致しません"); return; }
+      e.preventDefault(); setError(null); setErrorField(null);
+      if (next !== confirmation) { setError("新しいパスワードが一致しません。同じものを2回入力してください"); setErrorField("confirmation"); return; }
       try { await change.mutateAsync({ current_password: current, new_password: next }); }
-      catch (e) { setError(e instanceof ApiError ? e.message : "変更できませんでした。もう一度お試しください"); }
+      catch (e) {
+        setError(e instanceof ApiError ? e.message : "変更できませんでした。もう一度お試しください");
+        const code = e instanceof ApiError ? e.code : "";
+        setErrorField(code === "PASSWORD_INCORRECT" ? "current" : code === "WEAK_PASSWORD" || code === "PASSWORD_UNCHANGED" ? "next" : null);
+      }
     }}>
-      <label className="field"><span>現在のパスワード</span><input className="input" type="password" autoComplete="current-password" required maxLength={200} value={current} onChange={e => setCurrent(e.target.value)} /></label>
+      <label className="field"><span>現在のパスワード</span><input className="input" type="password" autoComplete="current-password" required maxLength={200} aria-invalid={errorField === "current"} value={current} onChange={e => setCurrent(e.target.value)} />{fieldError("current")}</label>
       <div className="password-fields">
-        <label className="field"><span>新しいパスワード</span><input className="input" type="password" autoComplete="new-password" minLength={8} maxLength={200} required value={next} onChange={e => setNext(e.target.value)} /><small className="muted">8〜200文字で入力してください。</small></label>
-        <label className="field"><span>新しいパスワード（確認）</span><input className="input" type="password" autoComplete="new-password" minLength={8} maxLength={200} required value={confirmation} onChange={e => setConfirmation(e.target.value)} /></label>
+        <label className="field"><span>新しいパスワード</span><input className="input" type="password" autoComplete="new-password" minLength={8} maxLength={200} required aria-invalid={errorField === "next"} value={next} onChange={e => setNext(e.target.value)} />{fieldError("next") ?? <small className="muted">8〜200文字で入力してください。</small>}</label>
+        <label className="field"><span>新しいパスワード（確認）</span><input className="input" type="password" autoComplete="new-password" minLength={8} maxLength={200} required aria-invalid={errorField === "confirmation"} value={confirmation} onChange={e => setConfirmation(e.target.value)} />{fieldError("confirmation")}</label>
       </div>
       <p className="security-note">変更すると、すべての端末からログアウトします。新しいパスワードでログインし直してください。</p>
-      {error && <p className="msg msg-bad" role="alert">{error}</p>}
-      <button type="submit" className="btn btn-fit" disabled={change.isPending}>{change.isPending ? "変更しています…" : "パスワードを変更"}</button>
+      {error && !errorField && <p className="msg msg-bad" role="alert">{error}</p>}
+      <button aria-busy={change.isPending} type="submit" className="btn btn-fit" disabled={change.isPending}>{change.isPending ? "変更しています…" : "パスワードを変更"}</button>
     </form>
   </section>;
 }
@@ -163,7 +170,7 @@ function AccountsCard() {
           className="section"
           style={{ display: "grid", gap: "calc(var(--sp) * 1.5)" }}
         >
-          <button
+          <button aria-busy={remove.isPending}
             type="button"
             className="btn btn-danger"
             disabled={remove.isPending}
@@ -218,7 +225,11 @@ function AccountRow({
       ? "つなぎ直しが必要です"
       : days === null
         ? "有効期限未確認（長期トークンは延長で確認）"
-        : `トークンはあと${days}日`;
+        : days === 0
+          ? "トークンの期限が切れています"
+          : `トークンはあと${days}日`;
+  // 期限切れ・14日を切ったら、延長を一番目立つ操作にする
+  const urgent = days !== null && days <= 14;
 
   return (
     <div className="acct-row">
@@ -226,7 +237,7 @@ function AccountRow({
         <AccountAvatar account={account} />
         <span className="acct-name">
           <span className="t">@{account.username}</span>
-          <span className={account.status === "needs_reauth" ? "n bad" : "n"}>
+          <span className={account.status === "needs_reauth" || days === 0 ? "n bad" : "n"}>
             {tokenNote}
           </span>
         </span>
@@ -235,9 +246,9 @@ function AccountRow({
         <button type="button" className="btn-quiet" onClick={onDiagnose}>
           診断
         </button>
-        <button
+        <button aria-busy={refresh.isPending}
           type="button"
-          className="btn-quiet"
+          className={urgent ? "btn btn-fit" : "btn-quiet"}
           disabled={refresh.isPending}
           onClick={() =>
             refresh.mutate(undefined, {
@@ -312,7 +323,7 @@ function DiagnoseSheet({
         className="section"
         style={{ display: "grid", gap: "calc(var(--sp) * 1.5)" }}
       >
-        <button
+        <button aria-busy={diagnose.isPending}
           type="button"
           className="btn btn-sub"
           disabled={diagnose.isPending}
@@ -347,6 +358,7 @@ function AiKeyCard() {
   const [provider, setProvider] = useState<AiProvider>("gemini");
   const [model, setModel] = useState("");
   const [key, setKey] = useState("");
+  const [keyError, setKeyError] = useState<string | null>(null);
   useEffect(() => {
     if (settings.data) {
       setProvider(settings.data.provider ?? "gemini");
@@ -405,19 +417,29 @@ function AiKeyCard() {
           type="password"
           autoComplete="off"
           value={key}
-          onChange={(e) => setKey(e.target.value)}
+          aria-invalid={keyError !== null}
+          aria-describedby={keyError ? "ai-key-error" : undefined}
+          onChange={(e) => {
+            setKey(e.target.value);
+            setKeyError(null);
+          }}
           placeholder={
             settings.data?.hasKey
               ? "登録済み。変更するときだけ入力"
               : "APIキーを入力"
           }
         />
+        {keyError && <span className="field-error" id="ai-key-error" role="alert">{keyError}</span>}
       </label>
       <div className="section" style={{ display: "grid", gap: 12 }}>
-        <button
+        <button aria-busy={save.isPending}
           className="btn"
           disabled={save.isPending}
-          onClick={() =>
+          onClick={() => {
+            if (!key.trim() && !settings.data?.hasKey) {
+              setKeyError("APIキーを入力してください。プロバイダの管理画面で発行できます");
+              return;
+            }
             save.mutate(
               {
                 provider,
@@ -430,14 +452,14 @@ function AiKeyCard() {
                   setKey("");
                   toast.show("暗号化して保存しました", "ok");
                 },
-                onError: error,
+                onError: (e) => setKeyError(e instanceof Error ? e.message : "保存できませんでした"),
               },
-            )
-          }
+            );
+          }}
         >
           {save.isPending ? "保存中…" : "保存する"}
         </button>
-        <button
+        <button aria-busy={test.isPending}
           className="btn btn-sub"
           disabled={dirty || !settings.data?.hasKey || test.isPending}
           onClick={() =>
@@ -451,10 +473,12 @@ function AiKeyCard() {
             )
           }
         >
-          保存した設定で接続確認
+          {test.isPending ? "確認しています…" : "保存した設定で接続確認"}
         </button>
-        {dirty && (
-          <p className="muted">接続確認の前に変更を保存してください。</p>
+        {dirty ? (
+          <p className="btn-hint" style={{ marginTop: 0 }}>接続確認の前に、変更を保存してください。</p>
+        ) : !settings.data?.hasKey && (
+          <p className="btn-hint" style={{ marginTop: 0 }}>キーを保存すると、接続を確認できます。</p>
         )}
         {settings.data?.hasKey && (
           <button
@@ -773,7 +797,7 @@ function DangerCard() {
           className="section"
           style={{ display: "grid", gap: "calc(var(--sp) * 1.5)" }}
         >
-          <button
+          <button aria-busy={del.isPending}
             type="button"
             className="btn btn-danger"
             disabled={del.isPending || password === ""}
@@ -827,18 +851,21 @@ function GoogleSheetsCard() {
   return (
     <section className="card section">
       <h2>Googleスプレッドシート</h2>
-      <p>
-        Googleと連携すると、あなたのドライブに専用の管理表を作成します。投稿・分析・下書き・参考情報・予約結果を約1時間ごとに同期します。
-      </p>
       <p className="muted">
-        アプリに保存した記録を表へ反映します。表の編集はアプリに戻りません。APIキーやThreadsトークンは書き出しません。アプリ管理の5タブは上書きされます。自由な編集・集計は「自由メモ」や追加のタブで行ってください。
+        あなたの Google ドライブに管理表を作り、投稿・数字・下書きを約1時間ごとに書き出します。
       </p>
+      <details className="more">
+        <summary>詳しく</summary>
+        <p className="muted">
+          表の編集はアプリに戻りません。APIキーや Threads のトークンは書き出しません。アプリが使う5つのタブは毎回上書きされるので、自由な編集や集計は「自由メモ」か、足したタブで行ってください。
+        </p>
+      </details>
       {status.isPending && <p>連携状態を確認しています…</p>}
       {status.isError && (
         <p className="msg msg-bad">連携状態を取得できませんでした。</p>
       )}
       {data && !data.configured && (
-        <p className="msg msg-warn">Google連携は管理者による設定待ちです。</p>
+        <p className="msg msg-warn">Google 連携は、まだ使えません（管理者の設定待ち）。設定が済むと、下のボタンが押せるようになります。</p>
       )}
       {data?.lastError && (
         <p role="status" className="msg msg-warn">

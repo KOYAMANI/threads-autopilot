@@ -82,3 +82,9 @@ export const DotsIcon = (p: Props) => (
     <circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none" />
   </Svg>
 );
+
+export const CloseIcon = (p: Props) => (
+  <Svg {...p}>
+    <path d="M6 6l12 12M18 6 6 18" />
+  </Svg>
+);

@@ -5,17 +5,16 @@
  * 出し、日をタップするとその日だけに絞る。
  *
  * 操作（design-v0.2 §3-5）: 編集 / 複製 / 削除 / 今すぐ投稿 / 日時変更。
- * 投稿済からは リライト（作る画面へ）/ リポスト / 数字を見る。
+ * 投稿済からは リライト（作る画面へ）/ リポスト / 全文と数字を見る（全画面ビュー）。
  * 失敗は日本語の理由（`error`）と Threads の返答そのまま（`error_raw`）を出す。
  * `approve_deadline` の残り時間は client 側で数える（SPEC §12.3）。
  *
  * 動きは `lib/motion.ts` のプリセットだけを使い、下からのシートは `components/Sheet.tsx`
  * に任せる（SPEC §12.5 / apple-design）。
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { AnimatePresence, motion } from "motion/react";
-import type { QueueItem, QueueSlotsResponse } from "@tap/shared";
+import type { AccountSummary, QueueItem, QueueSlotsResponse } from "@tap/shared";
 import {
   QUEUE_TABS,
   useQueueSlots,
@@ -33,8 +32,10 @@ import ScheduleSheet, { type SchedulePick } from "../components/ScheduleSheet";
 import Sheet from "../components/Sheet";
 import PostingScheduleEditor from "../components/PostingScheduleEditor";
 import { DotsIcon, PlusIcon } from "../components/Icons";
+import PublishNotice from "../components/PublishNotice";
+import Skeleton from "../components/Skeleton";
+import PostViewer from "../components/PostViewer";
 import { useToast } from "../components/Toast";
-import { CROSSFADE, SPRING, useReducedMotion } from "../lib/motion";
 import { fmtN, md, mdhm, remaining } from "../lib/format";
 import type { CreatePreset } from "./Home";
 
@@ -128,10 +129,18 @@ export default function Queue() {
   const remove = useDeleteQueue(accountId);
   const repost = useRepost(accountId);
 
-  const selected = useMemo(
-    () => [...(items ?? []), ...(daily.data?.slots.flatMap(slot => slot.item ? [slot.item] : []) ?? []), ...(daily.data?.unslotted ?? [])].find(i => i.id === selectedId) ?? null,
-    [items, daily.data, selectedId],
+  // 一覧と、予約タブの日別スロット表示の両方から探す
+  const visibleItems = useMemo(
+    () => [...(items ?? []), ...(daily.data?.slots.flatMap(slot => slot.item ? [slot.item] : []) ?? []), ...(daily.data?.unslotted ?? [])],
+    [items, daily.data],
   );
+  const selected = useMemo(() => visibleItems.find(i => i.id === selectedId) ?? null, [visibleItems, selectedId]);
+  // 全画面で開いている1件。一覧から消えたら（削除・タブ移動）自然に閉じる
+  const viewing = useMemo(() => visibleItems.find((i) => i.id === openId) ?? null, [visibleItems, openId]);
+  // 閉じる動きの間も中身を出し続けるため、最後に開いていた1件を覚えておく
+  const lastView = useRef<QueueItem | null>(null);
+  if (viewing) lastView.current = viewing;
+  const shownView = viewing ?? lastView.current;
 
   // 週表示の7日（今日から6日後まで）。予約タブでだけ出す
   const week = useMemo(() => {
@@ -173,6 +182,7 @@ export default function Queue() {
   function toCreate(item: QueueItem) {
     const preset: CreatePreset = { mode: "rewrite", postId: item.id, text: item.body };
     setSheet(null);
+    setOpenId(null);
     navigate("/app/create", { state: { preset } });
   }
 
@@ -226,8 +236,7 @@ export default function Queue() {
     <>
       <div className="page-heading queue-heading">
         <div>
-          <p className="eyebrow">PLAN YOUR NEXT CHAPTER</p><h1>下書き・予約</h1>
-          {!canPublish && <p className="msg msg-warn">設定でThreads APIを連携すると、予約・投稿できるようになります。</p>}
+          <h1>下書き・予約</h1>
           <p className="muted" style={{ marginTop: "0.125rem" }}>
             @{account.username} の予約と下書き
           </p>
@@ -235,13 +244,13 @@ export default function Queue() {
         <div className="queue-heading-actions"><button type="button" className="btn btn-sub btn-fit" onClick={() => setShowSlots(true)}>投稿スロット設定</button>
         <button
           type="button"
-          className="btn btn-sub"
-          style={{ width: "auto", padding: "0.5rem 0.75rem" }}
+          className="btn btn-sub btn-fit"
           onClick={() => navigate("/app/create")}
         >
           <PlusIcon size={16} /> 作る
         </button></div>
       </div>
+      {!canPublish && <PublishNotice account={account} />}
 
       <div className="chips" role="group" aria-label="表示する状態">
         {QUEUE_TABS.map((t) => (
@@ -277,7 +286,7 @@ export default function Queue() {
               >
                 <span className="w">{weekdayLabel(d.ms, tz)}</span>
                 <span className="d num">{dayNumber(d.ms, tz)}</span>
-                <span className={`n num${n === 0 ? " n-zero" : ""}`}>{n === 0 ? "・" : n}</span>
+                <span className={`n num${n === 0 ? " n-zero" : ""}`}>{n === 0 ? "0" : `${n}件`}</span>
               </button>
             );
           })}
@@ -292,23 +301,21 @@ export default function Queue() {
 
       {tab === "scheduled" && day ? <DailySlots
         date={day} data={daily.data} loading={daily.isPending} error={daily.error}
-        now={now} tz={tz} canPublish={canPublish} openId={openId}
-        onToggle={id => setOpenId(current => current === id ? null : id)}
+        now={now} tz={tz} canPublish={canPublish}
+        onOpen={id => setOpenId(id)}
         onMenu={item => openSheet(item, "actions")} onFill={setPickSlotAt}
         onSettings={() => setShowSlots(true)}
       /> : isPending ? (
-        <p className="muted" style={{ marginTop: "calc(var(--sp) * 3)" }}>
-          読み込んでいます…
-        </p>
+        <div className="card section"><Skeleton lines={3} label="キューを読み込んでいます" /></div>
       ) : shown.length === 0 ? (
         <div className="card section">
           <p className="muted">
             {tab === "scheduled" && day
               ? "この日の予約はありません。"
               : tab === "scheduled"
-                ? "予約はまだありません。「作る」から下書きを作って、日時を決めます。"
+                ? "予約はまだありません。右上の「作る」で下書きを作り、日時を決めると、ここに並びます。"
                 : tab === "draft"
-                  ? "下書きはありません。"
+                  ? "下書きはありません。「作る」で保存した下書きが、ここに並びます。"
                   : tab === "done"
                     ? "投稿済みはまだありません。"
                     : "失敗した投稿はありません。"}
@@ -322,8 +329,7 @@ export default function Queue() {
               item={item}
               tz={tz}
               now={now}
-              open={openId === item.id}
-              onToggle={() => setOpenId((v) => (v === item.id ? null : item.id))}
+              onOpen={() => setOpenId(item.id)}
               onMenu={() => openSheet(item, "actions")}
             />
           ))}
@@ -340,6 +346,21 @@ export default function Queue() {
         {!drafts.isPending && !drafts.isError && !drafts.data?.length && <p className="muted section">まだ下書きがありません。「作る」で投稿を作成して保存してください。</p>}
         <button type="button" className="btn btn-sub section" onClick={() => navigate("/app/create")}>新しい投稿を作る</button>
       </Sheet>
+
+      {/* ── 全画面ビュー ─────────────────────────────── */}
+      {account && shownView && (
+        <QueueViewer
+          open={viewing !== null}
+          item={shownView}
+          account={account}
+          tz={tz}
+          canPublish={canPublish}
+          escapeDisabled={sheet !== null}
+          onClose={() => setOpenId(null)}
+          onSheet={(kind) => openSheet(shownView, kind)}
+          onRewrite={() => toCreate(shownView)}
+        />
+      )}
 
       {/* ── 操作シート ───────────────────────────────── */}
       <Sheet
@@ -414,7 +435,7 @@ export default function Queue() {
                   <button type="button" className="menu-item" onClick={() => toCreate(selected)}>
                     リライト
                   </button>
-                  <button
+                  <button aria-busy={repost.isPending}
                     type="button"
                     className="menu-item"
                     disabled={repost.isPending || !selected.metrics}
@@ -443,7 +464,7 @@ export default function Queue() {
                       setSheet(null);
                     }}
                   >
-                    数字を見る
+                    全文と数字を見る
                   </button>
                   {selected.metrics?.permalink && (
                     <a
@@ -516,7 +537,7 @@ export default function Queue() {
       {/* ── 編集シート ───────────────────────────────── */}
       <Sheet open={sheet === "edit" && selected !== null} onClose={() => setSheet(null)} title="編集">
         <PostFields draft={editDraft} onChange={setEditDraft} idPrefix="queue-edit" />
-        <button
+        <button aria-busy={patch.isPending}
           type="button"
           className="btn"
           style={{ marginTop: "calc(var(--sp) * 2)" }}
@@ -543,16 +564,16 @@ export default function Queue() {
   );
 }
 
-function DailySlots({ date, data, loading, error, now, tz, canPublish, openId, onToggle, onMenu, onFill, onSettings }: {
+function DailySlots({ date, data, loading, error, now, tz, canPublish, onOpen, onMenu, onFill, onSettings }: {
   date: string; data: QueueSlotsResponse | undefined; loading: boolean; error: Error | null;
-  now: number; tz: string; canPublish: boolean; openId: string | null;
-  onToggle: (id: string) => void; onMenu: (item: QueueItem) => void;
+  now: number; tz: string; canPublish: boolean;
+  onOpen: (id: string) => void; onMenu: (item: QueueItem) => void;
   onFill: (at: string) => void; onSettings: () => void;
 }) {
-  if (loading) return <p className="muted section">この日の投稿スロットを読み込んでいます…</p>;
+  if (loading) return <div className="card section"><Skeleton lines={3} label="この日の投稿スロットを読み込んでいます" /></div>;
   if (error) return <p className="msg msg-bad" role="alert">{error instanceof ApiError ? error.message : "投稿スロットを読み込めませんでした"}</p>;
   if (!data) return null;
-  const renderItem = (item: QueueItem) => <QueueRow key={item.id} item={item} tz={tz} now={now} open={openId === item.id} onToggle={() => onToggle(item.id)} onMenu={() => onMenu(item)} />;
+  const renderItem = (item: QueueItem) => <QueueRow key={item.id} item={item} tz={tz} now={now} onOpen={() => onOpen(item.id)} onMenu={() => onMenu(item)} />;
   return <section className="daily-schedule section" aria-label={`${date}の投稿スロット`}>
     <div className="section-head"><h2>{date.replaceAll("-", "/")} の予定</h2><span className="muted">{data.slots.filter(slot => slot.item).length} / {data.slots.length} 枠に投稿あり</span></div>
     {data.slots.length === 0 && <div className="card"><p className="muted">毎日の投稿スロットを設定すると、空き枠がここに表示されます。</p><button type="button" className="btn btn-sub btn-fit section" onClick={onSettings}>投稿スロットを設定</button></div>}
@@ -573,18 +594,15 @@ function QueueRow({
   item,
   tz,
   now,
-  open,
-  onToggle,
+  onOpen,
   onMenu,
 }: {
   item: QueueItem;
   tz: string;
   now: number;
-  open: boolean;
-  onToggle: () => void;
+  onOpen: () => void;
   onMenu: () => void;
 }) {
-  const reduced = useReducedMotion();
   const when = item.scheduledAt ?? item.createdAt;
   const left = item.approveDeadline ? remaining(item.approveDeadline, now) : null;
   const m = item.metrics;
@@ -592,7 +610,7 @@ function QueueRow({
   return (
     <article className="row">
       <div style={{ display: "flex", alignItems: "stretch" }}>
-        <button type="button" className="row-main" aria-expanded={open} onClick={onToggle}>
+        <button type="button" className="row-main" aria-haspopup="dialog" onClick={onOpen}>
           <div className="row-meta">
             <span>{mdhm(when, tz)}</span>
             <span className={`tag tag-${item.status}`}>{STATUS_LABEL[item.status] ?? item.status}</span>
@@ -626,54 +644,127 @@ function QueueRow({
           <DotsIcon size={18} />
         </button>
       </div>
-
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            className="row-panel"
-            initial={reduced ? { opacity: 0 } : { opacity: 0, y: -6 }}
-            animate={reduced ? { opacity: 1 } : { opacity: 1, y: 0 }}
-            exit={reduced ? { opacity: 0 } : { opacity: 0, y: -6 }}
-            transition={reduced ? CROSSFADE : SPRING}
-          >
-            <div className="child">
-              <span className="t">1投稿目: {item.body || "（本文なし）"}</span>
-              {m && <span className="num">{fmtN(m.views)} 表示</span>}
-            </div>
-            {item.comments.map((c, i) => (
-              <div className="child" key={i}>
-                <span className="t">
-                  {i + 2}投稿目: {c}
-                </span>
-              </div>
-            ))}
-
-            {item.status === "done" && m && (
-              <p className="muted" style={{ marginTop: "var(--sp)" }}>
-                {md(m.postedAt, tz)} に投稿 / 返信 {fmtN(m.replies)} / リポスト {fmtN(m.reposts)} / 引用{" "}
-                {fmtN(m.quotes)} / クリック {fmtN(m.clicks)}
-              </p>
-            )}
-            {item.status === "done" && !m && (
-              <p className="muted" style={{ marginTop: "var(--sp)" }}>
-                数字はこのあとの取り込みで入ります。
-              </p>
-            )}
-
-            {item.status === "failed" && (
-              <div className="err-box">
-                <p className="err-msg">{withoutRaw(item.error ?? "投稿できませんでした")}</p>
-                {item.errorRaw && (
-                  <p className="err-raw num">Threads からの返答: {item.errorRaw}</p>
-                )}
-                <p className="muted" style={{ marginTop: "calc(var(--sp) * 0.5)" }}>
-                  本文を直してから「もう一度ためす」を押すと、出せたところの続きから進みます。
-                </p>
-              </div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
     </article>
+  );
+}
+
+/* ── 全画面で1件を読む ─────────────────────────────── */
+
+function QueueViewer({
+  open,
+  item,
+  account,
+  tz,
+  canPublish,
+  escapeDisabled,
+  onClose,
+  onSheet,
+  onRewrite,
+}: {
+  open: boolean;
+  item: QueueItem;
+  account: AccountSummary;
+  tz: string;
+  canPublish: boolean;
+  escapeDisabled: boolean;
+  onClose: () => void;
+  onSheet: (kind: SheetKind) => void;
+  onRewrite: () => void;
+}) {
+  const m = item.metrics;
+  const when = item.scheduledAt ?? item.createdAt;
+  const editable = item.status !== "done" && item.status !== "publishing";
+
+  return (
+    <PostViewer
+      open={open}
+      onClose={onClose}
+      account={account}
+      title={
+        item.status === "done"
+          ? `${mdhm(m?.postedAt ?? when, tz)} の投稿`
+          : `${mdhm(when, tz)} の${STATUS_LABEL[item.status] ?? "投稿"}`
+      }
+      escapeDisabled={escapeDisabled}
+      showCount={editable}
+      meta={
+        <>
+          <span className={`tag tag-${item.status}`}>{STATUS_LABEL[item.status] ?? item.status}</span>
+          <span>
+            {item.status === "done"
+              ? `${mdhm(m?.postedAt ?? when, tz)} に投稿`
+              : item.scheduledAt
+                ? `${mdhm(item.scheduledAt, tz)} に予約`
+                : `${mdhm(when, tz)} に作成`}
+          </span>
+          {item.imageUrl && <span className="tag">画像</span>}
+          {item.source === "autopilot" && <span className="tag tag-link">自動</span>}
+        </>
+      }
+      segments={[
+        { text: item.body, ...(m ? { views: m.views } : {}) },
+        ...item.comments.map((c) => ({ text: c })),
+      ]}
+      stats={
+        item.status === "done" && m
+          ? [
+              { label: "表示", value: fmtN(m.views) },
+              { label: "いいね", value: fmtN(m.likes) },
+              { label: "返信", value: fmtN(m.replies) },
+              { label: "リポスト", value: fmtN(m.reposts) },
+              { label: "引用", value: fmtN(m.quotes) },
+              { label: "クリック", value: fmtN(m.clicks) },
+            ]
+          : undefined
+      }
+      headerActions={
+        <button type="button" className="icon-btn" aria-label="その他の操作" onClick={() => onSheet("actions")}>
+          <DotsIcon size={18} />
+        </button>
+      }
+      actions={
+        <>
+          {editable ? (
+            <>
+              <button type="button" className="btn btn-sub" onClick={() => onSheet("edit")}>
+                編集
+              </button>
+              <button type="button" className="btn" disabled={!canPublish} onClick={() => onSheet("schedule")}>
+                {item.scheduledAt ? "日時を変える" : "日時を決める"}
+              </button>
+            </>
+          ) : item.status === "done" ? (
+            <>
+              {m?.permalink && (
+                <a className="btn btn-sub" href={m.permalink} target="_blank" rel="noreferrer noopener">
+                  Threads で開く
+                </a>
+              )}
+              <button type="button" className="btn" onClick={onRewrite}>
+                リライト
+              </button>
+            </>
+          ) : null}
+        </>
+      }
+    >
+      {item.status === "done" && !m && (
+        <p className="muted" style={{ marginTop: "var(--sp)" }}>数字はこのあとの取り込みで入ります。</p>
+      )}
+      {editable && !canPublish && (
+        <p className="btn-hint" style={{ marginTop: "var(--sp)" }}>
+          いまは予約できません。キューの上の案内から、トークンを延長するかつなぎ直してください。
+        </p>
+      )}
+      {item.status === "failed" && (
+        <div className="err-box">
+          <p className="err-msg">{withoutRaw(item.error ?? "投稿できませんでした")}</p>
+          {item.errorRaw && <p className="err-raw num">Threads からの返答: {item.errorRaw}</p>}
+          <p className="muted" style={{ marginTop: "calc(var(--sp) * 0.5)" }}>
+            本文を直してから右上の「…」から「もう一度ためす」を押すと、出せたところの続きから進みます。
+          </p>
+        </div>
+      )}
+    </PostViewer>
   );
 }

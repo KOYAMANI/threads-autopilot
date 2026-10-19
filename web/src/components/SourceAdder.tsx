@@ -33,9 +33,12 @@ const ADDERS: Array<{ type: SourceType; label: string }> = [
 export default function SourceAdder({
   selected,
   onChange,
+  step = 2,
 }: {
   selected: string[];
   onChange: (next: string[]) => void;
+  /** 手順の番号。畳んだ中に置くときは null で番号を出さない */
+  step?: number | null;
 }) {
   const toast = useToast();
   const sources = useSources();
@@ -115,12 +118,13 @@ export default function SourceAdder({
 
   return (
     <section className="card section">
-      <div className="section-head">
-        <h2>内容の参考情報</h2>
-        <span className="muted">{selected.length > 0 ? `${selected.length}件を使う` : "任意"}</span>
+      <div className="step-head">
+        {step !== null && <span className="step-number" aria-hidden="true">{step}</span>}
+        <h2>中身の材料</h2>
+        <span className="step-optional">{selected.length > 0 ? `${selected.length}件を使う` : "なくてもOK"}</span>
       </div>
 
-      <p className="muted section">YouTube・記事・メモは情報として使います。投稿の型を真似たい場合は「型・文体の参考」に貼り付けてください。</p>
+      <p className="muted section">記事・YouTube・メモを足すと、その内容をもとに書きます。書き方（型）は選んだ投稿から取ります。</p>
       <div
         className="chips"
         role="group"
@@ -172,7 +176,7 @@ export default function SourceAdder({
               onChange={(e) => setText(e.target.value)}
             />
           </label>
-          <button
+          <button aria-busy={create.isPending}
             type="button"
             className="btn section"
             disabled={create.isPending || text.trim() === ""}
@@ -201,7 +205,7 @@ export default function SourceAdder({
               ? "Gemini なら動画をそのまま読みます。OpenRouter のときは文字起こしを貼ってください。"
               : "本文をこちらで取り出します。取れなかったら本文を貼ってください。"}
           </p>
-          <button
+          <button aria-busy={create.isPending}
             type="button"
             className="btn section"
             disabled={create.isPending || url.trim() === ""}

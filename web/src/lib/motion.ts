@@ -59,7 +59,7 @@ export function rubberband(overshoot: number, dimension: number, constant = 0.55
   return (overshoot * dimension * constant) / (dimension + constant * Math.abs(overshoot));
 }
 
-function useMediaQuery(query: string): boolean {
+export function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(() => {
     if (typeof window === "undefined" || !window.matchMedia) return false;
     return window.matchMedia(query).matches;
