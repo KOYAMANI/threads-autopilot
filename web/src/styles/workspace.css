@@ -475,9 +475,21 @@ textarea.wizard-textarea { min-height:9rem; padding:.9rem 1rem; border-color:var
 .picked { display:grid; gap:.35rem; min-width:0; margin-bottom:1rem; padding:.75rem .9rem; border-radius:10px; background:var(--paper2); font-size:.8125rem; color:var(--ink2); }
 .picked > span { font-size:.6875rem; letter-spacing:.04em; }
 /* The sample is shown whole (thread included); long ones scroll inside the box. */
-.picked-edit { margin-bottom:1.25rem; }
-.picked-edit summary { cursor:pointer; font-size:.6875rem; letter-spacing:.04em; }
-.picked-edit p { margin-top:.35rem; max-height:30vh; }
+/* The sample as a shrunken thread: same rail and order as the viewer, two lines per post (2026-10-21). */
+.thread-preview { margin-bottom:1.25rem; padding:.85rem .9rem .6rem; border-radius:10px; background:var(--paper2); }
+.thread-preview-head { display:flex; flex-wrap:wrap; gap:.6rem; align-items:baseline; margin-bottom:.6rem; font-size:.6875rem; color:var(--ink3); }
+.thread-preview-label { letter-spacing:.04em; color:var(--ink2); }
+.thread-preview-head .btn-link { margin-left:auto; padding:0; font-size:.75rem; }
+.thread-preview-list { list-style:none; margin:0; padding:0; }
+.thread-preview-post { display:grid; grid-template-columns:28px minmax(0,1fr); column-gap:.6rem; }
+.thread-preview-rail { display:flex; flex-direction:column; align-items:center; }
+.thread-preview-rail .account-avatar { width:28px; height:28px; border-radius:50%; font-size:.6875rem; }
+.thread-preview-dot { width:10px; height:10px; margin-top:.4rem; border-radius:50%; background:var(--line2); }
+.thread-preview-post:not(:last-child) .thread-preview-rail::after { content:""; flex:1; width:2px; margin:.3rem 0; border-radius:1px; background:var(--line2); }
+.thread-preview-body { min-width:0; padding-bottom:.85rem; }
+.thread-preview-meta { display:flex; gap:.5rem; align-items:baseline; font-size:.75rem; line-height:28px; color:var(--ink3); }
+.thread-preview-meta strong { color:var(--ink); }
+.thread-preview-text { margin:0; font-size:.875rem; line-height:1.6; color:var(--ink); white-space:pre-wrap; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
 .picked p { margin:0; max-height:40vh; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font-size:.875rem; line-height:1.7; color:var(--ink); }
 
 /* candidates: one card per view, swipe sideways (inner scroll only — the page never widens). */

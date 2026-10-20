@@ -29,6 +29,7 @@ import { useShell } from "../components/Shell";
 import { useToast } from "../components/Toast";
 import PublishNotice, { publishBlock } from "../components/PublishNotice";
 import Composer from "../components/Composer";
+import ThreadPreview, { type PreviewSegment } from "../components/ThreadPreview";
 import StepHeader from "../components/StepHeader";
 import CandidateCarousel from "../components/CandidateCarousel";
 import ReviseSheet from "../components/ReviseSheet";
@@ -36,6 +37,9 @@ import { CROSSFADE, SPRING, useReducedMotion } from "../lib/motion";
 import { clearCreateSession, selectCreateAccount, useCreateSessionState } from "../lib/create-session";
 import { fmtN, mdhm } from "../lib/format";
 import type { CreatePreset } from "./Home";
+
+/** AI の確認（質問）に答える回数の上限。超えたら「お任せ」で作る（DECISIONS 2026-10-21）。 */
+const QUESTION_LIMIT = 3;
 
 /** 生成する案の数（SPEC §7.6）。 */
 const N_CANDIDATES = 3;
@@ -115,6 +119,8 @@ export default function Create() {
   const [pickedText, setPickedText] = useCreateSessionState<Record<string, string>>(acc, "pickedText", () =>
     initial?.postId ? { [initial.postId]: initial.text } : {},
   );
+  /** 選んだ投稿そのもの（ツリーの縮小表示と「全文を見る」に使う）。下敷きで入ったときは無い */
+  const [pickedPost, setPickedPost] = useCreateSessionState<Record<string, PostSummary>>(acc, "pickedPost", {});
   const [referenceOrigin, setReferenceOrigin] = useCreateSessionState<"own" | "paste">(acc, "referenceOrigin", "own");
   const [referenceText, setReferenceText] = useCreateSessionState(acc, "referenceText", "");
   const [generationContext, setGenerationContext] = useCreateSessionState<AiGenerationContext | undefined>(acc, "generationContext", undefined);
@@ -139,6 +145,9 @@ export default function Create() {
   // AI が素材の不足を質問してきたとき（`AiGenerateResponse.question`）。シートで答えるか任せる
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
+  /** 何回目の確認か（表示用）。回数そのものは ref で数える（生成の途中で closure が古くならないように） */
+  const [questionNo, setQuestionNo] = useState(1);
+  const questionCount = useRef(0);
   /** 全文を開いている投稿（pick）。閉じる動きの間も中身を残すため、開閉とは分けて持つ。 */
   const [viewerPost, setViewerPost] = useState<PostSummary | null>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -265,9 +274,10 @@ export default function Create() {
     const has = picks.includes(p.id);
     setPicks(has ? [] : [p.id]);
     setPickedText((t) => ({ ...t, [p.id]: [p.text, ...p.children.map((c) => c.text)].join("\n\n") }));
+    setPickedPost((m) => ({ ...m, [p.id]: p }));
     setViewerOpen(false);
-    // 選んだら本文を書く画面へ。AI に書かせるときはそこから「AIで3案つくる」（2026-10-21）
-    if (!has) go("edit");
+    // 選んだら「AIで3投稿つくる」（指示を書く画面）へ（2026-10-21）
+    if (!has) go("brief");
   }
 
   function startGenerate() {
@@ -275,6 +285,7 @@ export default function Create() {
       setSheet("aikey");
       return;
     }
+    questionCount.current = 0;
     runGenerate();
   }
 
@@ -300,7 +311,15 @@ export default function Create() {
           if (!mounted.current) return;
           if (!r.candidates.length) {
             if (r.question) {
+              // 確認は3回まで。3回答えてもまだ足りないと言われたら、聞かずに「お任せ」で作る（DECISIONS 2026-10-21）
+              if (questionCount.current >= QUESTION_LIMIT) {
+                questionCount.current = 0;
+                toast.show(`AI の確認は${QUESTION_LIMIT}回までです。いまある材料で書きます`, "ok");
+                runGenerate({ instruction: opts.instruction, assume: true });
+                return;
+              }
               // AI の質問はシートで受ける（答える / 任せる / 材料を足す）
+              setQuestionNo(questionCount.current + 1);
               setQuestion(r.question);
               setAnswer("");
               setSheet("question");
@@ -515,7 +534,7 @@ export default function Create() {
     body = (
       <>
         <h1 className="wizard-title">{rewrite ? "リライトする投稿を選ぶ" : "見本にする投稿を選ぶ"}</h1>
-        <p className="wizard-sub">{rewrite ? "1本選ぶと、本文を書く画面に進みます。" : "1本選ぶと、本文を書く画面に進みます。表示回数の多い順です。"}</p>
+        <p className="wizard-sub">{rewrite ? "1本選ぶと、次に進みます。" : "1本選ぶと、AIで3投稿つくる画面に進みます。表示回数の多い順です。"}</p>
         {/* 上で出どころを切り替え、下に中身（DECISIONS 2026-10-20） */}
         <div className="pick-source" role="tablist" aria-label="見本の出どころ">
           <button
@@ -580,16 +599,26 @@ export default function Create() {
     title = rewrite ? "リライト" : "型で作る";
     const first = picks[0];
     const pickedLabel = referenceOrigin === "paste" ? "貼り付けた投稿" : rewrite ? "元の投稿" : "見本";
-    const pickedBody = referenceOrigin === "paste" ? referenceText.trim() : (first && pickedText[first]) || "選んだ投稿";
+    const full = first ? pickedPost[first] : undefined;
+    // ツリーの縮小表示。選んだ投稿があればその続きまで、下敷き（preset）なら本文だけ、貼り付けは空行で区切る
+    const segments: PreviewSegment[] =
+      referenceOrigin === "paste"
+        ? referenceText.trim().split(/\n{2,}/).filter((t) => t.trim() !== "").map((text) => ({ text }))
+        : full
+          ? [{ text: full.text, views: full.views }, ...full.children.map((c) => ({ text: c.text, views: c.views }))]
+          : [{ text: (first && pickedText[first]) || "選んだ投稿" }];
     body = (
       <>
         <h1 className="wizard-title">{rewrite ? "どう変えますか？" : "誰に、何を伝えますか？"}</h1>
         <p className="wizard-sub">{rewrite ? "空のままでも大丈夫です。" : "見本は書き方の型に使います。書く内容のもとになる情報（記事・メモ・動画）か、伝えたいことを書いてください。"}</p>
-        {/* 見本は全文（続きまで）。切ると何を型にするのか分からない（2026-10-21） */}
-        <div className="picked">
-          <span>{pickedLabel}</span>
-          <p>{pickedBody}</p>
-        </div>
+        <ThreadPreview
+          label={pickedLabel}
+          account={referenceOrigin === "paste" ? null : account}
+          segments={segments}
+          postedAt={full?.postedAt}
+          tz={tz}
+          onOpen={full ? () => openPost(full) : undefined}
+        />
         <label className="field wizard-field" htmlFor="create-instruction">
           <span className="visually-hidden">{rewrite ? "どう変えたいか" : "誰に、何を伝えるか"}</span>
           <textarea
@@ -645,27 +674,11 @@ export default function Create() {
   if (step === "edit") {
     title = "仕上げる";
     footerClass = "wizard-footer edit-bar";
-    const sampleText = referenceOrigin === "paste" ? referenceText.trim() : (picks[0] && pickedText[picks[0]]) || "";
-    const showSample = mode === "template" && sampleText !== "";
     body = (
-      <>
-        {/* 型で作るときは、見本を上に出したまま書く。AI に書かせるなら下の「AIで3案つくる」（2026-10-21） */}
-        {showSample && (
-          <details className="picked picked-edit" open={candidates.length === 0}>
-            <summary>見本</summary>
-            <p>{sampleText}</p>
-          </details>
-        )}
-        <Composer account={account} draft={draft} onChange={setDraft} autoFocus={bodyEmpty} />
-      </>
+      <Composer account={account} draft={draft} onChange={setDraft} autoFocus={mode === "write" && bodyEmpty} />
     );
     footer = (
       <>
-        {mode === "template" && candidates.length === 0 && (
-          <button type="button" className="btn btn-sub" disabled={busy} onClick={() => go("brief")}>
-            AIで{N_CANDIDATES}投稿つくる
-          </button>
-        )}
         <button type="button" className="btn btn-sub" disabled={busy} onClick={openRevise}>
           AIで直す
         </button>
@@ -726,6 +739,9 @@ export default function Create() {
           }
           actions={
             <>
+              <button type="button" className="btn btn-sub" onClick={() => setViewerOpen(false)}>
+                戻る
+              </button>
               <button type="button" className={viewerPicked ? "btn btn-sub" : "btn"} onClick={() => togglePick(viewerPost)}>
                 {viewerPicked ? "選択を外す" : "この投稿を見本にする"}
               </button>
@@ -744,9 +760,9 @@ export default function Create() {
         </div>
       </Sheet>
 
-      <Sheet open={sheet === "question"} onClose={() => setSheet(null)} title="AI から確認">
+      <Sheet open={sheet === "question"} onClose={() => setSheet(null)} title={`AI から確認 ${questionNo}/${QUESTION_LIMIT}`}>
         <p className="sheet-text question-text">{question}</p>
-        <p className="muted sheet-text">答えると、その内容を使って書きます。「AIにお任せ」は、これ以上聞かずにいまある材料だけで書きます（架空の数字や実績は入れません）。</p>
+        <p className="muted sheet-text">答えると、その内容を使って書きます。「AIにお任せ」は、これ以上聞かずにいまある材料だけで書きます（架空の数字や実績は入れません）。確認は{QUESTION_LIMIT}回まで。それでも足りないときは、いまある材料で書きます。</p>
         <label className="field wizard-field" htmlFor="question-answer">
           <span className="visually-hidden">答え</span>
           <textarea
@@ -768,12 +784,13 @@ export default function Create() {
               const next = `${instruction.trim()}\n\n補足: ${answer.trim()}`.trim();
               setInstruction(next);
               setSheet(null);
+              questionCount.current += 1;
               runGenerate({ instruction: next });
             }}
           >
             答える
           </button>
-          <button type="button" className="btn btn-sub" disabled={busy} onClick={() => { setSheet(null); runGenerate({ assume: true }); }}>
+          <button type="button" className="btn btn-sub" disabled={busy} onClick={() => { setSheet(null); questionCount.current = 0; runGenerate({ assume: true }); }}>
             AIにお任せ
           </button>
           <button type="button" className="btn-link" onClick={() => setSheet("sources")}>記事やメモを足す</button>
