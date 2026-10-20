@@ -3,7 +3,7 @@
  *
  * - `POST   /claude/sessions`      … 「Claude で作る」。材料を検証して `create_sessions` に1行
  * - `GET    /claude/sessions/:id`  … 待機中のポーリング。Claude が書き戻した案を返す
- * - `GET    /claude/connection`    … 設定画面の連携カード（URL と接続状態）
+ * - `GET    /claude/connection`    … Claude 連携の画面（URL・接続状態・許可と最後に呼ばれた時刻）
  * - `DELETE /claude/connection`    … 連携を解除（claude.ai に渡したトークンを全部取り消す）
  */
 import { Hono } from "hono";
@@ -52,9 +52,28 @@ export function claudeRoutes() {
   });
 
   r.get("/connection", async (c) => {
+    const userId = c.get("userId")!;
+    const connected = await hasClaudeGrant(c.env, c.req.raw, userId);
+    // 許可（authorize）と、claude.ai から実際に呼ばれた時刻（initialize かツール）。audit_log から1クエリで引く
+    const row = connected
+      ? await c.get("db").first<{ authorized_at: string | null; used_at: string | null }>(
+          `SELECT
+             (SELECT MAX(at) FROM audit_log WHERE user_id=? AND action='claude_mcp'
+                AND json_extract(detail,'$.event')='authorize') AS authorized_at,
+             (SELECT MAX(at) FROM audit_log WHERE user_id=? AND action='claude_mcp'
+                AND (json_extract(detail,'$.event')='initialize' OR json_extract(detail,'$.tool') IS NOT NULL)) AS used_at`,
+          userId,
+          userId,
+        )
+      : null;
+    const authorizedAt = row?.authorized_at ?? null;
+    // 許可より前の呼び出し（解除する前の古い接続）は数えない
+    const usedAt = row?.used_at && authorizedAt && row.used_at >= authorizedAt ? row.used_at : null;
     const data: ClaudeConnectionResponse = {
       configured: mcpConfigured(c.env),
-      connected: await hasClaudeGrant(c.env, c.req.raw, c.get("userId")!),
+      connected,
+      authorizedAt,
+      verifiedAt: usedAt,
       mcpUrl: `${mcpOrigin(c.env, c.req.raw)}${MCP_ROUTE}`,
     };
     return c.json(ok(data));

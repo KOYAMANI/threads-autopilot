@@ -5,14 +5,27 @@ import { api } from "./client";
 
 /** 新しいタブで開く先。`q` は入力欄の下書き（効かない環境でも、ただ開くだけになる） */
 export const CLAUDE_NEW_CHAT = "https://claude.ai/new";
+/**
+ * claude.ai の「カスタムコネクタを追加」の入力画面（2026-10-20 に実画面で確認）。
+ * 公開された仕様ではないので変わりうる。変わってもコネクタの一覧が開くだけで済む
+ */
+export const CLAUDE_ADD_CONNECTOR = "https://claude.ai/customize/connectors?modal=add-custom-connector";
+/** claude.ai のコネクタ一覧に出る名前（買い手が入れる値） */
+export const CLAUDE_CONNECTOR_NAME = "Threads オートパイロット";
 export const CLAUDE_PROMPT = "Threads オートパイロットの作成セッションを読んで、3案作って保存して";
 
 export const claudeConnectionKey = ["claude", "connection"] as const;
 
-export function useClaudeConnection() {
+/**
+ * `poll` のあいだ（連携の手順で許可を待っている間）は2.5秒ごとに読む。
+ * タブが裏にある間（claude.ai を見ている間）は止まり、戻ってきた瞬間に1回読む。
+ */
+export function useClaudeConnection(poll = false) {
   return useQuery({
     queryKey: claudeConnectionKey,
     queryFn: () => api.get<ClaudeConnectionResponse>("/claude/connection"),
+    refetchInterval: poll ? 2500 : false,
+    refetchOnWindowFocus: poll ? "always" : true,
   });
 }
 

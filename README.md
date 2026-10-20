@@ -236,7 +236,7 @@ npx wrangler kv namespace create OAUTH_KV --config wrangler.production.toml
 ```
 
 KV が無いあいだは `/mcp` と `/oauth/*` が 503 を返し、設定画面のカードは「管理者による設定待ち」になる（ほかの機能には影響しない）。
-買い手は設定の「接続とAI」→「Claude と連携」に出る URL（`<APP_ORIGIN>/mcp`）を、claude.ai の「設定 → コネクタ → カスタムコネクタを追加」に貼る。
+買い手はメニューの「Claude 連携」（`/app/claude`）の手順に沿ってつなぐ。claude.ai の「カスタマイズ → コネクタ → ＋ 追加 → カスタムコネクタを追加」で、名前と URL（`<APP_ORIGIN>/mcp`）を入れて「続ける」→ このアプリの許可画面で「許可する」。claude.ai から最初の `initialize` が届くと、画面が「つながりました」に変わる。
 
 開発中の確認は MCP Inspector で行う（`npm run dev` で 5173 にログインしてから）:
 

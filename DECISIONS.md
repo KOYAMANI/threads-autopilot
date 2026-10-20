@@ -570,8 +570,20 @@ SPEC §10.6。Create の3案づくりと直しを、買い手自身の Claude（
 | 2026-10-19 | PWA の Service Worker の `navigateFallbackDenylist` に `/oauth/`・`/mcp`・`/.well-known/` を足す | 一度アプリを開いたブラウザでは、claude.ai からの `/oauth/authorize` を SW が SPA で返し、`/app/home` に落ちていた（MCP Inspector で再現） |
 | 2026-10-19 | 許可画面の `Referrer-Policy` は `same-origin`（他の HTML は `no-referrer` のまま） | `no-referrer` だとブラウザは同一オリジンのフォーム送信でも `Origin: null` を送り、Origin 照合で「許可する」が必ず 403 になっていた（テストは Origin を手で付けていたので通っていた） |
 | 2026-10-19 | MCP の回数制限は `mcp:<user_id>` で1分30回 | 1回の「作って」で呼ぶのは3〜5回。`/api` の書き込み制限（1分120回）とは別枠にする |
+| 2026-10-20 | ブランチの土台を `origin/ui-review`（UI 見直し4回目）に移し、「Claude で作る」は brief 手順の空き枠 `.create-ai-slot[data-slot="claude"]` に置く。セッションと見張りは `useClaudeCreate` に持たせて作る画面の先頭で1回呼び、ボタン（`ClaudeButton`）と1行の通知（`ClaudeNotice`）だけを差し込む | 作る画面が手順式になり、手順が変わると下の帯の中身は作り直される。ボタンの中に状態を持つと、claude.ai へ渡した直後に手順を動かしただけで見張りが消える。Create.tsx への変更は import・hook・材料の共通化（`briefContext`）・受け取り（`acceptClaude`）・空き枠・通知の6か所に留めた |
+| 2026-10-20 | 届いた案は Gemini の生成と同じ処理で candidates 手順へ進める。直しは変わった案だけ差し替えてカルーセルをその案へ送り、仕上げる手順に入れている案は**本文を書き足していないときだけ**置き換える | 新 UI の「書きかけがあるときは置き換える前に止める」に合わせる。claude.ai からの直しはシートを挟めないので、書きかけがあれば案の差し替えとトーストだけにする |
+| 2026-10-20 | まだ届いていないセッションだけ sessionStorage（`claude-session:<accountId>`）に持ち、届いたら消す | claude.ai から戻ったときに別の画面を踏んでも待ちが続く。届いたあとまで持つと、作る画面を開き直すたびに candidates 手順へ飛ばされる |
+| 2026-10-20 | マイグレーションは `0017_create_sessions.sql` | ui-review で 0007〜0010、wip/buzz-and-redesign で 0010〜0016 が増えた。どちらの系統の番号とも重ならない次の番号にする。中身は同じ |
+| 2026-10-20 | Claude 連携が使える環境（`configured`）では、AI キーが無くても start 画面で「型で作る」「リライト」に進める。AI キーの案内シートは「AIで3案つくる」「AIで直す」を押したときだけ出し、文言に「『Claude で作る』なら AI キーは要りません」を足す | ui-review の作る画面は AI キーが無いと start 画面で止めていたので、Claude だけで使う買い手が brief の「Claude で作る」まで辿り着けなかった（ローカルで確認） |
+| 2026-10-20 | `web/vite.config.ts` の proxy 先を `WORKER_PORT` で変えられるようにする（既定 8787） | 同じ機械で2組の dev サーバーを動かすとき用。`PORT` と同じ考え方 |
+| 2026-10-20 | Claude 連携は設定のカードではなく、**メニューの「設定」の下の独立した画面**（`/app/claude`、下のタブにも出す）にする。中身は「できること」→ 手順3つ → 完了 | ユーザーの指示。「claude.ai に貼り付けて」の文章だけではやり方が分からない、と言われたため、手順にした |
+| 2026-10-20 | 手順では claude.ai の画面を**絵で見せ、①名前 ②MCPサーバーURL ③「続ける」を番号で示す**。入れる値はその場でコピーできる | 実際の claude.ai（日本語表示）を読み取りだけで確かめると、コネクタは「設定」から「カスタマイズ」に移っており、ボタンは「追加」ではなく「続ける」だった |
+| 2026-10-20 | claude.ai は `https://claude.ai/customize/connectors?modal=add-custom-connector` で開く | 入力画面がいきなり開くので、メニューを探す手順が要らない。公開された仕様ではないので変わりうるが、変わってもコネクタの一覧が開くだけで済む。開かないときの道順も1行添える |
+| 2026-10-20 | 接続の完了は **claude.ai から `initialize` が届いた時点**（`verifiedAt`）。許可の grant だけでは完了にしない | grant は「許可する」の時点でできるので、claude.ai 側のトークン交換に失敗しても接続済みに見える。`initialize` が通れば claude.ai から実際に呼べている。記録は `audit_log` の `claude_mcp`（`event: initialize`）で、会話ごとに1回程度なので量は小さい |
+| 2026-10-20 | 「できること」には、実際に動く3つ（3案づくり・claude.ai での直し・AI キー不要）だけを書く | バズ診断は `~/Projects/threads-autopilot` の未コミットの作業（Gemini で採点する `POST /ai/buzz-diagnose`）にはあるが、このブランチの系統（ステージングに出ている ui-review）にはまだ無い。2つの系統を合わせ、MCP にも診断ツールを足してから「できること」に加える |
+| 2026-10-20 | 許可画面の配色をアプリに合わせる（主ボタン黒・リンク青 `#2563eb`・影なし） | UI 見直しで白黒＋青1色になった。許可画面は Worker の HTML なので手で合わせる |
 
 **残していること**
 
-- `npm test` は、この作業の前から `accounts.test.ts` の dashboard 2件と `sync-onboarding.test.ts` の1件が落ちる（素の HEAD を別 worktree で走らせて同じ3件を確認）。今回の変更とは無関係なので触っていない
+- `npm test` は、この作業の前から `accounts.test.ts` の dashboard 2件と `sync-onboarding.test.ts` の1件が落ちる（素の HEAD を別 worktree で走らせて同じ3件を確認。`origin/ui-review` に移したあとも同じ3件）。今回の変更とは無関係なので触っていない
 - 実際の claude.ai からの接続（コネクタ追加 → 許可 → 「作って」）は未確認。MCP Inspector とテストで OAuth → ツール呼び出しまでを確かめた

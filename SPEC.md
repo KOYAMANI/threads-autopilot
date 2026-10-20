@@ -862,13 +862,14 @@ Resend `POST https://api.resend.com/emails`。差出人 `noreply@<domain>`。テ
 「作る」画面の3案づくりと直しを、買い手自身の Claude（claude.ai のサブスク）で動かす経路。**アプリが Claude を呼ぶのではなく、Claude がアプリを呼ぶ**。Worker に Remote MCP サーバーを同居させ、買い手には claude.ai のカスタムコネクタとして登録してもらう。
 
 - 対象は Create の生成と直しだけ。オートパイロット（§9.4 `ap_plan`）は §10.1 の BYOK のまま触らない
-- Gemini / OpenRouter の経路（§7.6）は残す。Create の「生成する（3案）」の下に「Claude で作る」を並べる
+- Gemini / OpenRouter の経路（§7.6）は残す。「Claude で作る」は作る画面の brief 手順（誰に、何を伝えますか？）の「AIで3案つくる」の横（`.create-ai-slot[data-slot="claude"]`）に置き、AI キーの有無に関係なく押せる。`OAUTH_KV` が無い環境では出さない
 - サブスクの OAuth トークンを預かる方式、サーバーで claude CLI を動かす方式は規約違反なので採らない
 
 流れ:
 1. Create で型・参考情報・指示を選び「Claude で作る」→ `POST /api/claude/sessions` が `/ai/generate` と同じ判定（`loadGenerationMaterial`）を通して `create_sessions` に1行保存 → claude.ai を新しいタブで開く
 2. claude.ai で「作って」→ Claude が `get_create_session` → `get_writing_guide` → `save_candidates` を呼ぶ
-3. 画面は `GET /api/claude/sessions/:id` をポーリングして案を取り込む（タブが裏にある間は止まる）。編集・下書き・キューは今の UI のまま。claude.ai で「Bを短く」と頼むと、直した案だけ差し替わる
+3. 画面は `GET /api/claude/sessions/:id` をポーリングし（タブが裏にある間は止まる）、届いたら Gemini の生成と同じく candidates 手順（カルーセル）へ進む。選ぶ・仕上げる・下書き・予約は今の手順のまま。待っている間は下の帯の上に1行（「claude.ai で『作って』と送ってください」）を出し、まだ届いていないセッションは sessionStorage に持って別の画面から戻っても見張りを続ける（30分まで）
+4. claude.ai で「案Bを短く」と頼むと、その案だけ差し替わり、カルーセルはその案へ送る。仕上げる手順にその案を入れていれば、本文を書き足していないときだけ置き換える（書きかけは消さない）
 
 | 経路 | 内容 |
 |---|---|
@@ -876,7 +877,7 @@ Resend `POST https://api.resend.com/emails`。差出人 `noreply@<domain>`。テ
 | `GET\|POST /oauth/authorize` | 許可画面（Worker の HTML）。GET は画面だけ、POST（この画面からの同一サイト送信）で `sid` Cookie を読んで許可する。ログインしていなければ同じ画面のまま案内し、ログイン後に押し直せる |
 | `POST /oauth/token` `POST /oauth/register` `/.well-known/oauth-*` | `@cloudflare/workers-oauth-provider`（OAuth 2.1・PKCE S256・動的クライアント登録・RFC 9728 / 8414 のメタデータ）。トークンは KV `OAUTH_KV`、アクセス1時間・リフレッシュ30日 |
 | `POST /api/claude/sessions` / `GET /api/claude/sessions/:id` | 画面側（Cookie 認証）。`user_id` で引く |
-| `GET /api/claude/connection` / `DELETE` | 設定の連携カード（URL・接続状態）と、許可の全取り消し |
+| `GET /api/claude/connection` / `DELETE` | Claude 連携の画面（URL・接続状態・`authorizedAt`・`verifiedAt`）と、許可の全取り消し |
 
 MCP ツール（既存 lib の薄いラッパー）:
 
@@ -886,7 +887,16 @@ MCP ツール（既存 lib の薄いラッパー）:
 | `get_writing_guide(sessionId?)` | §10.3 の System プロンプト（`systemPrompt(constraints)`）と出力形式 `{hook, body, comments, basis}`、型の候補 |
 | `save_candidates(sessionId, candidates[])` | 1〜5案。`validatePost()`（§6.3）＋絵文字方針＋リンク不使用を全案に通し、1案でも NG なら何も保存せず理由を返す。全案に既存の `key` があればその案だけ差し替え、それ以外は全部置き換え。キューには入れない |
 
-`create_sessions(id, user_id, account_id, payload, candidates, status, created_at)`: `payload` は画面の材料（ID と指示）だけで本文は持たず、読むたびに引き直す。`status` は `waiting|ready`。外部キーの CASCADE で退会・アカウント削除と一緒に消え、`cleanup`（§8.7）が7日で消す。ツールの呼び出しと許可・解除は `audit_log` に `claude_mcp`（`detail.tool` / `detail.event`）で残す。`OAUTH_KV` が無い環境では `/mcp` と `/oauth/*` は 503、設定カードは「管理者による設定待ち」を出す。
+`create_sessions(id, user_id, account_id, payload, candidates, status, created_at)`: `payload` は画面の材料（ID と指示）だけで本文は持たず、読むたびに引き直す。`status` は `waiting|ready`。外部キーの CASCADE で退会・アカウント削除と一緒に消え、`cleanup`（§8.7）が7日で消す。ツールの呼び出しと許可・解除は `audit_log` に `claude_mcp`（`detail.tool` / `detail.event`）で残す。`OAUTH_KV` が無い環境では `/mcp` と `/oauth/*` は 503、Claude 連携の画面は「管理者による設定待ち」を出す。
+
+画面（`/app/claude`、メニューの「設定」の下。`screens/Claude.tsx`）:
+
+- つながっていないとき: 「連携するとできること」（3案づくり・claude.ai での直し・AI キー不要。Claude からは投稿・予約・削除はできない）→「連携をはじめる」→ 手順3つ。
+  1. claude.ai の「カスタムコネクタを追加」画面を `https://claude.ai/customize/connectors?modal=add-custom-connector` で開く（画面の絵を添える）
+  2. claude.ai の画面の絵に ①名前 ②MCPサーバーURL ③「続ける」を番号で示し、①②はその場でコピーできる
+  3. このアプリの許可画面の絵で「許可する」を示し、2.5秒ごとに接続状態を見張る
+- 許可画面で「許可する」が押されると `authorizedAt` が入る（audit `event: authorize`）。claude.ai から `initialize` が届くと audit `event: initialize` を残し、それ以降の `verifiedAt` が入った時点で「Claude とつながりました」に自動で進む。grant だけでは完了にしない（claude.ai 側のトークン交換に失敗しても接続済みに見えるため）
+- つながったあと: できること・最後に使った日時・[作る画面で試す][連携を解除]。解除は確認のシートを挟む
 
 ---
 

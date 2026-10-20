@@ -33,6 +33,7 @@ import { BuzzDiagnosis } from "../components/BuzzDiagnosis";
 import StepHeader from "../components/StepHeader";
 import CandidateCarousel from "../components/CandidateCarousel";
 import ReviseSheet from "../components/ReviseSheet";
+import { ClaudeButton, ClaudeNotice, useClaudeCreate } from "../components/ClaudeCreate";
 import { CROSSFADE, SPRING, useReducedMotion } from "../lib/motion";
 import { fmtN, mdhm } from "../lib/format";
 import type { CreatePreset } from "./Home";
@@ -99,6 +100,12 @@ export default function Create() {
   const generate = useGenerate();
   const revise = useRevise();
   const create = useCreateQueue(account?.id ?? null);
+  // Claude 連携（components/ClaudeCreate）。手順が変わっても見張りが消えないよう、ここで1回だけ呼ぶ
+  const claude = useClaudeCreate({
+    accountId: account?.id ?? null,
+    request: () => ({ accountId: account!.id, ...briefContext() }),
+    onCandidates: acceptClaude,
+  });
 
   /** いま進めている作り方（start に戻っても覚えておき、同じ作り方なら入力を残す）。 */
   const [workMode, setWorkMode] = useState<Mode | null>(initial?.mode ?? null);
@@ -205,7 +212,9 @@ export default function Create() {
   }
 
   function choose(next: Mode) {
-    if (next !== "write" && aiBlocked) {
+    // Claude 連携が使える環境では、AI キーが無くても型・リライトに進める（brief の「Claude で作る」が受け持つ）。
+    // キーの案内は「AIで3案つくる」を押したときに出す
+    if (next !== "write" && aiBlocked && !claude.configured) {
       setSheet("aikey");
       return;
     }
@@ -253,12 +262,45 @@ export default function Create() {
     runGenerate();
   }
 
-  function runGenerate() {
-    const context: AiGenerationContext = {
+  /** brief 画面でそろえた材料（Gemini の生成と「Claude で作る」で同じものを渡す）。 */
+  function briefContext(): AiGenerationContext {
+    return {
       pickMode, picks: referenceOrigin === "own" ? picks : [],
       referenceText: referenceOrigin === "paste" ? referenceText : undefined,
       sourceIds, instruction,
     };
+  }
+
+  /**
+   * Claude 連携から届いた案。初回は Gemini の生成と同じく candidates 手順へ進める。
+   * `changed` があればその案だけ差し替え、カルーセルをその案へ送る。仕上げる画面に入れている案なら、
+   * 書き足していないときだけ本文も置き換える（書きかけは消さない）。
+   */
+  function acceptClaude(next: AiCandidate[], context: AiGenerationContext, changed?: string[]) {
+    if (!changed) {
+      const nextMode: Mode = context.pickMode === "rewrite" ? "rewrite" : "template";
+      setWorkMode(nextMode);
+      setGenerationContext(context);
+      setCandidates(next);
+      setHistory({});
+      setActive(-1);
+      setShown(0);
+      go("candidates", nextMode);
+      return;
+    }
+    setCandidates((list) => list.map((c) => (changed.includes(c.key) ? next.find((n) => n.key === c.key) ?? c : c)));
+    const i = candidates.findIndex((c) => changed.includes(c.key));
+    if (i >= 0) setShown(i);
+    const current = candidates[active];
+    const replaced = current && changed.includes(current.key) ? next.find((n) => n.key === current.key) : undefined;
+    if (replaced && (bodyEmpty || draft.body === appliedBody.current)) {
+      setDraft(draftOf(replaced));
+      appliedBody.current = replaced.body;
+    }
+  }
+
+  function runGenerate() {
+    const context = briefContext();
     generate.mutate(
       withClientKey(settings.data, {
         accountId: account!.id,
@@ -551,9 +593,11 @@ export default function Create() {
         <button aria-busy={generate.isPending} type="button" className="btn" disabled={busy} onClick={startGenerate}>
           {generate.isPending ? "3つの切り口で書いています…" : `AIで${N_CANDIDATES}案つくる`}
         </button>
-        {/* 「Claude で作る」ボタンを後から置く場所（DECISIONS 2026-10-19）。AIキーの有無に関係なく
-            生成ボタンの横に常にある。空のあいだは幅を取らない（workspace.css の .create-ai-slot:empty） */}
-        <div className="create-ai-slot" data-slot="claude" />
+        {/* 「Claude で作る」（DECISIONS 2026-10-19）。AIキーの有無に関係なく生成ボタンの横にある。
+            サーバー側の準備が無ければ何も出さず、枠は幅を取らない（workspace.css の .create-ai-slot:empty） */}
+        <div className="create-ai-slot" data-slot="claude">
+          <ClaudeButton claude={claude} disabled={busy} />
+        </div>
       </>
     );
   }
@@ -623,6 +667,7 @@ export default function Create() {
       >
         {body}
       </motion.section>
+      <ClaudeNotice claude={claude} />
       {footer && <div className={footerClass}>{footer}</div>}
 
       {viewerPost && (
@@ -667,7 +712,10 @@ export default function Create() {
       )}
 
       <Sheet open={sheet === "aikey"} onClose={() => setSheet(null)} title="AIキーが必要です">
-        <p className="muted sheet-text">AI で案を作ったり直したりするには、設定で AI キーを登録します。自分で書くだけなら、このままできます。</p>
+        <p className="muted sheet-text">
+          AI で案を作ったり直したりするには、設定で AI キーを登録します。自分で書くだけなら、このままできます。
+          {claude.configured && "「Claude で作る」なら AI キーは要りません。"}
+        </p>
         <div className="sheet-row">
           <button type="button" className="btn btn-sub" onClick={() => setSheet(null)}>あとで</button>
           <button type="button" className="btn" onClick={() => { setSheet(null); navigate("/app/settings"); }}>

@@ -1,6 +1,5 @@
 import AiErrorNotice from "../components/AiErrorNotice";
 import AccountAvatar from "../components/AccountAvatar";
-import ClaudeConnectCard from "../components/ClaudeConnectCard";
 /**
  * 設定（SPEC §12.3 Settings）。M7 で全部そろった。
  *
@@ -31,6 +30,7 @@ import {
   useTestAi,
 } from "../api/ai";
 import { useNotifications, usePutNotifications } from "../api/autopilot";
+import { useClaudeConnection } from "../api/claude";
 import { ApiError } from "../api/client";
 import { useChangePassword, useMe, useSaveProfile } from "../api/auth";
 import Sheet from "../components/Sheet";
@@ -64,7 +64,7 @@ export default function Settings() {
   const themeCard = <section className="card section"><div className="section-head"><h2>表示</h2><span className="muted">テーマ</span></div><div className="theme-options" role="radiogroup" aria-label="テーマ">{[{id:"system",label:"端末に合わせる"},{id:"light",label:"ライト"},{id:"dark",label:"ダーク"}].map(t => <button type="button" role="radio" aria-checked={theme === t.id} key={t.id} onClick={() => {setTheme(t.id);try { localStorage.setItem("tap:theme", t.id); } catch { /* Keep this session usable without storage. */ } window.dispatchEvent(new CustomEvent("themechange", {detail:t.id}));}}><span className={`theme-preview theme-preview-${t.id}`} aria-hidden="true"><i /><b /><em /></span>{t.label}</button>)}</div></section>;
   const groups = [
     { id: "general", label: "一般", summary: `${accounts.data?.length ?? "—"}アカウント`, content: <><AccountsCard /><ProfileCard />{themeCard}<PlanCard /></> },
-    { id: "connections", label: "連携・データ", summary: ai.isPending ? "確認中…" : ai.data?.hasKey ? "AI接続済み・CSV" : "AI・CSV", content: <><AiKeyCard /><ExportCard /><LinksCard /></> },
+    { id: "connections", label: "連携・データ", summary: ai.isPending ? "確認中…" : ai.data?.hasKey ? "AI接続済み・CSV" : "AI・CSV", content: <><AiKeyCard /><ClaudeCard /><ExportCard /><LinksCard /></> },
     { id: "notifications", label: "通知", summary: notifications.data ? `メール ${notifications.data.notifications.emailEnabled ? "オン" : "オフ"}・プッシュ ${notifications.data.notifications.pushEnabled ? "オン" : "オフ"}` : "確認中…", content: <NotificationCard /> },
     { id: "account", label: "アカウント", summary: "ログイン・退会", content: <><PasswordCard /><DangerCard /></> },
   ];
@@ -873,6 +873,19 @@ function DangerCard() {
       </Sheet>
     </>
   );
+}
+
+/** Claude 連携の画面への入口。スマホではタブに出さないので、ここから開く（DECISIONS 2026-10-20） */
+function ClaudeCard() {
+  const navigate = useNavigate();
+  const connection = useClaudeConnection();
+  const data = connection.data;
+  if (data && !data.configured) return null;
+  return <section className="card section">
+    <div className="section-head"><h2>Claude 連携</h2><span className="muted">{data?.verifiedAt ? "つながっています" : data?.connected ? "あと少し" : "未連携"}</span></div>
+    <p className="muted">自分の Claude（claude.ai）で、投稿の3案づくりや直しができます。AI キーは要りません。</p>
+    <button type="button" className="btn btn-sub btn-fit section" onClick={() => navigate("/app/claude")}>{data?.verifiedAt ? "連携を見る" : "Claude と連携する"}</button>
+  </section>;
 }
 
 function ExportCard() {

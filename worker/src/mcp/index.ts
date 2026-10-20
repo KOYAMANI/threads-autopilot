@@ -72,6 +72,17 @@ function jsonRpcError(status: number, message: string, headers: Record<string, s
 
 /* ── MCP 本体（トークン検証済みのリクエストだけが来る） ─ */
 
+/** JSON-RPC の `method`（1件のときだけ）。本体は handler が読むので、写しから読む */
+async function rpcMethod(request: Request): Promise<string | null> {
+  if (request.method !== "POST") return null;
+  try {
+    const body = (await request.clone().json()) as { method?: unknown } | unknown[];
+    return !Array.isArray(body) && typeof body?.method === "string" ? body.method : null;
+  } catch {
+    return null;
+  }
+}
+
 async function serveMcp(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const props = (ctx as ExecutionContext & { props?: Partial<Props> }).props;
   const userId = typeof props?.userId === "string" ? props.userId : null;
@@ -87,11 +98,16 @@ async function serveMcp(request: Request, env: Env, ctx: ExecutionContext): Prom
     if (!(await rateHit(db, `mcp:${userId}`, MCP_RATE_PER_MIN, 1))) {
       return jsonRpcError(429, "呼び出しが多すぎます。1分ほど空けてからもう一度お試しください");
     }
+    const method = await rpcMethod(request);
     const handler = createMcpHandler(() => buildMcpServer({ db, userId }), {
       route: MCP_ROUTE,
       onerror: (e: unknown) => console.error(`[mcp] ${redact(String(e instanceof Error ? e.stack ?? e.message : e))}`),
     });
-    return await handler(request, env, ctx);
+    const res = await handler(request, env, ctx);
+    // claude.ai はトークンを受け取るとすぐ initialize を送る。これが通れば「claude.ai から呼べた」＝接続完了
+    // （Claude 連携の画面の完了表示。許可の grant だけだと、トークン交換に失敗しても接続済みに見える）
+    if (method === "initialize" && res.ok) await audit(db, userId, "claude_mcp", { event: "initialize" });
+    return res;
   } catch (e) {
     if (e instanceof BudgetExceeded) return jsonRpcError(503, "処理が混み合っています。少し待ってからもう一度お試しください");
     console.error(`[mcp] unhandled: ${redact(String(e instanceof Error ? e.stack ?? e.message : e))}`);

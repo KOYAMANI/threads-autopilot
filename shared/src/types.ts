@@ -586,6 +586,13 @@ export type ClaudeConnectionResponse = {
   configured: boolean;
   /** claude.ai から許可済みの接続があるか */
   connected: boolean;
+  /** 最後に許可画面で「許可する」が押された時刻（UTC）。接続が無ければ null */
+  authorizedAt: string | null;
+  /**
+   * その許可のあと、claude.ai から最後に呼ばれた時刻（initialize かツール。UTC）。
+   * これが入っていれば接続完了。許可だけで null なら、claude.ai 側のトークン交換がまだか失敗している
+   */
+  verifiedAt: string | null;
   /** コネクタに貼る URL（`<origin>/mcp`） */
   mcpUrl: string;
 };

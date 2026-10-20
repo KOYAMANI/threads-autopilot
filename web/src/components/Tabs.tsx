@@ -1,11 +1,12 @@
 import AccountAvatar from "./AccountAvatar";
 /**
  * 下部5タブ（SPEC §12.1 / design-v0.2 §3-2）。投稿ヒントは B 系統から（DECISIONS 2026-10-20）。
+ * Claude 連携は PC のサイドバーにだけ出し、スマホでは設定から開く（`phoneTab: false`）。
  * ラベルは中身の名前にする（apple-design §16「Direct, specific labels」）。
  */
 import type { AccountSummary } from "@tap/shared";
 import { useLocation, useNavigate } from "react-router-dom";
-import { GearIcon, HomeIcon, LightbulbIcon, PenIcon, StackIcon } from "./Icons";
+import { GearIcon, HomeIcon, LightbulbIcon, LinkIcon, PenIcon, StackIcon } from "./Icons";
 
 /**
  * オートパイロットは開発中のため入口を外している（DECISIONS 2026-10-19）。
@@ -13,11 +14,13 @@ import { GearIcon, HomeIcon, LightbulbIcon, PenIcon, StackIcon } from "./Icons";
  * `desktop` は PC のサイドバーとパンくずに出す名前。
  */
 export const TABS = [
-  { path: "/app/home", label: "ホーム", desktop: "アナリティクス", Icon: HomeIcon },
-  { path: "/app/create", label: "作る", desktop: "投稿をつくる", Icon: PenIcon },
-  { path: "/app/queue", label: "キュー", desktop: "下書き・予約", Icon: StackIcon },
-  { path: "/app/tips", label: "ヒント", desktop: "投稿ヒント", Icon: LightbulbIcon },
-  { path: "/app/settings", label: "設定", desktop: "設定", Icon: GearIcon },
+  { path: "/app/home", label: "ホーム", desktop: "アナリティクス", Icon: HomeIcon, phoneTab: true },
+  { path: "/app/create", label: "作る", desktop: "投稿をつくる", Icon: PenIcon, phoneTab: true },
+  { path: "/app/queue", label: "キュー", desktop: "下書き・予約", Icon: StackIcon, phoneTab: true },
+  { path: "/app/tips", label: "ヒント", desktop: "投稿ヒント", Icon: LightbulbIcon, phoneTab: true },
+  { path: "/app/settings", label: "設定", desktop: "設定", Icon: GearIcon, phoneTab: true },
+  // Claude 連携は独立したメニュー（DECISIONS 2026-10-20）。スマホのタブは5つまでなので設定から開く
+  { path: "/app/claude", label: "Claude", desktop: "Claude 連携", Icon: LinkIcon, phoneTab: false },
 ] as const;
 
 export default function Tabs({ account, onAccount, email, onLogout }: { account: AccountSummary | null; accountLimit?: number; onAccount: () => void; email?: string; onLogout: () => void }) {
@@ -32,13 +35,13 @@ export default function Tabs({ account, onAccount, email, onLogout }: { account:
         <button className="btn sidebar-compose" onClick={() => navigate("/app/create")}><PenIcon size={16} />投稿をつくる</button>
         <p className="nav-caption">メニュー</p>
       </div>
-      {TABS.map(({ path, label, desktop, Icon }) => {
+      {TABS.map(({ path, label, desktop, Icon, phoneTab }) => {
         const current = pathname === path || pathname.startsWith(`${path}/`);
         return (
           <button
             key={path}
             type="button"
-            className="tab"
+            className={phoneTab ? "tab" : "tab tab-desktop-only"}
             aria-current={current ? "page" : undefined}
             onClick={() => navigate(path)}
           >

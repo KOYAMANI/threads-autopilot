@@ -414,6 +414,34 @@ describe("Claude 連携: 分離", () => {
     expect((await api("GET", "/api/claude/connection", { cookie: u.cookie })).body.data.connected).toBe(false);
   });
 
+  it("接続の完了は、許可のあと claude.ai から initialize が届いた時点（他人の呼び出しでは完了しない）", async () => {
+    const u = await registerUser();
+    const other = await registerUser();
+    const token = await connect(u.cookie);
+    const otherToken = await connect(other.cookie);
+    const status = async () => (await api("GET", "/api/claude/connection", { cookie: u.cookie })).body.data;
+
+    // 許可しただけ: authorizedAt は入り、verifiedAt はまだ
+    const before = await status();
+    expect(before.connected).toBe(true);
+    expect(before.authorizedAt).toBeTruthy();
+    expect(before.verifiedAt).toBeNull();
+
+    // 他人の initialize では完了しない
+    expect((await initialize(otherToken)).status).toBe(200);
+    expect((await status()).verifiedAt).toBeNull();
+
+    // 本人の initialize で完了
+    expect((await initialize(token)).status).toBe(200);
+    const after = await status();
+    expect(after.verifiedAt).toBeTruthy();
+    expect(after.verifiedAt >= after.authorizedAt).toBe(true);
+
+    // 解除すると両方 null に戻る
+    await api("DELETE", "/api/claude/connection", { cookie: u.cookie });
+    expect(await status()).toMatchObject({ connected: false, authorizedAt: null, verifiedAt: null });
+  });
+
   it("ライセンスが失効したユーザーのトークンは弾く", async () => {
     const u = await registerUser();
     const token = await connect(u.cookie);

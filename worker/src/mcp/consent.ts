@@ -49,30 +49,32 @@ export function consentPage(env: Env, view: ConsentView, extra?: Headers): Respo
 <title>${esc(view.title)}｜Threads オートパイロット</title>
 <style>
   :root { color-scheme: light dark; }
+  /* アプリと同じ配色（白黒＋青1色。主ボタンは黒、青はリンクとフォーカスだけ。影は使わず細い線で区切る） */
   body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
-         background:#f6f7f9; color:#16181d;
+         background:#f2f3f0; color:#16191d;
          font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif; }
-  .card { width:min(26rem, calc(100vw - 2rem)); background:#fff; border-radius:1rem; padding:1.75rem;
-          box-shadow:0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.06); }
+  .card { width:min(26rem, calc(100vw - 2rem)); background:#fff; border:1px solid #e2e4e0; border-radius:14px; padding:1.75rem; }
   h1 { font-size:1.25rem; line-height:1.25; letter-spacing:-.02em; margin:0 0 .75rem; }
   p { font-size:.95rem; line-height:1.6; margin:0 0 1rem; }
   dl { margin:0 0 1rem; display:grid; grid-template-columns:auto 1fr; gap:.35rem .75rem; font-size:.9rem; }
-  dt { color:#5b6068; } dd { margin:0; font-weight:600; overflow-wrap:anywhere; }
-  .note { color:#5b6068; font-size:.85rem; }
-  .warn { color:#9a5b00; background:#fff6e5; border-radius:.6rem; padding:.6rem .75rem; font-size:.9rem; }
+  dt { color:#5b626a; } dd { margin:0; font-weight:600; overflow-wrap:anywhere; }
+  .note { color:#5b626a; font-size:.85rem; }
+  .warn { color:#8a5a00; background:#fff6e5; border-radius:10px; padding:.6rem .75rem; font-size:.9rem; }
   form { display:grid; gap:.6rem; }
   button { width:100%; padding:.85rem 1rem; font-size:1rem; font-weight:600; color:#fff;
-           background:#4f7cff; border:0; border-radius:.7rem; cursor:pointer; transition:transform 100ms ease-out; }
-  button.sub { color:#16181d; background:#eceef2; }
+           background:#16191d; border:1px solid #16191d; border-radius:10px; cursor:pointer; transition:transform 100ms ease-out; }
+  button.sub { color:#16191d; background:#fff; border-color:#e2e4e0; }
   button:active { transform:scale(.97); }
-  a { display:inline-block; margin-top:1rem; color:#4f7cff; font-size:.9rem; }
+  button:focus-visible, a:focus-visible { outline:2px solid #2563eb; outline-offset:2px; }
+  a { display:inline-block; margin-top:1rem; color:#2563eb; font-size:.9rem; }
   @media (prefers-reduced-motion: reduce) { button { transition:none; } button:active { transform:none; } }
   @media (prefers-color-scheme: dark) {
     body { background:#0d0f13; color:#e8eaed; }
-    .card { background:#171a1f; box-shadow:none; }
+    .card { background:#171a1f; border-color:#262a31; }
     .note, dt { color:#9aa0a8; }
     .warn { color:#ffd38a; background:#3a2a10; }
-    button.sub { color:#e8eaed; background:#262a31; }
+    button { color:#0d0f13; background:#e8eaed; border-color:#e8eaed; }
+    button.sub { color:#e8eaed; background:#171a1f; border-color:#3a3f47; }
   }
 </style>
 </head>

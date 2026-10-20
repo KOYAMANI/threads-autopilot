@@ -77,9 +77,10 @@ export default defineConfig({
     // Worker に流れてしまう。Worker は `/app/home` を ASSETS に渡すので、開発中なのに
     // ビルド済みの `web/dist` が返り、vite の更新が画面に出なくなる。
     // `^` 始まりのキーは正規表現として扱われるので、`/a/` だけを厳密に拾う（SPEC §7.9）。
+    // `WORKER_PORT` で wrangler dev のポートを変えられる（`PORT` と同じく、同じ機械で2組動かすとき用）
     proxy: {
-      "^/api(/|$)": { target: "http://127.0.0.1:8787", changeOrigin: true },
-      "^/a/": { target: "http://127.0.0.1:8787", changeOrigin: true },
+      "^/api(/|$)": { target: `http://127.0.0.1:${process.env.WORKER_PORT ?? 8787}`, changeOrigin: true },
+      "^/a/": { target: `http://127.0.0.1:${process.env.WORKER_PORT ?? 8787}`, changeOrigin: true },
     },
   },
   build: {
