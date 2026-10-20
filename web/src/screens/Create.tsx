@@ -54,9 +54,9 @@ const STEPS: Step[] = ["start", "pick", "brief", "candidates", "edit"];
 const isStep = (v: string | null): v is Step => STEPS.includes(v as Step);
 const isMode = (v: string | null): v is Mode => v === "template" || v === "rewrite" || v === "write";
 
+// 入口は2つ（DECISIONS 2026-10-20）。リライトはホーム・キューの「リライト」から preset で入る
 const START_CHOICES: Array<{ mode: Mode; title: string; note: string }> = [
-  { mode: "template", title: "伸びた投稿の型で作る", note: "見本を選ぶと、同じ書き方で AI が3案" },
-  { mode: "rewrite", title: "前の投稿をリライト", note: "1本選ぶと、見せ方を変えた3案" },
+  { mode: "template", title: "型を選んで作る", note: "見本を1〜3本選ぶと、同じ書き方で AI が3案" },
   { mode: "write", title: "自分で書く", note: "白紙から。あとで AI に直させることもできます" },
 ];
 
@@ -438,13 +438,8 @@ export default function Create() {
         <h1 className="wizard-title">どう作りますか？</h1>
         <p className="wizard-sub">あとから変えられます。</p>
         <div className="start-choices">
-          {START_CHOICES.map((c, i) => (
-            <button
-              key={c.mode}
-              type="button"
-              className={i === 0 ? "start-choice start-choice-primary" : "start-choice"}
-              onClick={() => choose(c.mode)}
-            >
+          {START_CHOICES.map((c) => (
+            <button key={c.mode} type="button" className="start-choice" onClick={() => choose(c.mode)}>
               <strong>{c.title}</strong>
               <span>{c.note}</span>
             </button>
@@ -460,49 +455,59 @@ export default function Create() {
       <>
         <h1 className="wizard-title">{rewrite ? "リライトする投稿を選ぶ" : "見本にする投稿を選ぶ"}</h1>
         <p className="wizard-sub">{rewrite ? "1本だけ。" : "最大3本。表示回数の多い順です。"}</p>
+        {/* 上で出どころを切り替え、下に中身（DECISIONS 2026-10-20） */}
+        <div className="pick-source" role="tablist" aria-label="見本の出どころ">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={referenceOrigin === "own"}
+            onClick={() => setReferenceOrigin("own")}
+          >
+            自分の投稿
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={referenceOrigin === "paste"}
+            onClick={() => setReferenceOrigin("paste")}
+          >
+            他人の投稿を貼る
+            {referenceText.trim() !== "" && <span className="pick-source-dot" role="img" aria-label="貼り付け済み" />}
+          </button>
+        </div>
         {referenceOrigin === "own" ? (
-          <>
-            <PostPicker
-              minimal
-              accountId={account.id}
-              tz={tz}
-              picks={picks}
-              pickMode={pickMode}
-              onChange={(next) => setPicks(next.picks)}
-              onOpen={openPost}
-            />
-            <p className="wizard-alt">
-              <button type="button" className="btn-link" onClick={() => setReferenceOrigin("paste")}>
-                他人の投稿を貼り付ける
-              </button>
-            </p>
-          </>
+          <PostPicker
+            minimal
+            accountId={account.id}
+            tz={tz}
+            picks={picks}
+            pickMode={pickMode}
+            onChange={(next) => setPicks(next.picks)}
+            onOpen={openPost}
+          />
         ) : (
-          <>
-            <label className="field wizard-field" htmlFor="reference-post">
-              <span className="visually-hidden">貼り付ける投稿</span>
-              <textarea
-                id="reference-post"
-                className="input wizard-textarea"
-                rows={8}
-                maxLength={MAX_REFERENCE}
-                value={referenceText}
-                placeholder="他人の投稿を、続きまでそのまま貼り付け"
-                onChange={(e) => setReferenceText(e.target.value)}
-              />
-              <span className="wizard-count num">{referenceText.length.toLocaleString("ja-JP")} / 20,000文字</span>
-            </label>
-            <p className="wizard-alt">
-              <button type="button" className="btn-link" onClick={() => setReferenceOrigin("own")}>
-                自分の投稿から選ぶ
-              </button>
-            </p>
-          </>
+          <label className="field wizard-field" htmlFor="reference-post">
+            <span className="visually-hidden">貼り付ける投稿</span>
+            <textarea
+              id="reference-post"
+              className="input wizard-textarea"
+              rows={8}
+              maxLength={MAX_REFERENCE}
+              value={referenceText}
+              autoFocus
+              placeholder="他人の投稿を、続きまでそのまま貼り付け"
+              onChange={(e) => setReferenceText(e.target.value)}
+            />
+            <span className="wizard-count num">{referenceText.length.toLocaleString("ja-JP")} / 20,000文字</span>
+          </label>
         )}
       </>
     );
     footer = (
       <>
+        {referenceOrigin === "own" && picks.length > 0 && (
+          <span className="wizard-picked num">{rewrite ? "1本 選択中" : `${picks.length}/3本 選択中`}</span>
+        )}
         <button type="button" className="btn" disabled={!hasReference} onClick={() => go("brief")}>
           次へ
         </button>

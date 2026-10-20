@@ -30,7 +30,7 @@ function MinimalPage({ accountId, tz, cursor, picks, last, first, onOpen, onMore
   const posts = list.data?.posts ?? [];
   if (list.isPending) return first ? <Skeleton lines={5} label="投稿を読み込んでいます" /> : <p className="pick-more"><button type="button" className="btn-link" aria-busy="true" disabled>読み込んでいます…</button></p>;
   if (list.isError) return <p className="msg msg-warn">投稿を読み込めませんでした。<button type="button" className="btn-quiet" onClick={() => void list.refetch()}>再読み込み</button></p>;
-  if (first && !posts.length) return <p className="muted">投稿が見つかりませんでした。下の「他人の投稿を貼り付ける」から始めることもできます。</p>;
+  if (first && !posts.length) return <p className="muted">投稿が見つかりませんでした。上の「他人の投稿を貼る」から始めることもできます。</p>;
   return <>
     {posts.map(p => {
       const picked = picks.includes(p.id);

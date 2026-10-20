@@ -1,4 +1,5 @@
 import AccountAvatar from "./AccountAvatar";
+import { EnvChip } from "./EnvironmentNotice";
 /**
  * 下部5タブ（SPEC §12.1 / design-v0.2 §3-2）。
  * ラベルは中身の名前にする（apple-design §16「Direct, specific labels」）。
@@ -45,7 +46,7 @@ export default function Tabs({ account, onAccount, email, onLogout }: { account:
           </button>
         );
       })}
-      <div className="sidebar-bottom"><div className="sidebar-user"><span className="account-avatar">{email?.slice(0,1).toUpperCase() ?? "U"}</span><span>{email}</span><button className="icon-btn" title="ログアウト" aria-label="ログアウト" onClick={onLogout}>↪</button></div></div>
+      <div className="sidebar-bottom"><EnvChip label="STAGING · 検証環境" /><div className="sidebar-user"><span className="account-avatar">{email?.slice(0,1).toUpperCase() ?? "U"}</span><span>{email}</span><button className="icon-btn" title="ログアウト" aria-label="ログアウト" onClick={onLogout}>↪</button></div></div>
     </nav>
   );
 }

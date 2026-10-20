@@ -1,4 +1,5 @@
 import AccountAvatar from "./AccountAvatar";
+import { EnvChip } from "./EnvironmentNotice";
 /**
  * TopBar（SPEC §12.2 / design-v0.2 §3-2）。
  * 左上ハンバーガー → ドロワー、中央にアカウントチップ、右上「＋」でアカウント追加。
@@ -27,6 +28,8 @@ export default function TopBar({
       <button className="icon-btn" type="button" onClick={onMenu} aria-label="メニューを開く">
         <MenuIcon />
       </button>
+      {/* スマホだけ。PC はサイドバーの下に出す（CSS で隠す） */}
+      <EnvChip />
 
       <button
         className="account-chip"

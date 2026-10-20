@@ -208,6 +208,12 @@ button,input,select,textarea { font-family:inherit; }
 
 .environment-notice { position:fixed; bottom:1rem; right:1rem; z-index:90; display:flex; flex-direction:column; gap:.2rem; padding:.65rem 1rem; background:#fff8e0; color:#735600; border:1px solid #e8ca70; border-radius:10px; box-shadow:0 2px 8px #0001; font-size:.7rem; pointer-events:none; }
 @media(max-width:959px) { .environment-notice { bottom:5rem; right:.5rem; padding:.4rem .7rem; } }
+/* Inside the app the staging mark lives in the chrome (sidebar on PC, top bar on phones), never over content (2026-10-20). */
+body:has(.app-shell) .environment-notice { display:none; }
+.env-chip { display:inline-flex; align-items:center; gap:.4rem; padding:.25rem .6rem; border:1px solid #e8ca70; border-radius:999px; background:#fff8e0; color:#735600; font-size:.625rem; font-weight:600; white-space:nowrap; }
+.env-chip::before { content:""; width:6px; height:6px; border-radius:50%; background:#d98e1f; }
+.sidebar-bottom .env-chip { margin:0 0 .5rem .25rem; }
+@media (min-width:1024px) { .topbar .env-chip { display:none; } }
 
 /* Daily publishing slots share one schedule across manual drafts and autopilot. */
 .queue-heading-actions,.queue-date-controls { display:flex; gap:.6rem; align-items:center; }
@@ -430,17 +436,23 @@ textarea.wizard-textarea { min-height:9rem; padding:.9rem 1rem; border-color:var
   .edit-bar .btn { min-width:0; }
 }
 
-/* start: three big choices; the first one is the main road. */
+/* start: two equal choices; the one under the pointer (or keyboard focus) turns black (2026-10-20). */
 .start-choices { display:grid; gap:.75rem; margin-top:1.5rem; }
-.start-choice { display:grid; gap:.2rem; width:100%; padding:1.15rem 1.1rem; border:1px solid var(--line2); border-radius:14px; background:var(--bg); color:var(--ink); font:inherit; text-align:left; cursor:pointer; transform:scale(1); transition:transform 100ms cubic-bezier(.2,0,0,1); touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
-.start-choice:hover { border-color:var(--ink); }
+.start-choice { display:grid; gap:.2rem; width:100%; padding:1.15rem 1.1rem; border:1px solid var(--line2); border-radius:14px; background:var(--bg); color:var(--ink); font:inherit; text-align:left; cursor:pointer; transform:scale(1); transition:transform 100ms cubic-bezier(.2,0,0,1), background-color 120ms linear, color 120ms linear, border-color 120ms linear; touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
+.start-choice:hover, .start-choice:focus-visible { background:var(--ink); border-color:var(--ink); color:#fff; }
+.start-choice:hover span, .start-choice:focus-visible span { color:rgba(255,255,255,.72); }
 .start-choice:active { transform:scale(.98); }
 .start-choice:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .start-choice strong { font-size:1.0625rem; font-weight:650; }
 .start-choice span { font-size:.8125rem; color:var(--ink2); }
-.start-choice-primary { background:var(--ink); border-color:var(--ink); color:#fff; }
-.start-choice-primary span { color:rgba(255,255,255,.72); }
 
+/* pick: the source switch sits on top; the list or the paste field follows (2026-10-20). */
+.pick-source { display:grid; grid-template-columns:1fr 1fr; gap:4px; margin:0 0 1rem; padding:4px; border-radius:12px; background:var(--paper2); }
+.pick-source [role="tab"] { position:relative; min-height:40px; border:1px solid transparent; border-radius:9px; background:transparent; color:var(--ink2); font:inherit; font-size:.875rem; font-weight:500; cursor:pointer; transition:background-color 120ms linear, color 120ms linear; touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
+.pick-source [role="tab"][aria-selected="true"] { background:var(--paper); border-color:var(--line); color:var(--ink); font-weight:600; box-shadow:var(--shadow-1); }
+.pick-source [role="tab"]:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.pick-source-dot { position:absolute; top:10px; right:12px; width:7px; height:7px; border-radius:50%; background:var(--accent); }
+.wizard-picked { margin-right:auto; font-size:.8125rem; color:var(--ink2); }
 /* pick: tap a row to read it whole; the row shows whether it is chosen. */
 .pick-list { gap:.6rem; }
 .pick-row { gap:.3rem; padding:.9rem 1rem; border-radius:12px; }

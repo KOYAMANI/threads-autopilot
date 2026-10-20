@@ -2,7 +2,7 @@
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["vite/client", "node"],
+    "types": ["vite/client", "vite-plugin-pwa/client", "node"],
     "jsx": "react-jsx",
     "noEmit": true,
     "baseUrl": ".",
