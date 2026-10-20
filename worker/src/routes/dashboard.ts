@@ -12,7 +12,7 @@ import { fail, type AppEnv } from "../app";
 import { loadOwnedAccount } from "../lib/accounts";
 import { loadUrlTotals } from "../jobs/clicks";
 import { DAY_MS } from "../lib/time";
-import { POST_SELECT, toPostSummary, type PostRow } from "./post-view";
+import { POST_SELECT, toPostSummary, type PostRow, ownChain } from "./post-view";
 
 const PERIODS = [7, 14, 21, 30, 90] as const;
 
@@ -53,8 +53,9 @@ export function dashboardRoutes() {
       list.push(p);
       childrenByRoot.set(p.root_id, list);
     }
-    for (const list of childrenByRoot.values()) {
+    for (const [rootId, list] of childrenByRoot) {
       list.sort((a, b) => Date.parse(a.posted_at) - Date.parse(b.posted_at));
+      childrenByRoot.set(rootId, ownChain(rootId, list));
     }
 
     /* ── リンク（ラベル付け用） ─────────────────── */

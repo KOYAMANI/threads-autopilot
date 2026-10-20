@@ -8,6 +8,8 @@ export type PostRow = {
   id: string;
   root_id: string;
   is_reply: number;
+  /** 直接の返信先（Threads の replied_to）。再同期前の行は null */
+  reply_to_id: string | null;
   text: string;
   permalink: string | null;
   media_type: string;
@@ -25,7 +27,29 @@ export type PostRow = {
 };
 
 export const POST_SELECT =
-  "id, root_id, is_reply, text, permalink, media_type, media_url, link_attachment_url, posted_at, views, likes, replies, reposts, quotes, shares, clicks, tags_json";
+  "id, root_id, is_reply, reply_to_id, text, permalink, media_type, media_url, link_attachment_url, posted_at, views, likes, replies, reposts, quotes, shares, clicks, tags_json";
+
+/**
+ * 本人の「続き」= root から直接つながる本人の返信の連なり（root → それへの返信 → さらにそれへの返信 …）。
+ * 他人のコメントへの返信は reply_to_id が本人の投稿を指さないので入らない（DECISIONS 2026-10-20）。
+ * 同じ親に複数ぶら下がるときは早い方を取る。reply_to_id がまだ無い行（再同期前）しか無ければ、従来どおり全部を続きにする。
+ */
+export function ownChain<T extends { id: string; reply_to_id: string | null; posted_at: string }>(rootId: string, replies: T[]): T[] {
+  if (replies.every((r) => r.reply_to_id == null)) return replies;
+  const out: T[] = [];
+  const seen = new Set([rootId]);
+  let parent = rootId;
+  for (;;) {
+    const next = replies
+      .filter((r) => r.reply_to_id === parent && !seen.has(r.id))
+      .sort((a, b) => a.posted_at.localeCompare(b.posted_at) || a.id.localeCompare(b.id))[0];
+    if (!next) break;
+    out.push(next);
+    seen.add(next.id);
+    parent = next.id;
+  }
+  return out;
+}
 
 function hookOf(row: PostRow): string {
   try {

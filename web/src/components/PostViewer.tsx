@@ -5,7 +5,7 @@
  * 本文を中央の1列に置き、操作は下の帯にまとめる（行の「…」シートはそのまま残す）。
  * 入れ物（閉じる・Esc・フォーカス・動き）は FullScreen。
  */
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { AccountSummary } from "@tap/shared";
 import AccountAvatar from "./AccountAvatar";
 import FullScreen from "./FullScreen";
@@ -47,12 +47,32 @@ export default function PostViewer({
   /** 上にシートが重なっている間は Esc をシートに譲る */
   escapeDisabled?: boolean;
 }) {
+  // 本文だけをコピーする（アカウント名・番号・表示回数は入れない）。マウスの範囲選択でも同じ（CSS の user-select）
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = window.setTimeout(() => setCopied(false), 1500);
+    return () => window.clearTimeout(t);
+  }, [copied]);
+  const copyBody = async () => {
+    try {
+      await navigator.clipboard.writeText(segments.map((s) => s.text).join("\n\n"));
+      setCopied(true);
+    } catch {
+      /* 許可が無いブラウザでは何もしない（本文の範囲選択でコピーできる） */
+    }
+  };
+  const copyButton = (
+    <button type="button" className="btn-link viewer-copy" onClick={() => void copyBody()} aria-live="polite">
+      {copied ? "コピーしました" : "本文をコピー"}
+    </button>
+  );
   return (
     <FullScreen
       open={open}
       onClose={onClose}
       title={title}
-      headerActions={headerActions}
+      headerActions={<>{copyButton}{headerActions}</>}
       footer={actions}
       escapeDisabled={escapeDisabled}
     >

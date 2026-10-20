@@ -44,6 +44,7 @@ const POST_COLUMNS = [
   "id",
   "root_id",
   "is_reply",
+  "reply_to_id",
   "text",
   "permalink",
   "media_type",
@@ -63,6 +64,7 @@ const POST_COLUMNS = [
 const POST_UPDATES = [
   "root_id",
   "is_reply",
+  "reply_to_id",
   "text",
   "permalink",
   "media_type",
@@ -92,6 +94,8 @@ export function mediaToRow(
     m.id,
     rootId,
     isReply,
+    // 直接の返信先。root_id だけでは「他人のコメントへの返信」と「本人の続き」を区別できない（DECISIONS 2026-10-20）
+    isReply ? (m.replied_to?.id ?? null) : null,
     text,
     m.permalink ?? null,
     mediaType,

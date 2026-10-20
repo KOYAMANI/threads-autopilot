@@ -12,7 +12,7 @@ import type { PostDetailResponse, PostHistoryPoint, PostSummary } from "@tap/sha
 import { fail, type AppEnv } from "../app";
 import { accountToken, loadOwnedAccount } from "../lib/accounts";
 import { repost, type CallOptions } from "../lib/threads";
-import { POST_SELECT, toPostSummary, type PostRow } from "./post-view";
+import { POST_SELECT, toPostSummary, type PostRow, ownChain } from "./post-view";
 
 const SORTS = {
   views: "views DESC",
@@ -58,6 +58,7 @@ async function childrenOf(
       out.set(r.root_id, list);
     }
   }
+  for (const [rootId, list] of out) out.set(rootId, ownChain(rootId, list));
   return out;
 }
 

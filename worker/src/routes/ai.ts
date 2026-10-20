@@ -13,6 +13,7 @@ import { classifyHook, ok } from "@tap/shared";
 import type { AiCandidate, AiHistoryTurn, AiProvider } from "@tap/shared";
 import { z } from "zod";
 import { fail, type AppEnv } from "../app";
+import { ownChain } from "./post-view";
 import { loadOwnedAccount, type AccountRow } from "../lib/accounts";
 import {
   AiError,
@@ -199,11 +200,12 @@ export async function pickedPosts(db: Db, accountId: string, ids: string[]): Pro
   const rows = await db.all<{ id: string; text: string }>(
     `SELECT id,text FROM posts WHERE account_id=? AND deleted=0 AND is_reply=0 AND id IN (${marks})`, accountId, ...ids,
   );
-  const children = await db.all<{ root_id: string; text: string }>(
-    `SELECT root_id,text FROM posts WHERE account_id=? AND deleted=0 AND is_reply=1 AND root_id IN (${marks}) ORDER BY posted_at ASC,id ASC`, accountId, ...ids,
+  const children = await db.all<{ id: string; root_id: string; reply_to_id: string | null; posted_at: string; text: string }>(
+    `SELECT id,root_id,reply_to_id,posted_at,text FROM posts WHERE account_id=? AND deleted=0 AND is_reply=1 AND root_id IN (${marks}) ORDER BY posted_at ASC,id ASC`, accountId, ...ids,
   );
   const byId = new Map(rows.map(row => {
-    const parts = [row.text, ...children.filter(child => child.root_id === row.id).map(child => child.text)];
+    // 他人のコメントへの返信は型に入れない。本人の続きの連なりだけ
+    const parts = [row.text, ...ownChain(row.id, children.filter(child => child.root_id === row.id)).map(child => child.text)];
     return [row.id, parts.length === 1 ? row.text : parts.map((text, i) => `【投稿${i + 1}】\n${text}`).join("\n\n")];
   }));
   const texts = ids.flatMap(id => byId.has(id) ? [byId.get(id)!] : []);
