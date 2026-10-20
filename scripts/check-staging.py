@@ -14,8 +14,9 @@ checks={
  "origin":stage["vars"]["APP_ORIGIN"]=="https://threads-autopilot-staging.yama-threads-apps.workers.dev",
  "environment":stage["vars"].get("APP_ENV")=="staging",
  "release-build":stage["define"]["__DEV__"]=="false" and stage["vars"]["THREADS_MOCK"]==stage["vars"]["AI_MOCK"]=="0",
- "monitor-only-cron":stage.get("triggers",{}).get("crons",[])==["* * * * *"],
+ # Minutely dispatch + the 03:00 JST daily sweep only; the hourly cron stays production-only (DECISIONS 2026-10-21).
+ "staging-crons":stage.get("triggers",{}).get("crons",[])==["* * * * *", "0 18 * * *"],
 }
 failed=[name for name,ok in checks.items() if not ok]
 if failed: raise SystemExit("Blocked staging deploy: "+", ".join(failed))
-print("Staging targets isolated; external publishing/email disabled; one monitor-only cron trigger.")
+print("Staging targets isolated; external publishing/email disabled; minutely + daily cron triggers only.")

@@ -29,7 +29,11 @@ database_id = "dcce5294-b2de-4c72-9a81-5dc6f6d2e00a"
 migrations_dir = "worker/migrations"
 
 [triggers]
-crons = ["* * * * *"] # Arrival monitor only; APP_ENV=staging never enqueues jobs.
+# Minutely: arrival record + job dispatch. 18:00 UTC (03:00 JST): the daily sweep
+# (full_sync / followers / daily_views / clicks / insights_daily / ap_score).
+# The hourly insights_recent cron is deliberately not registered on staging (DECISIONS 2026-10-21).
+# Outbound writes stay blocked by code: lib/threads.ts rejects non-GET and lib/email.ts never sends on staging.
+crons = ["* * * * *", "0 18 * * *"]
 
 [vars]
 APP_ENV = "staging"

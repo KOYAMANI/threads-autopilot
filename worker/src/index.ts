@@ -62,15 +62,13 @@ export default {
             await recordSchedulerFinish(healthDb, event.cron, runId, "paused");
             return;
           }
-          // Staging's sole Cron proves trigger delivery only. Never enqueue,
-          // dispatch, notify, refresh tokens, or invoke external APIs here.
-          if (env.APP_ENV !== "staging") {
-            const jobCtx = createSchedulerContext(env);
-            await enqueueForCron(jobCtx, event.cron);
-            await enqueueSheetSyncs(jobCtx);
-            if (env.JOB_QUEUE) await dispatchJobs(jobCtx);
-            else if (env.WORKERS_PLAN !== "free") await runJobs(jobCtx);
-          }
+          // Staging runs the same path (DECISIONS 2026-10-21); it only registers the minutely and
+          // daily crons, and lib/threads.ts / lib/email.ts block outbound writes there.
+          const jobCtx = createSchedulerContext(env);
+          await enqueueForCron(jobCtx, event.cron);
+          await enqueueSheetSyncs(jobCtx);
+          if (env.JOB_QUEUE) await dispatchJobs(jobCtx);
+          else if (env.WORKERS_PLAN !== "free") await runJobs(jobCtx);
           await recordSchedulerFinish(healthDb, event.cron, runId, "success");
         } catch {
           try { await recordSchedulerFinish(healthDb, event.cron, runId, "error"); }
