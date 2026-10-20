@@ -37,35 +37,23 @@ describe("Cron arrival and dispatch evidence", () => {
     expect(result.headers.get("Cache-Control")).toBe("no-store");
   });
 
-  it("staging minutely cron records delivery and dispatches without starting a sweep", async () => {
+  it("records staging delivery without enqueuing or dispatching even when account data exists", async () => {
     const u = await registerUser();
     await insertAccount({ userId: u.userId });
+    const enqueue = vi.spyOn(jobs, "enqueueForCron");
+    const dispatch = vi.spyOn(jobs, "dispatchJobs");
+    const run = vi.spyOn(jobs, "runJobs");
     const fetch = vi.spyOn(globalThis, "fetch");
     await scheduled(stage());
-    expect(fetch).not.toHaveBeenCalled();
+    for (const spy of [enqueue, dispatch, run, fetch]) expect(spy).not.toHaveBeenCalled();
     expect(await testDb().first("SELECT COUNT(*) n FROM jobs")).toEqual({ n: 0 });
     expect(await testDb().first("SELECT COUNT(*) n FROM cron_sweeps")).toEqual({ n: 0 });
     const result = await health.readSchedulerStatus(testDb(), stage());
-    expect(result.mode).toBe("daily_dispatch");
-    expect(result.triggers.map(t => t.cron)).toEqual([MINUTELY, "0 18 * * *"]);
+    expect(result.mode).toBe("trigger_monitor_only");
+    expect(result.triggers).toHaveLength(1);
     expect(result.triggers[0]).toMatchObject({ cron: MINUTELY, status: "success", stale: false, lastFailedAt: null });
     expect(result.triggers[0]!.lastStartedAt).toBeTruthy();
     expect(result.triggers[0]!.lastSucceededAt).toBeTruthy();
-    expect(result.triggers[1]!.status).toBe("not_observed");
-  });
-
-  it("staging daily cron starts the daily sweep and enqueues account jobs (DECISIONS 2026-10-21)", async () => {
-    const u = await registerUser();
-    await insertAccount({ userId: u.userId });
-    const sendBatch = vi.fn().mockResolvedValue(undefined);
-    const bindings = { ...stage(), JOB_QUEUE: { sendBatch } } as unknown as Env;
-    await scheduled(bindings, "0 18 * * *");
-    expect(await testDb().first("SELECT COUNT(*) n FROM cron_sweeps")).toEqual({ n: 1 });
-    const rows = await testDb().all<{ type: string }>("SELECT type FROM jobs");
-    expect(rows.map(j => j.type)).toContain("followers");
-    expect(rows.map(j => j.type)).toContain("full_sync");
-    const result = await health.readSchedulerStatus(testDb(), bindings);
-    expect(result.triggers.find(t => t.cron === "0 18 * * *")?.status).toBe("success");
   });
 
   it("records actual production dispatch separately from monitor-only delivery", async () => {
