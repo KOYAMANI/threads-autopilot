@@ -743,13 +743,18 @@ function LicenseCard() {
 
 /**
  * CSV の書き出し。Google スプレッドシート連携を入れたときに外していたが、戻した
- * （DECISIONS 2026-10-21）。アカウントごとに1ボタン。保存の実体は `downloadCsv`。
+ * （DECISIONS 2026-10-21）。アカウントはドロップダウンで選び（最初は見ているアカウント）、
+ * ボタン1つで保存する。保存の実体は `downloadCsv`。
  */
 function ExportCard() {
   const toast = useToast();
+  const { account } = useShell();
   const accounts = useAccounts();
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [chosen, setChosen] = useState<string | null>(null);
   const list = accounts.data ?? [];
+  const selectedId = chosen && list.some((a) => a.id === chosen) ? chosen : (account?.id ?? list[0]?.id ?? null);
+  const selected = list.find((a) => a.id === selectedId) ?? null;
 
   return (
     <section className="card section">
@@ -757,30 +762,48 @@ function ExportCard() {
         <h2>CSV で書き出す</h2>
       </div>
       <p className="muted">
-        投稿と数字（表示回数・いいね・推定クリック・48時間後の断面）を CSV で保存します。Excel や Google スプレッドシートでそのまま開けます。
+        投稿と数字（表示回数・いいね・推定クリック・48時間後の断面）を CSV で保存します。Excel や Google スプレッドシートでそのまま開けます。他人の投稿へのコメントは入れません。
       </p>
       {list.length === 0 && !accounts.isPending && (
         <p className="muted">Threads のアカウントをつなぐと、ここから書き出せます。</p>
       )}
-      {list.map((a) => (
-        <button
-          key={a.id}
-          type="button"
-          className="btn btn-sub section"
-          disabled={busy !== null}
-          onClick={() => {
-            setBusy(a.id);
-            downloadCsv(a.id, a.username)
-              .then(() => toast.show("CSV を保存しました", "ok"))
-              .catch((e: unknown) =>
-                toast.show(e instanceof ApiError ? e.message : "書き出しに失敗しました", "bad"),
-              )
-              .finally(() => setBusy(null));
-          }}
-        >
-          {busy === a.id ? "書き出しています…" : `@${a.username} を CSV で保存`}
-        </button>
-      ))}
+      {list.length > 0 && (
+        <>
+          <label className="field" htmlFor="export-account">
+            <span>アカウント</span>
+            <select
+              id="export-account"
+              className="input"
+              value={selectedId ?? ""}
+              disabled={busy}
+              onChange={(e) => setChosen(e.target.value)}
+            >
+              {list.map((a) => (
+                <option key={a.id} value={a.id}>
+                  @{a.username}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            className="btn btn-sub section"
+            disabled={busy || !selected}
+            onClick={() => {
+              if (!selected) return;
+              setBusy(true);
+              downloadCsv(selected.id, selected.username)
+                .then(() => toast.show("CSV を保存しました", "ok"))
+                .catch((e: unknown) =>
+                  toast.show(e instanceof ApiError ? e.message : "書き出しに失敗しました", "bad"),
+                )
+                .finally(() => setBusy(false));
+            }}
+          >
+            {busy ? "書き出しています…" : "CSV で保存"}
+          </button>
+        </>
+      )}
     </section>
   );
 }

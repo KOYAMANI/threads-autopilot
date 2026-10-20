@@ -47,18 +47,21 @@ async function insertPost(
     likes?: number;
     text?: string;
     isReply?: boolean;
+    /** 返信の親。他人の投稿なら自分の posts に無い ID を渡す */
+    replyToId?: string | null;
   },
 ): Promise<void> {
   const db = testDb();
   await db.run(
-    `INSERT INTO posts (account_id, id, root_id, is_reply, text, permalink, media_type, media_url,
+    `INSERT INTO posts (account_id, id, root_id, is_reply, reply_to_id, text, permalink, media_type, media_url,
         link_attachment_url, posted_at, views, likes, replies, reposts, quotes, shares, clicks,
         metrics_fetched_at, tags_json, source, queue_id, deleted)
-      VALUES (?,?,?,?,?,NULL,'TEXT_POST',NULL,NULL,?,?,?,0,0,0,0,0,NULL,'{"hook":"警告型","length":"100-200","slot":"21","daytype":"weekday"}','external',NULL,0)`,
+      VALUES (?,?,?,?,?,?,NULL,'TEXT_POST',NULL,NULL,?,?,?,0,0,0,0,0,NULL,'{"hook":"警告型","length":"100-200","slot":"21","daytype":"weekday"}','external',NULL,0)`,
     accountId,
     options.id,
     options.id,
     options.isReply ? 1 : 0,
+    options.replyToId ?? null,
     options.text ?? "本文",
     options.postedAt,
     options.views ?? 100,
@@ -318,6 +321,26 @@ describe("CSV 書き出し GET /export/:accountId", () => {
     expect(text).toContain('""引用符""');
     // 48h の値が入る
     expect(lines.some((l) => l.includes('"55"'))).toBe(true);
+  });
+
+  it("他人へのコメントは出さない。自分のツリーの続きは「続き」、親が不明な古い返信は残す", async () => {
+    const user = await registerUser();
+    const acc = await insertAccount({ userId: user.userId, threadsUserId: "17804444444445" });
+    const postedAt = new Date("2026-09-01T12:00:00Z").toISOString();
+    await insertPost(acc, { id: "root", postedAt, text: "本文" });
+    await insertPost(acc, { id: "cont", postedAt, text: "ツリーの続き", isReply: true, replyToId: "root" });
+    await insertPost(acc, { id: "other", postedAt, text: "他人へのコメント", isReply: true, replyToId: "someone-else" });
+    await insertPost(acc, { id: "legacy", postedAt, text: "親が不明", isReply: true, replyToId: null });
+
+    const res = await rawGet(`/api/export/${acc}`, user.cookie);
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    const lines = text.split("\r\n").filter((l) => l !== "");
+    expect(lines).toHaveLength(4);
+    expect(text).toContain('"cont","続き"');
+    expect(text).toContain('"legacy","続き"');
+    expect(text).not.toContain("他人へのコメント");
+    expect(text).not.toContain("コメント");
   });
 
   it("format=json は断る。他人のアカウントは 404", async () => {

@@ -10,6 +10,7 @@
  * - 改行コードは CRLF（RFC 4180）。セルは常に `"` で囲み、中の `"` は `""` にする
  * - 先頭が `= + - @` のセルは `'` を1つ足してから囲む（表計算ソフトの数式実行を防ぐ）
  * - 日時はアカウントの timezone で `YYYY-MM-DD HH:mm`（SPEC §2.4）
+ * - 他人の投稿へのコメント（親が自分の投稿でない返信）は出さない。自分のツリーの続きは「続き」として出す
  */
 import { Hono } from "hono";
 import { fail, type AppEnv } from "../app";
@@ -126,7 +127,8 @@ export function toCsvRow(
 ): string {
   return csvRow([
     row.id,
-    row.is_reply ? "コメント" : "本文",
+    // 残る返信は自分のツリーの続きだけ（他人へのコメントは SQL で落とす）
+    row.is_reply ? "続き" : "本文",
     formatCsvDate(row.posted_at, tz),
     row.text,
     row.link_attachment_url ?? "",
@@ -164,13 +166,18 @@ export function exportRoutes() {
     const account = await loadOwnedAccount(db, c.req.param("accountId"), userId);
     if (!account) return fail("NOT_FOUND", "見つかりませんでした", 404);
 
+    // 他人の投稿へのコメントは出さない（2026-10-21）。返信のうち、親が自分の投稿（ツリーの続き）だけ残す。
+    // `reply_to_id` が無い古い行は親が分からないので残す（画面の ownChain と同じ扱い）
     const posts = await db.all<ExportRow>(
       `SELECT id, is_reply, text, permalink, posted_at, link_attachment_url,
               views, likes, replies, reposts, quotes, shares, clicks, tags_json, source
          FROM posts
         WHERE account_id=? AND deleted=0
+          AND (is_reply=0 OR reply_to_id IS NULL
+               OR reply_to_id IN (SELECT id FROM posts WHERE account_id=?))
         ORDER BY posted_at DESC
         LIMIT ?`,
+      account.id,
       account.id,
       EXPORT_MAX_ROWS,
     );
