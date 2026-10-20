@@ -623,7 +623,13 @@ button[aria-busy="true"]::before { content:""; flex:none; width:.9em; height:.9e
 @media(max-width:600px) { .dashboard-toolbar .toolbar-label { display:flex; font-size:.75rem; } }
 .generate-row:not(:has(> .btn, > div:not(:empty))) { display:none; }
 @media (max-width:759px) { .studio-account { display:none; } }
-.tabs { grid-template-columns:repeat(4,1fr); }
+/* ホーム・作る・キュー・ヒント・設定（TABS の数と合わせる）。
+   The B branch's phone bar (centre "作る" button, `.tab-primary`) hides plain `.tab`; this app keeps the 5-tab bar. */
+.tabs { grid-template-columns:repeat(5,1fr); }
+@media (max-width:1023px) {
+  .tabs { grid-template-columns:repeat(5,1fr); }
+  .tabs .tab { display:flex; grid-row:auto; grid-column:auto; }
+}
 /* Toasts centre over the content column, not across the sidebar. */
 @media (min-width:1024px) {
   .toast-wrap { left:var(--sidebar-w); right:0; width:auto; max-width:none; transform:none; display:flex; flex-direction:column; align-items:center; }

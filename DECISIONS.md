@@ -539,3 +539,4 @@ SPEC §5.4・§7.1・§7.8・§8.7・§12.3 Settings・§13 M7・§15 に対し�
 - 「今すぐ投稿」は予約のシートから外す（B の「即時公開を下書き・予約と分ける」に合わせる。即時公開はキューの承認画面から）
 - オンボーディングは B の目標の画面（`/onboarding`）を残す。目標は投稿ヒントと AI の提案に使う
 - worker・shared は両方の和集合。migration は名前が違えば番号が重なっても wrangler は別々に記録するので、適用済みの名前は付け直さない
+- Claude 連携（MCP）は取り下げた（2026-10-20、ユーザーの指示）。サブスクの Claude はアプリの中だけでは動かせず、claude.ai か Claude Code が入口になるため。実装は `feat/claude-mcp-integrated` に残している。ステージングの D1 には `create_sessions`（migration 0017）と KV `OAUTH_KV` が残っているが、使うコードは無い
