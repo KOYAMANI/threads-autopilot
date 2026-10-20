@@ -7,7 +7,10 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@cloudflare/workers-oauth-provider": "^1.2.3",
+    "@modelcontextprotocol/server": "^2.3.1",
     "@tap/shared": "*",
+    "agents": "^0.28.1",
     "hono": "^4.13.5",
     "zod": "^4.1.5"
   }

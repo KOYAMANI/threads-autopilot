@@ -22,6 +22,11 @@ export type Env = {
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   ASSETS?: Fetcher;
+  /**
+   * Claude 連携（MCP）の OAuth の置き場所（`@cloudflare/workers-oauth-provider` が使う）。
+   * 無ければ `/mcp` と `/oauth/*` は 503 を返し、設定画面は「未設定」を出す
+   */
+  OAUTH_KV?: KVNamespace;
 
   // vars（SPEC §3.1）
   APP_ORIGIN: string;

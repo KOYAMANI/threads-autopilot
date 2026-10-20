@@ -151,12 +151,16 @@ compatibility_flags = ["nodejs_compat"]
 directory = "./web/dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-run_worker_first = ["/api/*", "/a/*"]
+run_worker_first = ["/api/*", "/a/*", "/mcp", "/oauth/*", "/.well-known/*"]   # 後ろ3つは §10.6
 
 [[d1_databases]]
 binding = "DB"
 database_name = "threads-autopilot"
 database_id = "<wrangler d1 create で取得>"
+
+[[kv_namespaces]]          # §10.6 Claude 連携の OAuth。無ければ Claude 連携だけ止まる
+binding = "OAUTH_KV"
+id = "<wrangler kv namespace create OAUTH_KV で取得>"
 
 [triggers]
 crons = ["*/5 * * * *", "0 * * * *", "0 18 * * *"]   # UTC。18:00 UTC = 03:00 JST
@@ -853,6 +857,36 @@ Resend `POST https://api.resend.com/emails`。差出人 `noreply@<domain>`。テ
 | `password_reset` | パスワード再設定リンク `{APP_ORIGIN}/login?reset=<token>`（30分・1回限り、§5.1） |
 
 本文は日本語のプレーンテキスト＋アプリへのリンク。`ap_draft` と `password_reset` のリンクだけはCookie非依存のトークン付きURLで、それ以外はアプリのURLでよい。
+
+### 10.6 Claude 連携（Remote MCP、`worker/src/mcp/`）
+「作る」画面の3案づくりと直しを、買い手自身の Claude（claude.ai のサブスク）で動かす経路。**アプリが Claude を呼ぶのではなく、Claude がアプリを呼ぶ**。Worker に Remote MCP サーバーを同居させ、買い手には claude.ai のカスタムコネクタとして登録してもらう。
+
+- 対象は Create の生成と直しだけ。オートパイロット（§9.4 `ap_plan`）は §10.1 の BYOK のまま触らない
+- Gemini / OpenRouter の経路（§7.6）は残す。Create の「生成する（3案）」の下に「Claude で作る」を並べる
+- サブスクの OAuth トークンを預かる方式、サーバーで claude CLI を動かす方式は規約違反なので採らない
+
+流れ:
+1. Create で型・参考情報・指示を選び「Claude で作る」→ `POST /api/claude/sessions` が `/ai/generate` と同じ判定（`loadGenerationMaterial`）を通して `create_sessions` に1行保存 → claude.ai を新しいタブで開く
+2. claude.ai で「作って」→ Claude が `get_create_session` → `get_writing_guide` → `save_candidates` を呼ぶ
+3. 画面は `GET /api/claude/sessions/:id` をポーリングして案を取り込む（タブが裏にある間は止まる）。編集・下書き・キューは今の UI のまま。claude.ai で「Bを短く」と頼むと、直した案だけ差し替わる
+
+| 経路 | 内容 |
+|---|---|
+| `POST /mcp` | MCP（Streamable HTTP、stateless。`agents/mcp/server` の `createMcpHandler`）。Bearer トークン必須。毎回ユーザー行とライセンス `active` を確かめ、`mcp:<user_id>` で1分30回まで |
+| `GET\|POST /oauth/authorize` | 許可画面（Worker の HTML）。GET は画面だけ、POST（この画面からの同一サイト送信）で `sid` Cookie を読んで許可する。ログインしていなければ同じ画面のまま案内し、ログイン後に押し直せる |
+| `POST /oauth/token` `POST /oauth/register` `/.well-known/oauth-*` | `@cloudflare/workers-oauth-provider`（OAuth 2.1・PKCE S256・動的クライアント登録・RFC 9728 / 8414 のメタデータ）。トークンは KV `OAUTH_KV`、アクセス1時間・リフレッシュ30日 |
+| `POST /api/claude/sessions` / `GET /api/claude/sessions/:id` | 画面側（Cookie 認証）。`user_id` で引く |
+| `GET /api/claude/connection` / `DELETE` | 設定の連携カード（URL・接続状態）と、許可の全取り消し |
+
+MCP ツール（既存 lib の薄いラッパー）:
+
+| ツール | 内容 |
+|---|---|
+| `get_create_session(sessionId?)` | 省略時は本人の最新。`pickMode`・モードの使い方・参考投稿（§10.2 と同じ `pickedPosts`）・参考情報（`clipSources` で各3,000字・合計9,000字）・本文の無い動画・リンク・指示・制約・保存済みの案 |
+| `get_writing_guide(sessionId?)` | §10.3 の System プロンプト（`systemPrompt(constraints)`）と出力形式 `{hook, body, comments, basis}`、型の候補 |
+| `save_candidates(sessionId, candidates[])` | 1〜5案。`validatePost()`（§6.3）＋絵文字方針＋リンク不使用を全案に通し、1案でも NG なら何も保存せず理由を返す。全案に既存の `key` があればその案だけ差し替え、それ以外は全部置き換え。キューには入れない |
+
+`create_sessions(id, user_id, account_id, payload, candidates, status, created_at)`: `payload` は画面の材料（ID と指示）だけで本文は持たず、読むたびに引き直す。`status` は `waiting|ready`。外部キーの CASCADE で退会・アカウント削除と一緒に消え、`cleanup`（§8.7）が7日で消す。ツールの呼び出しと許可・解除は `audit_log` に `claude_mcp`（`detail.tool` / `detail.event`）で残す。`OAUTH_KV` が無い環境では `/mcp` と `/oauth/*` は 503、設定カードは「管理者による設定待ち」を出す。
 
 ---
 

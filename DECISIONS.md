@@ -539,3 +539,39 @@ SPEC §5.4・§7.1・§7.8・§8.7・§12.3 Settings・§13 M7・§15 に対し�
 - 「今すぐ投稿」は予約のシートから外す（B の「即時公開を下書き・予約と分ける」に合わせる。即時公開はキューの承認画面から）
 - オンボーディングは B の目標の画面（`/onboarding`）を残す。目標は投稿ヒントと AI の提案に使う
 - worker・shared は両方の和集合。migration は名前が違えば番号が重なっても wrangler は別々に記録するので、適用済みの名前は付け直さない
+---
+
+## Claude 連携（2026-10-19、ブランチ feat/claude-mcp）
+
+SPEC §10.6。Create の3案づくりと直しを、買い手自身の Claude（claude.ai のサブスク）で動かす。
+
+**着手前に一次資料で確かめたこと**（2026-10-19 時点）
+
+- claude.ai のカスタムコネクタ（support.claude.com 11175166、claude.com/docs/connectors/building/authentication）: Free・Pro・Max・Team・Enterprise で使える（Free は1つまで、Team/Enterprise は管理者が追加）。トランスポートは Streamable HTTP（HTTP+SSE は非推奨）。OAuth のコールバックは `https://claude.ai/api/mcp/auth_callback`。クライアント登録は CIMD（AS が `client_id_metadata_document_supported` を広告したときだけ）か、無ければ DCR。PKCE S256 必須、未認証は 401 ＋ `WWW-Authenticate: Bearer resource_metadata=…`、`/token` は form-urlencoded。対応する認可仕様は 2025-03-26 / 2025-06-18 / 2025-11-25。ツール結果は約15万字・240秒まで。送信元は `160.79.104.0/21`
+- Cloudflare（developers.cloudflare.com/agents）: `McpAgent` は deprecated（機能凍結）で、新規は stateless な `createMcpHandler`（`agents/mcp/server`）が推奨。OAuth は `@cloudflare/workers-oauth-provider`（KV `OAUTH_KV`、`/authorize` はアプリ側の実装で既存ログインに繋げられる）
+
+**決めたこと**
+
+| 日付 | 決定 | 理由 |
+|---|---|---|
+| 2026-10-19 | MCP は `McpAgent` ではなく同じ `agents` パッケージの **stateless `createMcpHandler`** で作る | 指示は McpAgent だったが、一次資料で deprecated・機能凍結。stateless なら Durable Object とその migrations が要らず、free プランの構成（Worker + D1 + Queue）に KV を1つ足すだけで済む。ツールは毎リクエスト読み書きするだけで、セッション状態を持つ理由が無い |
+| 2026-10-19 | クライアント登録は **DCR を有効、CIMD は無効** | CIMD は `global_fetch_strictly_public` 互換フラグが要り、Worker 全体の fetch の挙動が変わる（`lib/extract.ts` など）。claude.ai は CIMD を広告しない AS には DCR で来る |
+| 2026-10-19 | 許可画面は **GET で画面だけ出し、POST で `sid` Cookie を読む** | `sid` は `SameSite=Strict`（SPEC §5.1）なので、claude.ai からのクロスサイト遷移（GET）には付かない。画面からのフォーム送信は同一サイトなので付く。Cookie の属性は変えない |
+| 2026-10-19 | ログインしていないときは **handle を使わずに同じ画面を返し**、別タブでログインしてから押し直せるようにする | 「claude.ai からやり直し」にすると、コネクタの接続をもう一度最初からやることになる |
+| 2026-10-19 | トークンの props は `userId` だけ。**MCP の毎リクエストでユーザー行とライセンス `active` を確かめる** | KV のトークンは最長30日残る。退会・ライセンス失効のあとに残ったトークンを、KV を消せなかった場合でも D1 側で止める。退会と設定の「連携を解除」では KV の grant も取り消す |
+| 2026-10-19 | MCP の公開 URL（トークンの `resource`）は、本番は `APP_ORIGIN` に固定、DEV はリクエストの origin | Host ヘッダーでトークンの宛先がずれないように。開発では wrangler dev（8787）を MCP Inspector から直接叩ける |
+| 2026-10-19 | `create_sessions.payload` には**画面の材料（ID と指示）だけ**を入れ、本文は読むたびに `posts` / `sources` から `user_id`・`account_id` 付きで引き直す | 他人の参考情報 ID を混ぜても読めない（`/ai/generate` と同じ `loadGenerationMaterial`）。削除した投稿の本文がセッションに残らない |
+| 2026-10-19 | `create_sessions` は**外部キーの `ON DELETE CASCADE`** で退会・アカウント削除と一緒に消す（`ACCOUNT_CHILD_TABLES` / `USER_TABLES` に足さない） | 退会のバッチは free プランの D1 上限 32 クエリちょうどで組まれており、1文足すと `free-pilot.test.ts` が BUDGET_EXCEEDED で落ちた。`threads_oauth_states` と同じやり方 |
+| 2026-10-19 | `save_candidates` の本文検証は、キューと同じ `validatePost()` ＋ Gemini 経路の `candidateIssues()` が見る絵文字方針・リンク不使用。**1案でも NG なら1案も保存しない** | 一部だけ保存すると、画面に「3案のうち2案」が届いて Claude 側は直したつもりでいる、という食い違いが起きる。理由は案ごとに返し、Claude に直させる |
+| 2026-10-19 | 直し（「Bを短く」）は**送った全案に既存の `key` があれば、その案だけ差し替え**。それ以外は全部置き換えて key を A, B, C と振り直す | アプリ内に「Claude で直す」ボタンを足さずに、claude.ai の会話で直せる。画面は変わった key の案だけ取り込むので、他の案の手直しは消えない |
+| 2026-10-19 | 画面は取り込んだあとも30分まで見張る（2.5秒、取り込み後は5秒。タブが裏にある間は止まる） | claude.ai のタブを見ている間は叩かず、戻った瞬間に1回読む（react-query の focus 再取得） |
+| 2026-10-19 | claude.ai は `https://claude.ai/new?q=<下書き>` で開く | `q` での下書きは一次資料で確かめられていない。効かなくても新しい会話が開くだけなので害は無く、待機表示にも送る文を出している |
+| 2026-10-19 | `OAUTH_KV` が無い環境は `/mcp`・`/oauth/*` が 503、設定カードは「管理者による設定待ち」、Create のボタンは出さない。`check-production.py` の必須項目には**足していない** | KV を作るまで本番デプロイが止まるのは、Claude 連携を使わない運用には過剰。README「Claude 連携」に手順を書いた |
+| 2026-10-19 | PWA の Service Worker の `navigateFallbackDenylist` に `/oauth/`・`/mcp`・`/.well-known/` を足す | 一度アプリを開いたブラウザでは、claude.ai からの `/oauth/authorize` を SW が SPA で返し、`/app/home` に落ちていた（MCP Inspector で再現） |
+| 2026-10-19 | 許可画面の `Referrer-Policy` は `same-origin`（他の HTML は `no-referrer` のまま） | `no-referrer` だとブラウザは同一オリジンのフォーム送信でも `Origin: null` を送り、Origin 照合で「許可する」が必ず 403 になっていた（テストは Origin を手で付けていたので通っていた） |
+| 2026-10-19 | MCP の回数制限は `mcp:<user_id>` で1分30回 | 1回の「作って」で呼ぶのは3〜5回。`/api` の書き込み制限（1分120回）とは別枠にする |
+
+**残していること**
+
+- `npm test` は、この作業の前から `accounts.test.ts` の dashboard 2件と `sync-onboarding.test.ts` の1件が落ちる（素の HEAD を別 worktree で走らせて同じ3件を確認）。今回の変更とは無関係なので触っていない
+- 実際の claude.ai からの接続（コネクタ追加 → 許可 → 「作って」）は未確認。MCP Inspector とテストで OAuth → ツール呼び出しまでを確かめた

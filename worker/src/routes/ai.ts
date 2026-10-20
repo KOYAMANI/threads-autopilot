@@ -254,8 +254,47 @@ export async function pickedPosts(db: Db, accountId: string, ids: string[], sele
   return texts;
 }
 
+export type GenerationInput = {
+  picks?: string[];
+  pickMode?: AiPickMode;
+  referenceText?: string;
+  sourceIds?: string[];
+};
+
+export type GenerationMaterial =
+  | { ok: true; pickMode: AiPickMode; picks: string[]; references: string[]; sourceRows: SourceRow[] }
+  | { ok: false; code: string; message: string; status: 400 | 404 };
+
+/**
+ * 生成の材料（参考投稿の本文と参考情報の行）を引く。`/ai/generate` と Claude 連携の
+ * `create_sessions` で同じ判定を通す（どちらの経路でも、作れる・作れないの境目を揃える）。
+ */
+export async function loadGenerationMaterial(db: Db, userId: string, accountId: string, input: GenerationInput): Promise<GenerationMaterial> {
+  const picks = [...new Set(input.picks ?? [])];
+  const pickMode = input.pickMode ?? (picks.length || input.referenceText?.trim() ? "template" : "information");
+  if (pickMode === "rewrite" && !((picks.length === 1 && !input.referenceText?.trim()) || (picks.length === 0 && input.referenceText?.trim()))) {
+    return { ok: false, code: "BAD_REQUEST", message: "リライト元を1本選ぶか、投稿をツリー全体で貼り付けてください", status: 400 };
+  }
+  const pickedTexts = pickMode === "information" ? [] : await pickedPosts(db, accountId, picks);
+  if (pickMode !== "information" && pickedTexts.length !== picks.length) return { ok: false, code: "NOT_FOUND", message: "参考投稿が見つかりませんでした", status: 404 };
+  const references = [...pickedTexts, ...(pickMode !== "information" && input.referenceText?.trim() ? [input.referenceText.trim()] : [])];
+  if (pickMode === "template" && !references.length) return { ok: false, code: "BAD_REQUEST", message: "参考にする投稿を選ぶか、ツリー全体を貼り付けてください", status: 400 };
+
+  const sourceIds = input.sourceIds ?? [];
+  let sourceRows: SourceRow[] = [];
+  if (sourceIds.length > 0) {
+    const marks = sourceIds.map(() => "?").join(",");
+    sourceRows = await db.all<SourceRow>(
+      `SELECT ${SOURCE_SELECT} FROM sources WHERE user_id=? AND id IN (${marks})`,
+      userId,
+      ...sourceIds,
+    );
+  }
+  return { ok: true, pickMode, picks, references, sourceRows };
+}
+
 /** 制約（SPEC §10.2）。`autopilot` 行が無ければ既定（リンクはコメント）。 */
-async function constraintsFor(db: Db, account: AccountRow): Promise<PromptConstraints> {
+export async function constraintsFor(db: Db, account: AccountRow): Promise<PromptConstraints> {
   const ap = await db.first<{ ng_words: string; link_placement: string }>(
     "SELECT ng_words, link_placement FROM autopilot WHERE account_id=?",
     account.id,

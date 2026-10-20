@@ -2,6 +2,7 @@
  * Worker の入口（SPEC §2.1）。
  * - fetch:     /api/* を Hono、それ以外は Workers Static Assets（SPA）
  * - /a/*:     メールからの承認/取消（SPEC §7.9。Cookie 非依存）
+ * - /mcp, /oauth/*, /.well-known/oauth-*: Claude 連携（Remote MCP。`mcp/index.ts`）
  * - scheduled: Cron Triggers（SPEC §8.2）
  */
 import type { Env } from "./env";
@@ -11,6 +12,7 @@ import { createSchedulerHealthDb, recordSchedulerStart, recordSchedulerFinish } 
 import { enqueueSheetSyncs } from "./jobs/sheets";
 import { dispatchReviewPublishing } from "./lib/review-scheduler";
 import { handleAction } from "./routes/action";
+import { handleMcp, isMcpPath } from "./mcp";
 
 const app = createApp();
 
@@ -27,6 +29,12 @@ export default {
     if (url.pathname.startsWith("/a/")) {
       if (env.MAINTENANCE_MODE === "1") return new Response("メンテナンス中です", {status:503,headers:{"Cache-Control":"no-store"}});
       return handleAction(request, env);
+    }
+
+    // Claude 連携（Remote MCP と、その OAuth）。Bearer トークンで認証するので Hono の Cookie 経路には載せない
+    if (isMcpPath(url.pathname)) {
+      if (env.MAINTENANCE_MODE === "1") return new Response("メンテナンス中です", {status:503,headers:{"Cache-Control":"no-store"}});
+      return handleMcp(request, env, ctx);
     }
 
     if (env.ASSETS) return env.ASSETS.fetch(request);

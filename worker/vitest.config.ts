@@ -19,6 +19,8 @@ export default defineConfig(async () => {
           compatibilityFlags: ["nodejs_compat"],
           d1Databases: { DB: "test-db", DB_PRODUCTION: "test-meta-prod", DB_STAGING: "test-meta-stage" },
           r2Buckets: { MEDIA_BUCKET: "test-media" },
+          // Claude 連携（MCP）の OAuth の置き場所。`@cloudflare/workers-oauth-provider` が使う
+          kvNamespaces: ["OAUTH_KV"],
           bindings: {
             TEST_MIGRATIONS: migrations,
             TEST_META_CALLBACK_MIGRATIONS: callbackMigrations,

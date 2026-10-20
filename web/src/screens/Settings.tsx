@@ -1,5 +1,6 @@
 import AiErrorNotice from "../components/AiErrorNotice";
 import AccountAvatar from "../components/AccountAvatar";
+import ClaudeConnectCard from "../components/ClaudeConnectCard";
 /**
  * 設定（SPEC §12.3 Settings）。M7 で全部そろった。
  *

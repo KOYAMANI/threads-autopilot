@@ -1,0 +1,35 @@
+/* Claude 連携（components/ClaudeCreate・ClaudeConnectCard）。既存のトークンだけを使う */
+
+.claude-create { display: grid; gap: var(--sp); }
+
+.claude-wait {
+  display: grid;
+  gap: calc(var(--sp) * 0.75);
+  padding: calc(var(--sp) * 1.5);
+  border-radius: 12px;
+  background: var(--ap-soft);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+.claude-wait p { margin: 0; }
+.claude-wait .btn-quiet { justify-self: start; padding: 0.5rem 0; }
+
+.claude-wait-line { display: flex; align-items: baseline; gap: var(--sp); }
+
+/* 待っている印。opacity だけを動かす（reduced-motion では tokens.css の全体規則で止まる） */
+.claude-wait-dot {
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--ap-ink);
+  animation: claude-wait 1.4s ease-in-out infinite;
+}
+@keyframes claude-wait {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+
+/* `.field > span { display:block }` より強くする（URL とコピーを横に並べる） */
+.field > .claude-url { display: flex; margin-bottom: 0; gap: var(--sp); align-items: stretch; }
+.claude-url .input { width: auto; flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; }

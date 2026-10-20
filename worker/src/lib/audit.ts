@@ -37,7 +37,9 @@ export type AuditAction =
   | "export"
   | "license_issue"
   | "license_revoke"
-  | "plan_change";
+  | "plan_change"
+  /** Claude 連携（MCP）。`detail.tool` か `detail.event`（authorize / initialize / disconnect）で中身を分ける */
+  | "claude_mcp";
 
 /**
  * 1件記録する。**失敗しても呼び出し元の処理は止めない** — 監査の書き込みが

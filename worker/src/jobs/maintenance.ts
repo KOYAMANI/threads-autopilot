@@ -103,6 +103,8 @@ export async function cleanupJob(ctx: JobContext, _job: RunningJob): Promise<voi
     { sql: "DELETE FROM push_subscriptions WHERE session_id IS NOT NULL AND session_id NOT IN (SELECT id FROM sessions)", params: [] },
     { sql: "DELETE FROM password_resets WHERE expires_at < ?", params: [ago(7)] },
     { sql: "DELETE FROM rate_events WHERE at < ?", params: [ago(1)] },
+    // 取り込み済みの案は画面の state に移っている。置き場所としてだけ使うので7日で消す
+    { sql: "DELETE FROM create_sessions WHERE created_at < ?", params: [ago(7)] },
   ]);
 
   // 削除された投稿（deleted=1）に紐づく履歴だけ掃除する。

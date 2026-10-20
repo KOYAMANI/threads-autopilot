@@ -36,6 +36,7 @@ import { googleRoutes } from "./routes/google";
 import { userRoutes } from "./routes/users";
 import { mediaRoutes } from "./routes/media";
 import { MAX_POST_MEDIA_BYTES } from "./lib/media";
+import { claudeRoutes } from "./routes/claude";
 
 export type Vars = {
   db: Db;
@@ -141,6 +142,7 @@ export function createApp() {
   app.route("/sources", sourceRoutes());
   app.route("/ai", aiRoutes());
   app.route("/ai", aiTaskRoutes());
+  app.route("/claude", claudeRoutes());
   app.route("/notifications", notificationRoutes());
   app.route("/push", pushRoutes());
   app.route("/export", exportRoutes());

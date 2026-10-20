@@ -17,7 +17,8 @@ not_found_handling = "single-page-application"
 # 注入する cron 手動実行の入口で、静的アセット側に取られると Worker まで届かないため。
 # 本番では `--test-scheduled` の middleware が無く、index.ts が ASSETS にそのまま渡すので
 # 挙動は追加前と変わらない（docs/qa.md M2-2）。
-run_worker_first = ["/api/*", "/a/*", "/__scheduled"]
+# `/mcp` `/oauth/*` `/.well-known/*` は Claude 連携（Remote MCP と、その OAuth。worker/src/mcp/）。
+run_worker_first = ["/api/*", "/a/*", "/__scheduled", "/mcp", "/oauth/*", "/.well-known/*"]
 
 [[d1_databases]]
 binding = "DB"
@@ -30,6 +31,13 @@ migrations_dir = "worker/migrations"
 [[r2_buckets]]
 binding = "MEDIA_BUCKET"
 bucket_name = "threads-autopilot-media"
+# Claude 連携（MCP）の OAuth の置き場所（@cloudflare/workers-oauth-provider）。
+# ローカル（wrangler dev）は Miniflare なので、この ID は参照されない。
+# 本番・ステージングは `wrangler kv namespace create OAUTH_KV` の ID で同じ行を足す（README「Claude 連携」）。
+# 無い環境では /mcp と /oauth/* が 503 を返し、設定画面は「管理者による設定待ち」を出す。
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "00000000000000000000000000000000"
 
 [triggers]
 crons = ["* * * * *", "0 * * * *", "0 18 * * *"]   # UTC。18:00 UTC = 03:00 JST

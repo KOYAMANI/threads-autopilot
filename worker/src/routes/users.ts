@@ -18,6 +18,8 @@ import { ACCOUNT_CHILD_TABLES } from "../lib/accounts";
 import { sha256Hex, verifyPassword } from "../lib/crypto";
 import type { Db } from "../lib/db";
 import { sendEmail } from "../lib/email";
+import { revokeClaudeGrants } from "../mcp";
+import { redact } from "../lib/redact";
 import { forgotKey, loginKey } from "../lib/rate";
 import { mediaObjectKey } from "../lib/media";
 
@@ -157,6 +159,14 @@ export function userRoutes() {
       } catch (error) {
         console.error(`[media] user cleanup failed: ${String(error)}`);
       }
+    }
+
+    // Claude 連携のトークン（KV）も取り消す。失敗しても退会は止めない — 残ったトークンは
+    // `mcp/index.ts` がユーザー行の無さで弾く
+    try {
+      await revokeClaudeGrants(c.env, c.req.raw, userId);
+    } catch (e) {
+      console.error(`[users] claude grant revoke failed: ${redact(String(e))}`);
     }
 
     // 8. 完了の通知（`notifications` はもう消えているので直接送る）

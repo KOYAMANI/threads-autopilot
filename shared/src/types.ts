@@ -566,6 +566,30 @@ export type AiReviseRequest = {
 
 export type AiReviseResponse = { candidate: AiCandidate; notes?: string[] };
 
+/* ── Claude 連携（MCP。DECISIONS「Claude 連携」） ───── */
+
+/** 「Claude で作る」で保存する材料。`/ai/generate` と同じ形（`n` は3固定）。 */
+export type ClaudeSessionCreateRequest = AiGenerationContext & { accountId: string };
+
+export type ClaudeSessionStatus = "waiting" | "ready";
+
+export type ClaudeSessionResponse = {
+  id: string;
+  status: ClaudeSessionStatus;
+  /** Claude が save_candidates で書き戻した案。まだなら空 */
+  candidates: AiCandidate[];
+  createdAt: string;
+};
+
+export type ClaudeConnectionResponse = {
+  /** サーバー側の準備（OAUTH_KV）ができているか */
+  configured: boolean;
+  /** claude.ai から許可済みの接続があるか */
+  connected: boolean;
+  /** コネクタに貼る URL（`<origin>/mcp`） */
+  mcpUrl: string;
+};
+
 /* ── オートパイロット（SPEC §7.7 / §9） ─────────────── */
 
 export type ApprovalMode = "manual" | "cancel" | "auto";

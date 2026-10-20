@@ -222,6 +222,31 @@ npx wrangler deploy --dry-run --outdir /tmp/out   # 上げずにビルドだけ�
 画面の確認は自動テストではなく [docs/qa.md](./docs/qa.md) の手順書で行う（SPEC §14）。
 M1〜M7 を通しで見る「総合チェックリスト」が末尾にある。
 
+## Claude 連携（Remote MCP）
+
+「作る」画面の3案づくりと直しを、買い手自身の Claude（claude.ai）で動かす経路（SPEC §10.6）。
+OAuth のトークンを KV に置くので、本番・ステージングでは KV を1つ作ってから有効にする。
+
+```bash
+npx wrangler kv namespace create OAUTH_KV --config wrangler.production.toml
+# 出てきた id で、wrangler.production.toml に次を足してデプロイ
+# [[kv_namespaces]]
+# binding = "OAUTH_KV"
+# id = "<上の id>"
+```
+
+KV が無いあいだは `/mcp` と `/oauth/*` が 503 を返し、設定画面のカードは「管理者による設定待ち」になる（ほかの機能には影響しない）。
+買い手は設定の「接続とAI」→「Claude と連携」に出る URL（`<APP_ORIGIN>/mcp`）を、claude.ai の「設定 → コネクタ → カスタムコネクタを追加」に貼る。
+
+開発中の確認は MCP Inspector で行う（`npm run dev` で 5173 にログインしてから）:
+
+```bash
+npx @modelcontextprotocol/inspector
+# Transport: Streamable HTTP / URL: http://localhost:8787/mcp → Connect（OAuth の許可画面が開く）
+```
+
+`localhost` で揃えること（`127.0.0.1` だとログインの Cookie が届かない）。
+
 ## 共通URL配布・Googleスプレッドシート連携（2026-09-07）
 
 本番の新しい実行構成は [docs/production-security.md](docs/production-security.md)、Google認証と同期は [docs/google-sheets.md](docs/google-sheets.md) を参照してください。本番では `wrangler.production.toml` を使います。従来の端末保存AIキーは廃止し、設定画面で本人のキーを再登録する方式に変えています。スプシはデータの定期書き出し先で、編集・予約の原本はアプリのD1です。
