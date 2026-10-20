@@ -1,3 +1,4 @@
+import AutoTextarea from "./AutoTextarea";
 /**
  * 本文＋コメント①②③の入力（SPEC §12.3 の Create / Queue の編集で共用）。
  *
@@ -75,10 +76,10 @@ export default function PostFields({
           本文
           <Counter text={draft.body} />
         </span>
-        <textarea
+        <AutoTextarea
           id={`${idPrefix}-body`}
           className="input"
-          rows={6}
+          rows={3}
           autoFocus={autoFocus}
           value={draft.body}
           placeholder="1行目で止まらせる。ここに本文を書きます。"
@@ -92,7 +93,7 @@ export default function PostFields({
             {compact ? `続きの投稿 ${i + 1}` : `コメント${"①②③"[i]}`}
             <Counter text={c} />
           </span>
-          <textarea
+          <AutoTextarea
             id={`${idPrefix}-c${i}`}
             className="input"
             rows={3}

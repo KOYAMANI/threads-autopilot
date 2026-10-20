@@ -17,6 +17,9 @@ export type AuditAction =
   | "login"
   | "logout"
   | "password_reset"
+  | "ai_request"
+  | "ai_error"
+  | "ai_test"
   | "ai_key_change"
   | "ai_key_delete"
   | "google_connect"
@@ -33,7 +36,8 @@ export type AuditAction =
   | "user_delete"
   | "export"
   | "license_issue"
-  | "license_revoke";
+  | "license_revoke"
+  | "plan_change";
 
 /**
  * 1件記録する。**失敗しても呼び出し元の処理は止めない** — 監査の書き込みが

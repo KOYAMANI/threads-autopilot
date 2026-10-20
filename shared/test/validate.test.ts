@@ -4,13 +4,9 @@ import { bodyLength, parseNgWords, validatePost } from "../src/validate";
 const codes = (r: ReturnType<typeof validatePost>) => r.issues.map((i) => i.code);
 
 describe("bodyLength", () => {
-  it("ASCII はコードポイント数とバイト数が一致する", () => {
-    expect(bodyLength("abc")).toBe(3);
-  });
-
   it("絵文字はバイト数（厳しい方）で数える", () => {
-    // "あ" は1コードポイント・3バイト → 厳しい方は3
-    expect(bodyLength("あ")).toBe(3);
+    // 日本語は1文字、絵文字だけAPIのバイト数ルールを適用する
+    expect(bodyLength("あ")).toBe(1);
     expect(bodyLength("🙂")).toBe(4);
   });
 });
@@ -24,7 +20,7 @@ describe("validatePost", () => {
     expect(codes(validatePost("  "))).toContain("BODY_EMPTY");
   });
 
-  it("500文字（バイト換算）超を弾く", () => {
+  it("500文字超を弾く", () => {
     expect(codes(validatePost("a".repeat(501)))).toContain("BODY_TOO_LONG");
     expect(codes(validatePost("a".repeat(500)))).not.toContain("BODY_TOO_LONG");
   });
@@ -83,4 +79,11 @@ describe("parseNgWords", () => {
     expect(parseNgWords("")).toEqual([]);
     expect(parseNgWords(undefined)).toEqual([]);
   });
+});
+
+it("counts Japanese text as characters consistently at the publishing boundary",()=>{
+ expect(bodyLength("あ".repeat(500))).toBe(500);
+ expect(validatePost("あ".repeat(500)).ok).toBe(true);
+ expect(validatePost("あ".repeat(501)).ok).toBe(false);
+ expect(bodyLength("日本語🙂")).toBe(7);
 });

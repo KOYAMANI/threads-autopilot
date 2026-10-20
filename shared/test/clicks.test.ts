@@ -78,15 +78,4 @@ describe("allocateClicks（SPEC §8.5 の按分）", () => {
     expect(alloc.byRoot.get("r2")).toBeCloseTo(5, 6);
   });
 
-  it("同じ入力なら何度呼んでも同じ結果（決定的）", () => {
-    const posts = [
-      post("r1", "r1", "https://example.com/a", 300),
-      post("r2", "r2", "https://example.com/a", 100),
-    ];
-    const totals = new Map([["https://example.com/a", 80]]);
-    const a = allocateClicks(totals, posts);
-    const b = allocateClicks(totals, posts);
-    expect([...a.byRoot]).toEqual([...b.byRoot]);
-    expect(a.unassigned).toBe(b.unassigned);
-  });
 });

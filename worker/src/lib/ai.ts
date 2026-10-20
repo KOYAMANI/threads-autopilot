@@ -7,16 +7,17 @@
  *
  * - 出力は JSON 固定（Gemini: `responseMimeType`、OpenRouter: `response_format`）
  * - ダメなら ```json フェンスを剥がしてパース、それでもダメなら `AI_BAD_OUTPUT`
- * - タイムアウト60秒、1回リトライ
+ * - 全リトライを含め300秒以内
  * - キーの所在: `store_on_server=1` なら DB の `key_enc`、`0` ならリクエストの `clientKey`
  */
 import type { AiCandidate, AiHistoryTurn, AiProvider } from "@tap/shared";
-import { AI_DEFAULT_MODEL } from "@tap/shared";
+import { AI_DEFAULT_MODEL, AI_GENERATION_TIMEOUT_MS, isAllowedAiModel } from "@tap/shared";
+import { thinkingConfig } from "./ai-capabilities";
 import { DEV, type Env } from "../env";
 import type { Budget } from "./budget";
 import { redact } from "./redact";
 
-export const AI_TIMEOUT_MS = 60_000;
+export const AI_TIMEOUT_MS = AI_GENERATION_TIMEOUT_MS;
 /** 失敗時の再試行は1回だけ（SPEC §10.1）。 */
 export const AI_RETRIES = 1;
 
@@ -33,6 +34,9 @@ export const HOOK_TYPES = [
 
 export class AiError extends Error {
   readonly code: "AI_BAD_OUTPUT" | "AI_FAILED" | "AI_KEY_REQUIRED";
+  readonly category: string;
+  readonly reason: string;
+  readonly upstreamStatus?: number;
   readonly raw: string | null;
   readonly retryable: boolean;
   constructor(
@@ -40,11 +44,25 @@ export class AiError extends Error {
     message: string,
     raw: string | null = null,
     retryable = true,
+    category?: string,
+    upstreamStatus?: number,
   ) {
     super(message);
     this.name = "AiError";
     this.code = code;
+    this.reason = message.includes("健康効果の断定") ? "template_health"
+      : message.includes("箇条書き項目数") ? "template_item_count"
+      : message.includes("短文の型") ? "short_validation"
+      : message.includes("素材にない情報") ? "plan_source"
+      : message.includes("構成分析") ? "plan_schema"
+      : message.includes("骨組み") ? "blueprint"
+      : message.includes("候補") ? "candidate_validation"
+      : message.includes("応答が空") ? "empty_response"
+      : message.includes("JSON") ? "json_parse"
+      : "other";
     this.retryable = retryable;
+    this.category = category ?? (code === "AI_BAD_OUTPUT" ? "output_validation" : code === "AI_KEY_REQUIRED" ? "settings" : "unknown");
+    this.upstreamStatus = upstreamStatus;
     this.raw = raw === null ? null : redact(raw).slice(0, 500);
   }
 }
@@ -215,6 +233,8 @@ export function buildRevisePrompt(
 /* ── プロバイダ（SPEC §10.1） ────────────────────────── */
 
 export type AiCallInput = {
+  thinking?: string;
+  responseJsonSchema?: Record<string, unknown>;
   provider: AiProvider;
   model: string;
   apiKey: string;
@@ -232,20 +252,24 @@ const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 /** リクエストの組み立て。テストはここを直接見る。 */
 export function buildRequest(input: AiCallInput): AiRequestPlan {
+  if (!isAllowedAiModel(input.provider, input.model)) throw new AiError("AI_KEY_REQUIRED", "このAI設定は利用できません。ページを再読み込みして設定を保存してください", null, false, "model");
   if (input.provider === "gemini") {
+    let thinking: Record<string,unknown>;
+    try { thinking=thinkingConfig(input.provider,input.model,input.thinking); }
+    catch(error) { throw new AiError("AI_FAILED",(error as Error).message,null,false,"input"); }
     const parts: unknown[] = [{ text: input.user }];
     for (const url of input.youtubeUrls ?? []) {
       parts.push({ file_data: { file_uri: url } });
     }
     return {
-      url: `${GEMINI_BASE}/${encodeURIComponent(input.model)}:generateContent?key=${encodeURIComponent(input.apiKey)}`,
+      url: `${GEMINI_BASE}/${input.model}:generateContent`,
       init: {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-goog-api-key": input.apiKey },
         body: JSON.stringify({
-          systemInstruction: { parts: [{ text: input.system }] },
+          system_instruction: { parts: [{ text: input.system }] },
           contents: [{ role: "user", parts }],
-          generationConfig: { responseMimeType: "application/json", temperature: 0.9 },
+          generationConfig: { maxOutputTokens: 32768, responseMimeType: "application/json", ...thinking, ...(input.responseJsonSchema ? {responseJsonSchema:input.responseJsonSchema} : {}) },
         }),
       },
     };
@@ -263,6 +287,7 @@ export function buildRequest(input: AiCallInput): AiRequestPlan {
       },
       body: JSON.stringify({
         model: input.model,
+        provider: { only: ["amazon-bedrock/us"], order: ["amazon-bedrock/us"], allow_fallbacks: false, require_parameters: true, data_collection: "deny", zdr: true },
         messages: [
           { role: "system", content: input.system },
           { role: "user", content: input.user },
@@ -277,10 +302,12 @@ export function buildRequest(input: AiCallInput): AiRequestPlan {
 /** 応答から本文テキストを取り出す。形が違えば `AI_BAD_OUTPUT`。 */
 export function readResponseText(provider: AiProvider, json: unknown): string {
   if (provider === "gemini") {
-    const parts = (json as { candidates?: Array<{ content?: { parts?: Array<{ text?: unknown }> } }> })
+    const finish=(json as {candidates?:Array<{finishReason?:string}>})?.candidates?.[0]?.finishReason;
+    if(finish==="MAX_TOKENS")throw new AiError("AI_BAD_OUTPUT","出力上限に達し、AIの本文が途中で終了しました",null,true,"output_limit");
+    const parts = (json as { candidates?: Array<{ content?: { parts?: Array<{ text?: unknown; thought?:boolean }> } }> })
       ?.candidates?.[0]?.content?.parts;
     const text = (parts ?? [])
-      .map((p) => (typeof p.text === "string" ? p.text : ""))
+      .map((p) => (!p.thought && typeof p.text === "string" ? p.text : ""))
       .join("")
       .trim();
     if (text === "") {
@@ -297,6 +324,8 @@ export function readResponseText(provider: AiProvider, json: unknown): string {
 }
 
 export type AiCallOptions = {
+  deadlineMs?: number;
+  signal?: AbortSignal;
   budget?: Budget;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
@@ -309,19 +338,55 @@ async function callOnce(
   options: AiCallOptions,
 ): Promise<string> {
   const doFetch = options.fetchImpl ?? fetch;
-  const plan = buildRequest(input);
+  if (!/^[\x21-\x7e]+$/.test(input.apiKey.trim())) throw new AiError("AI_KEY_REQUIRED", "APIキーに空白・改行・全角文字が含まれています。設定からキーだけを入力し直してください", null, false);
+  const plan = buildRequest({...input, apiKey: input.apiKey.trim()});
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? AI_TIMEOUT_MS);
-  options.budget?.subrequests.use();
+  const remaining=Math.min(options.timeoutMs ?? AI_TIMEOUT_MS,(options.deadlineMs ?? Date.now()+AI_TIMEOUT_MS)-Date.now());
+  if(remaining<=0)throw new AiError("AI_FAILED","生成処理が制限時間に達しました。入力は保持しています。",null,false,"timeout");
+  const cancel=()=>controller.abort();
+  options.signal?.addEventListener("abort",cancel,{once:true});
+  if(options.signal?.aborted)controller.abort();
+  const timer = setTimeout(cancel, remaining);
   try {
-    const res = await doFetch(plan.url, { ...plan.init, signal: controller.signal });
+    options.budget?.subrequests.use();
+    if(controller.signal.aborted)throw new DOMException("Cancelled","AbortError");
+    const res = await doFetch(plan.url, { ...plan.init, redirect: "manual", signal: controller.signal });
+    // workerd supports follow/manual only. Never forward credentials to a redirect target.
+    if (res.status >= 300 && res.status < 400) {
+      await res.body?.cancel();
+      throw new AiError("AI_FAILED", "AIサービスが別の接続先を返したため、安全のため通信を停止しました。運営へご連絡ください", null, false);
+    }
     const text = await res.text();
-    if (res.status === 429) throw new AiError("AI_FAILED", "AIサービスの利用制限に達しました。時間を置くか、プロバイダーの利用枠をご確認ください", null, false);
+    if (res.status === 429) {
+      let dailyLimit: string | undefined;
+      try {
+        const error=JSON.parse(text) as {error?:{details?:Array<{violations?:Array<{quotaId?:string;quotaValue?:string}>}>}};
+        const violation=error.error?.details?.flatMap(d=>d.violations??[]).find(v=>/PerDay.*FreeTier/.test(v.quotaId??""));
+        if(violation) dailyLimit=/^\d{1,8}$/.test(violation.quotaValue??"") ? violation.quotaValue : "";
+      } catch { /* use the generic rate-limit message */ }
+      throw new AiError("AI_FAILED", dailyLimit !== undefined
+        ? `Gemini無料枠の1日の上限${dailyLimit ? `（${dailyLimit}回）` : ""}に達しました。Google側で翌日の利用枠が更新されるまで待ってください。同じプロジェクトの接続確認・生成は共通の枠を使います。`
+        : "AIサービスの利用制限に達しました。時間を置くか、プロバイダーの利用枠をご確認ください", null, false, dailyLimit !== undefined ? "daily_quota" : "rate_limit", 429);
+    }
     if (!res.ok) {
+      let invalidKey=false;
+      let requestIssue="";
+      try {
+        const body=JSON.parse(text) as {error?:{message?:string;status?:string;details?:Array<{reason?:string}>}};
+        const message=body.error?.message ?? "";
+        requestIssue=/location|country|region/i.test(message) ? "region" : /schema|minItems|maxItems|items/i.test(message) ? "request_schema" : /API key.*(?:invalid|not valid|expired)/i.test(message) ? "authentication" : /^[A-Z_]{1,40}$/.test(body.error?.status ?? "") ? body.error!.status! : "";
+        invalidKey=body.error?.details?.some(d=>["API_KEY_INVALID","API_KEY_SERVICE_BLOCKED","API_KEY_HTTP_REFERRER_BLOCKED","API_KEY_IP_ADDRESS_BLOCKED"].includes(d.reason ?? "")) ?? false;
+      } catch { /* unknown remains unknown */ }
       throw new AiError(
         "AI_FAILED",
-        `AIの呼び出しに失敗しました（${res.status}）`,
-        text.slice(0, 500),
+        (invalidKey || requestIssue === "authentication") || res.status === 401 || res.status === 403 ? "AIサービスが認証・権限を拒否しました。キーの制限とプロジェクトのアクセス権をご確認ください。"
+          : requestIssue === "region" ? "AIサービスがアプリの接続元地域を受け付けませんでした。キー不正とは限りません。運営へ診断情報をお知らせください。"
+          : requestIssue === "request_schema" ? "アプリが指定した生成形式をAIサービスが受け付けませんでした。運営へ診断情報をお知らせください。"
+          : res.status === 404 ? "AIサービスで使用中のモデルを利用できません。診断情報を運営に共有してください。"
+          : res.status >= 500 ? `AIサービスで一時的なエラーが発生しました（HTTP ${res.status}）。入力は保持しています。少し待って再試行してください。`
+          : `AIサービスがリクエストを受け付けませんでした（HTTP ${res.status}）。設定またはサービスの状態をご確認ください。`,
+        null, res.status >= 500,
+        (invalidKey || requestIssue === "authentication") || res.status === 401 || res.status === 403 ? "authentication" : res.status === 404 ? "model" : requestIssue || "unknown", res.status,
       );
     }
     let json: unknown;
@@ -337,20 +402,22 @@ async function callOnce(
     throw new AiError(
       "AI_FAILED",
       aborted
-        ? "AIの応答が60秒以内に返りませんでした。もう一度お試しください"
-        : "AIの呼び出しに失敗しました。キーとモデル名をご確認ください",
-      e instanceof Error ? e.message : String(e),
+        ? (options.signal?.aborted ? "生成を中止しました。入力は保持しています。" : "生成処理が制限時間に達しました。入力は保持しています。")
+        : "AIサービスとの通信に失敗しました。時間を置いて再試行し、続く場合は運営へご連絡ください",
+      null, !aborted, aborted ? (options.signal?.aborted ? "cancelled" : "timeout") : "network",
     );
   } finally {
     clearTimeout(timer);
+    options.signal?.removeEventListener("abort",cancel);
   }
 }
 
 /**
- * 生の応答テキストを返す。タイムアウト60秒・1回リトライ（SPEC §10.1）。
+ * 生の応答テキストを返す。全リトライを含め300秒以内。
  * `AI_BAD_OUTPUT`（応答の形が違う）も1回だけ引き直す。
  */
 export async function callAi(input: AiCallInput, options: AiCallOptions = {}): Promise<string> {
+  options={...options,deadlineMs:options.deadlineMs ?? Date.now()+(options.timeoutMs ?? AI_TIMEOUT_MS)};
   const retries = options.retries ?? AI_RETRIES;
   let last: AiError | null = null;
   for (let attempt = 0; attempt <= retries; attempt++) {

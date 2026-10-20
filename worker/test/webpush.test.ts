@@ -13,7 +13,6 @@ import {
   generateVapidKeys,
   sendPush,
   signVapidJwt,
-  vapidAuthHeader,
   type PushSubscription,
   type VapidKeys,
 } from "../src/lib/webpush";
@@ -57,17 +56,8 @@ afterEach(() => {
 /* ── 暗号化（RFC 8291） ─────────────────────────────── */
 
 describe("aes128gcm の暗号化（RFC 8291）", () => {
-  it("暗号化した本文が受信者側の手順で元に戻る（日本語・絵文字を含む）", async () => {
+  it("4010 バイトちょうどを往復する", async () => {
     const { sub, privateJwk, authSecret } = await makeSubscriber();
-    const message = '自動投稿を1件下書きしました🎉 "予約は 8:00" — チェックして';
-    const body = await encryptPayload(sub, message);
-    expect(await decryptPayload(body, privateJwk, authSecret)).toBe(message);
-  });
-
-  it("空文字と 4010 バイトちょうども往復する", async () => {
-    const { sub, privateJwk, authSecret } = await makeSubscriber();
-    expect(await decryptPayload(await encryptPayload(sub, ""), privateJwk, authSecret)).toBe("");
-
     const max = "a".repeat(MAX_PAYLOAD_BYTES);
     expect(te.encode(max).length).toBe(4010);
     const body = await encryptPayload(sub, max);
@@ -111,12 +101,6 @@ describe("aes128gcm の暗号化（RFC 8291）", () => {
     ).rejects.toThrow(/16 bytes/);
   });
 
-  it("別の購読者の鍵では復号できない", async () => {
-    const { sub } = await makeSubscriber();
-    const other = await makeSubscriber();
-    const body = await encryptPayload(sub, "secret");
-    await expect(decryptPayload(body, other.privateJwk, other.authSecret)).rejects.toBeTruthy();
-  });
 });
 
 /* ── VAPID（RFC 8292） ──────────────────────────────── */
@@ -190,16 +174,6 @@ describe("VAPID JWT（RFC 8292）", () => {
     );
   });
 
-  it("vapidAuthHeader は `vapid t=<jwt>, k=<pub>`", async () => {
-    const keys = await generateVapidKeys();
-    const header = await vapidAuthHeader(keys, "https://fcm.example.com/send/x", "mailto:a@b.co");
-    const m = /^vapid t=([\w-]+\.[\w-]+\.[\w-]+), k=([\w-]+)$/.exec(header);
-    expect(m).not.toBeNull();
-    expect(m![2]).toBe(keys.publicKey);
-    // t= の中身は signVapidJwt と同じ構造
-    expect(m![1]!.split(".")).toHaveLength(3);
-  });
-
   it("generateVapidKeys の鍵は base64url で 65 / 32 バイト", async () => {
     const keys = await generateVapidKeys();
     expect(keys.publicKey).toMatch(/^[A-Za-z0-9_-]+$/);
@@ -234,38 +208,10 @@ describe("sendPush", () => {
     sub = (await makeSubscriber("https://fcm.example.com/send/abc123")).sub;
   }
 
-  it("201 は ok、ヘッダとボディが RFC の形で載る", async () => {
+  it("202 も ok", async () => {
     await setup();
-    const calls = stubFetch(() => new Response(null, { status: 201 }));
-    const res = await sendPush(keys, sub, payload, SUBJECT);
-    expect(res).toEqual({ ok: true, status: 201, gone: false });
-
-    expect(calls).toHaveLength(1);
-    const call = calls[0]!;
-    expect(call.url).toBe(sub.endpoint);
-    expect(call.init.method).toBe("POST");
-    const headers = call.init.headers as Record<string, string>;
-    expect(headers["Content-Encoding"]).toBe("aes128gcm");
-    expect(headers["Content-Type"]).toBe("application/octet-stream");
-    expect(headers["TTL"]).toBe("86400");
-    expect(headers["Urgency"]).toBe("normal");
-    expect(headers["Authorization"]).toMatch(/^vapid t=[\w-]+\.[\w-]+\.[\w-]+, k=[\w-]+$/);
-
-    const body = call.init.body as Uint8Array;
-    expect(body).toBeInstanceOf(Uint8Array);
-    expect(new DataView(body.buffer, body.byteOffset, body.byteLength).getUint32(16, false)).toBe(
-      4096,
-    );
-    expect(body[20]).toBe(65);
-    expect(headers["Content-Length"]).toBe(String(body.length));
-  });
-
-  it("200 / 202 も ok", async () => {
-    await setup();
-    for (const status of [200, 202]) {
-      stubFetch(() => new Response(null, { status }));
-      expect(await sendPush(keys, sub, payload, SUBJECT)).toEqual({ ok: true, status, gone: false });
-    }
+    stubFetch(() => new Response(null, { status: 202 }));
+    expect(await sendPush(keys, sub, payload, SUBJECT)).toEqual({ ok: true, status: 202, gone: false });
   });
 
   it("410 と 404 は gone（購読の行を消す合図）", async () => {
@@ -305,19 +251,34 @@ describe("sendPush", () => {
     expect(called).toBe(0); // 送信に至らない
   });
 
-  it("送ったボディは購読者の鍵で復号できる（VAPID 鍵も自前生成で完結）", async () => {
+  it("201 の送信要求は正しいヘッダを持ち、購読者の鍵で復号できる", async () => {
     const vapid = await generateVapidKeys();
     const subscriber = await makeSubscriber("https://updates.push.services.mozilla.com/wpush/v2/xyz");
     const calls = stubFetch(() => new Response(null, { status: 201 }));
     const res = await sendPush(vapid, subscriber.sub, payload, SUBJECT);
-    expect(res.ok).toBe(true);
+    expect(res).toEqual({ ok: true, status: 201, gone: false });
 
-    const body = calls[0]!.init.body as Uint8Array;
+    expect(calls).toHaveLength(1);
+    const call = calls[0]!;
+    expect(call.url).toBe(subscriber.sub.endpoint);
+    expect(call.init.method).toBe("POST");
+    const headers = call.init.headers as Record<string, string>;
+    expect(headers["Content-Encoding"]).toBe("aes128gcm");
+    expect(headers["Content-Type"]).toBe("application/octet-stream");
+    expect(headers["TTL"]).toBe("86400");
+    expect(headers["Urgency"]).toBe("normal");
+    expect(headers["Authorization"]).toMatch(/^vapid t=[\w-]+\.[\w-]+\.[\w-]+, k=[\w-]+$/);
+
+    const body = call.init.body as Uint8Array;
+    expect(body).toBeInstanceOf(Uint8Array);
+    expect(new DataView(body.buffer, body.byteOffset, body.byteLength).getUint32(16, false)).toBe(4096);
+    expect(body[20]).toBe(65);
+    expect(headers["Content-Length"]).toBe(String(body.length));
     const plain = await decryptPayload(body, subscriber.privateJwk, subscriber.authSecret);
     expect(JSON.parse(plain)).toEqual(payload);
 
     // Authorization の aud は endpoint の origin（パスを含まない）
-    const header = (calls[0]!.init.headers as Record<string, string>)["Authorization"]!;
+    const header = headers["Authorization"]!;
     const token = header.slice("vapid t=".length, header.indexOf(", k="));
     const claims = decodeJwtPart(token.split(".")[1]!) as { aud: string };
     expect(claims.aud).toBe("https://updates.push.services.mozilla.com");

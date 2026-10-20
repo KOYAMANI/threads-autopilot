@@ -15,9 +15,11 @@ import { apNotifyJob } from "./notify";
 import { apScoreJob } from "./score";
 import { sheetsSyncJob } from "./sheets";
 import { dailyDigestJob } from "./digest";
+import { aiGenerateJob } from "./ai-generate";
 
 export const HANDLERS: Partial<Record<JobType, JobHandler>> = {
   publish: publishJob,
+  ai_generate: aiGenerateJob,
   sheets_sync: sheetsSyncJob,
   full_sync: fullSyncJob,
   insights_recent: insightsJob("recent"),

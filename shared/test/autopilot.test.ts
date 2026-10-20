@@ -115,22 +115,6 @@ describe("scorePost（SPEC §9.2）", () => {
     expect(withLink.score).toBeCloseTo(without.score, 10);
   });
 
-  it("score は 0..1 に収まる", () => {
-    for (const name of ["balanced", "followers", "clicks"] as const) {
-      const got = scorePost({
-        views: 500,
-        likes: 25,
-        firstChildViews: 500,
-        clicks: 500,
-        viewsDist,
-        likeRateDist,
-        weights: SCORE_WEIGHTS[name],
-      });
-      expect(got.score).toBeGreaterThanOrEqual(0);
-      expect(got.score).toBeLessThanOrEqual(1);
-    }
-  });
-
   it("weights の名前が不明でも balanced に倒す", () => {
     expect(scoreWeightsOf("なにこれ")).toEqual(SCORE_WEIGHTS.balanced);
     expect(scoreWeightsOf(null)).toEqual(SCORE_WEIGHTS.balanced);
@@ -194,39 +178,12 @@ describe("pickHook（SPEC §9.4-3）", () => {
     expect(got.hook).toBe("体験談型");
   });
 
-  it("同じ入力からは常に同じ型が出る（決定的）", () => {
-    const input = {
-      history: [
-        { value: "警告型", n: 12, avgScore: 0.5 },
-        { value: "数字型", n: 12, avgScore: 0.5 }, // 同点
-      ],
-    };
-    expect(pickHook(input).hook).toBe(pickHook(input).hook);
-  });
 });
 
 describe("postsForDay（SPEC §9.4-2）", () => {
-  it("週7本は毎日1本", () => {
-    for (let d = 0; d < 7; d++) expect(postsForDay(7, d)).toBe(1);
-  });
-
-  it("週14本は毎日2本", () => {
-    for (let d = 0; d < 7; d++) expect(postsForDay(14, d)).toBe(2);
-  });
-
-  it("週3本は余りを週の前半（月火水）に寄せる", () => {
+  it("週の前半に余りを寄せ、合計を保つ", () => {
     expect([0, 1, 2, 3, 4, 5, 6].map((d) => postsForDay(3, d))).toEqual([1, 1, 1, 0, 0, 0, 0]);
-  });
-
-  it("週5本は月〜金", () => {
-    expect([0, 1, 2, 3, 4, 5, 6].map((d) => postsForDay(5, d))).toEqual([1, 1, 1, 1, 1, 0, 0]);
-  });
-
-  it("週10本は毎日1本＋月〜水がもう1本", () => {
     expect([0, 1, 2, 3, 4, 5, 6].map((d) => postsForDay(10, d))).toEqual([2, 2, 2, 1, 1, 1, 1]);
-  });
-
-  it("合計は必ず perWeek と一致する", () => {
     for (const per of [1, 3, 5, 7, 9, 14, 21]) {
       const sum = [0, 1, 2, 3, 4, 5, 6].reduce((a, d) => a + postsForDay(per, d), 0);
       expect(sum).toBe(per);

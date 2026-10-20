@@ -7,7 +7,7 @@ import * as threads from '../src/lib/threads';
 import worker from '../src/index';
 import type { Env } from '../src/env';
 
-afterEach(()=>vi.restoreAllMocks());
+afterEach(()=>{ vi.useRealTimers(); vi.restoreAllMocks(); });
 const queue = () => ({sendBatch:vi.fn().mockResolvedValue(undefined),send:vi.fn().mockResolvedValue(undefined)});
 describe('initial analytics ingestion',()=>{
   it('immediately dispatches this account’s complete initial data jobs within the free budget',async()=>{
@@ -37,12 +37,38 @@ describe('initial analytics ingestion',()=>{
     const status=await api('GET',`/api/accounts/${accountId}/sync`,{cookie:u.cookie});
     expect(status.body.data).toMatchObject({running:false,status:'failed',progress:2,posts:0});expect(status.body.data.message).toBeTruthy();
   });
+  it('distinguishes clicks still syncing from a fetched zero',async()=>{
+    const u=await registerUser();const accountId=await insertAccount({userId:u.userId});
+    const ctx=jobs.makeJobContext(env);
+    await jobs.enqueueJob(ctx,'clicks',{accountId});
+
+    const pending=await api('GET',`/api/accounts/${accountId}/sync`,{cookie:u.cookie});
+    expect(pending.body.data.clicks).toMatchObject({state:'syncing',refreshing:false});
+    expect(pending.body.data.clicks.message).toContain('取り込んでいます');
+
+    await testDb().run("UPDATE jobs SET status='done',updated_at=? WHERE account_id=? AND type='clicks'",'2026-09-11T06:04:10.623Z',accountId);
+    const fetchedZero=await api('GET',`/api/accounts/${accountId}/sync`,{cookie:u.cookie});
+    expect(fetchedZero.body.data.clicks).toMatchObject({state:'ready',refreshing:false,lastSyncedAt:'2026-09-11T06:04:10.623Z'});
+    expect(fetchedZero.body.data.clicks.message).toContain('0件');
+  });
+  it('keeps a previous click snapshot visible while refreshing',async()=>{
+    const u=await registerUser();const accountId=await insertAccount({userId:u.userId});
+    const ctx=jobs.makeJobContext(env);
+    await jobs.enqueueJob(ctx,'clicks',{accountId});
+    await testDb().run("UPDATE jobs SET status='done',updated_at=? WHERE account_id=? AND type='clicks'",'2026-09-10T00:00:00.000Z',accountId);
+    await jobs.enqueueJob(ctx,'clicks',{accountId,force:true});
+
+    const status=await api('GET',`/api/accounts/${accountId}/sync`,{cookie:u.cookie});
+    expect(status.body.data.clicks).toMatchObject({state:'ready',refreshing:true,lastSyncedAt:'2026-09-10T00:00:00.000Z'});
+  });
   it('initial sync populates account analytics and schedules post insights before the next cron',async()=>{
+    // The mock feed is dated September 1; freeze Date only so real async timers still run.
+    vi.useFakeTimers({toFake:['Date']}); vi.setSystemTime(new Date('2026-09-06T00:00:00.000Z'));
     const u=await registerUser();const accountId=await insertAccount({userId:u.userId});
     const ctx=jobs.makeJobContext(env);
     await jobs.enqueueAccountSync(ctx,accountId);await jobs.runJobs(ctx);
     const status=await api('GET',`/api/accounts/${accountId}/sync`,{cookie:u.cookie});
-    expect(status.body.data.status).toBe('done');expect(status.body.data.posts).toBeGreaterThan(0);
+    expect(status.body.data.status).toBe('done');expect(status.body.data.posts).toBeGreaterThan(0);expect(status.body.data.clicks.state).toBe('ready');
     const result=await api('GET',`/api/accounts/${accountId}/dashboard?period=30`,{cookie:u.cookie});
     expect(result.body.data.followers.current).toBeGreaterThan(0);
     expect(result.body.data.views.series.length).toBeGreaterThan(0);
@@ -60,6 +86,12 @@ describe('initial analytics ingestion',()=>{
     const q=queue(),ack=vi.fn(),retry=vi.fn();
     for(let i=0;i<6;i++) await worker.queue({messages:[{body:{jobId:'same-import'},ack,retry}]} as unknown as MessageBatch<{jobId:string}>,{...env,WORKERS_PLAN:'free',JOB_QUEUE:q} as unknown as Env);
     expect(q.send).toHaveBeenCalledTimes(6);expect(ack).toHaveBeenCalledTimes(6);expect(retry).not.toHaveBeenCalled();
+  });
+  it('scheduled job retry sends a fresh delayed queue message',async()=>{
+    vi.spyOn(jobs,'runJobs').mockResolvedValue({processed:1,done:0,deferred:0,failed:1,exhausted:false,retryDelaySeconds:120});
+    const q=queue(),ack=vi.fn(),retry=vi.fn();
+    await worker.queue({messages:[{body:{jobId:'retry-job'},ack,retry}]} as unknown as MessageBatch<{jobId:string}>,{...env,WORKERS_PLAN:'free',JOB_QUEUE:q} as unknown as Env);
+    expect(q.send).toHaveBeenCalledWith({jobId:'retry-job'},{delaySeconds:120});expect(ack).toHaveBeenCalledOnce();expect(retry).not.toHaveBeenCalled();
   });
 });
 

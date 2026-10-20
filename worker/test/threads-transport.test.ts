@@ -32,4 +32,16 @@ describe("Threads credential transport", () => {
     expect(new URL(String(url)).searchParams.get("access_token")).toBe("test-private-token");
     expect(new Headers(options?.headers).has("Authorization")).toBe(false);
   });
+  it("rejects redirects without forwarding tokens or exposing the redirect URL", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, {
+      status: 302, headers: { Location: "https://attacker.example/?token=private-marker" },
+    }));
+    await expect(call("test-private-token", "GET", "/access_token", {client_secret:"private-secret"}, {env,budget:createBudget()}))
+      .rejects.toMatchObject({code:302,raw:"",message:"Threads API redirect rejected"});
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [url, options] = fetch.mock.calls[0]!;
+    expect(() => new Request(String(url), options)).not.toThrow();
+    expect(options?.redirect).toBe("manual");
+  });
+
 });

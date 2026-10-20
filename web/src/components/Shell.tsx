@@ -1,10 +1,12 @@
+import EnvironmentNotice from "./EnvironmentNotice";
+import AccountAvatar from "./AccountAvatar";
 /**
  * アプリの外枠（SPEC §12.2）。TopBar / ApBar / 本文 / Tabs / Drawer。
  *
  * タブの切り替えは cross-fade ＋ 軽い transform。待ち時間を作らないため、
  * 前の画面の退場アニメーションは挟まない（apple-design §1「kill latency」）。
  */
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate, useOutletContext } from "react-router-dom";
 import { motion } from "motion/react";
 import type { AccountSummary } from "@tap/shared";
@@ -15,10 +17,13 @@ import AccountList from "./AccountList";
 import Drawer from "./Drawer";
 import Tabs, { TABS } from "./Tabs";
 import TopBar from "./TopBar";
+import { selectCreateAccount, useSelectedCreateAccount } from "../lib/create-session";
+import { resumeGenerationTask } from "../lib/generation-task";
 
 export type ShellContext = {
   account: AccountSummary | null;
   accounts: AccountSummary[];
+  setAccountId: (id: string) => void;
 };
 
 export function useShell(): ShellContext {
@@ -32,11 +37,15 @@ export default function Shell() {
   const logout = useLogout();
   const reduced = useReducedMotion();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  useEffect(() => { void resumeGenerationTask(); }, []);
 
   const accounts = data?.accounts ?? [];
   const { active, setActiveId } = useActiveAccount(accounts);
 
-  const context: ShellContext = { account: active, accounts };
+  const createSessionAccount = useSelectedCreateAccount();
+  useLayoutEffect(() => selectCreateAccount(active?.id ?? null), [active?.id]);
+
+  const context: ShellContext = { account: active, accounts, setAccountId: setActiveId };
 
   return (
     <div className="app-shell">
@@ -55,10 +64,11 @@ export default function Shell() {
         animate={reduced ? { opacity: 1 } : { opacity: 1, y: 0 }}
         transition={reduced ? CROSSFADE : SPRING}
       >
-        <Outlet context={context} />
+        <EnvironmentNotice />
+        {createSessionAccount === (active?.id ?? null) && <Outlet context={context} />}
       </motion.main>
 
-      <Tabs account={active} onAccount={() => setDrawerOpen(true)} email={data?.user.email} onLogout={() => logout.mutate()} />
+      <Tabs account={active} accountLimit={data?.entitlement.accountLimit ?? 1} onAccount={() => setDrawerOpen(true)} email={data?.user.email} onLogout={() => logout.mutate()} />
 
       <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} labelledBy="drawer-title">
         <h2 id="drawer-title" style={{ padding: "var(--sp)" }}>

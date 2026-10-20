@@ -117,7 +117,7 @@ describe("autopilot shutdown", () => {
   });
   it("does not enqueue an AI result after AP was turned off during planning", async () => {
     const f = await fixture();
-    await api("PUT", "/api/ai/settings", { cookie: f.cookie, body: { provider: "gemini", key: "AIzaTESTKEY0123456789", storeOnServer: true } });
+    await api("PUT", "/api/ai/settings", { cookie: f.cookie, body: { acceptDataPolicy: true, geminiBillingConfirmed: true, provider: "gemini", key: "AIzaTESTKEY0123456789", storeOnServer: true } });
     await api("POST", "/api/sources", { cookie: f.cookie, body: { type: "text", title: "使う参考情報", content: "本文の材料" } });
     await api("PUT", `${f.base}/autopilot`, { cookie: f.cookie, body: { enabled: true, dailyLimit: 1, approvalMode: "auto", linkPlacement: "none" } });
     const db = raceAfterRead((s) => s.includes("FROM sources") && s.includes("enabled_for_ap=1"), () => testDb().run("UPDATE autopilot SET enabled=0 WHERE account_id=?", f.accountId));

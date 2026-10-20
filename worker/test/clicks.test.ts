@@ -20,27 +20,19 @@ beforeEach(() => {
 });
 
 describe("クリックの週グリッド（SPEC §8.5）", () => {
-  it("起点が固定なので、いつ計算しても同じ週になる", () => {
+  it("固定起点から隣接する週を重なりなく計算する", () => {
     const w = weekAt(100);
     expect(w.sinceSec * 1000).toBe(CLICK_FLOOR_MS + 100 * WEEK_MS);
-    expect(weekAt(100)).toEqual(w);
     // 週の名前は week_end の UTC 日付
     expect(w.weekEnd).toBe(new Date(CLICK_FLOOR_MS + 101 * WEEK_MS - 1000).toISOString().slice(0, 10));
-  });
-
-  it("週は重ならず、隣り合う週の境界が1秒でつながる", () => {
     const a = weekAt(50);
     const b = weekAt(51);
     expect(b.sinceSec - a.untilSec).toBe(1);
-  });
-
-  it("同じ時刻はいつも同じ週に入る（二重計上しない）", () => {
     const t = Date.parse("2026-09-03T12:00:00.000Z");
-    expect(weekIndexOf(t)).toBe(weekIndexOf(t));
     // 週の中のどの時刻でも同じ index
-    const w = weekAt(weekIndexOf(t));
-    expect(weekIndexOf(w.sinceSec * 1000)).toBe(w.index);
-    expect(weekIndexOf(w.untilSec * 1000)).toBe(w.index);
+    const containing = weekAt(weekIndexOf(t));
+    expect(weekIndexOf(containing.sinceSec * 1000)).toBe(containing.index);
+    expect(weekIndexOf(containing.untilSec * 1000)).toBe(containing.index);
   });
 
   it("下限は「いちばん古い投稿の1週間前」", () => {

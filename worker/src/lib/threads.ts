@@ -5,6 +5,8 @@
  * ステップの組み立ては `jobs/publish.ts`（SPEC §8.3）。
  */
 import { DEV, type Env } from "../env";
+import { publishingEnabledForUser, canPublishForAccount } from "./staging-beta-policy";
+import { createDb } from "./db";
 import type { Budget } from "./budget";
 import { redact } from "./redact";
 import {
@@ -35,6 +37,9 @@ export type ThreadsParams = Record<string, string | number | boolean | undefined
 export type CallOptions = {
   budget: Budget;
   env: Env;
+  /** Set only by the account-owned publishing job; never read from request input. */
+  publishingUserId?: string;
+  publishingThreadsUserId?: string;
   /** テストで時刻・待機を差し替えるための注入点 */
   now?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -80,11 +85,19 @@ export async function call(
   options: CallOptions,
 ): Promise<unknown> {
   const { budget, env } = options;
-  // Staging cannot publish, repost, or delete even if a real token is accidentally configured.
-  if (env.APP_ENV === "staging" && method !== "GET") {
-    throw new ThreadsApiError({code:403, message:"ステージングではThreadsへの投稿操作を停止しています", raw:""});
-  }
   const p = path.startsWith("/") ? path : `/${path}`;
+  if (env.APP_ENV === "staging" && method !== "GET") {
+    const publishingDb = createDb(env.DB, budget);
+    if (!await publishingEnabledForUser(env, publishingDb, options.publishingUserId, options.now ?? Date.now())
+      || method !== "POST" || !["/me/threads", "/me/threads_publish"].includes(p)) {
+      throw new ThreadsApiError({code:403, message:"このログインまたは操作には投稿権限がありません", raw:""});
+    }
+    // Verify the actual token owner immediately before each irreversible request.
+    const identity = await call(token, "GET", "/me", {fields:"id"}, options) as {id?:string};
+    if (!identity.id || (options.publishingThreadsUserId && identity.id !== options.publishingThreadsUserId) || !await canPublishForAccount(env, publishingDb, options.publishingUserId!, identity.id, options.now ?? Date.now())) {
+      throw new ThreadsApiError({code:403, message:"接続アカウントの所有者またはトークンが一致しないため投稿を停止しました", raw:""});
+    }
+  }
 
   // `__DEV__` は esbuild の define で置き換わるビルド時定数（worker/src/globals.d.ts）。
   // ここは **識別子を直接** 書く。別モジュールの定数（env.ts の DEV）や shouldUseMock()
@@ -113,12 +126,12 @@ export async function call(
     const headers: HeadersInit = tokenEndpoint ? {} : { Authorization: `Bearer ${token}` };
     const remainingMs = Math.max(1, Math.min(15000, budget.timeMs.limit - budget.timeMs.elapsed));
     budget.timeMs.check();
-    // Never follow a redirect: it would carry the bearer token to another host.
-    // Workers rejects redirect:"error" ("follow" | "manual" only), so take the
-    // 3xx back with "manual" and fail it here instead.
     const res = await fetch(url, { method, headers, redirect: "manual", signal: AbortSignal.timeout(remainingMs) });
+    // Never forward credentials to a redirect target. Workers can return the
+    // redirect response in manual mode, which also gives a safe numeric diagnosis.
     if (res.status >= 300 && res.status < 400) {
-      throw new ThreadsApiError({ code: res.status, message: "Threads API がリダイレクトを返しました", raw: "" });
+      await res.body?.cancel();
+      throw new ThreadsApiError({ code: res.status, message: "Threads API redirect rejected", raw: "" });
     }
     const bodyText = await res.text();
 
@@ -167,6 +180,8 @@ export type ThreadsMedia = {
   permalink?: string;
   timestamp?: string;
   is_reply?: boolean;
+  username?: string;
+  is_reply_owned_by_me?: boolean;
   replied_to?: { id?: string } | null;
   root_post?: { id?: string } | null;
   has_replies?: boolean;
@@ -458,6 +473,37 @@ export async function createImageContainer(
   options: CallOptions,
 ): Promise<{ id: string }> {
   const params: ThreadsParams = { media_type: "IMAGE", image_url: imageUrl, text };
+  if (create.replyToId) params.reply_to_id = create.replyToId;
+  if (create.replyControl) params.reply_control = create.replyControl;
+  return (await call(token, "POST", "/me/threads", params, options)) as { id: string };
+}
+
+/** カルーセル用の子画像コンテナ。子には本文を持たせず、親にだけ本文を設定する。 */
+export async function createCarouselImageItem(
+  token: string,
+  imageUrl: string,
+  options: CallOptions,
+): Promise<{ id: string }> {
+  return (await call(token, "POST", "/me/threads", {
+    media_type: "IMAGE",
+    image_url: imageUrl,
+    is_carousel_item: true,
+  }, options)) as { id: string };
+}
+
+/** 作成済みの子コンテナを束ねたカルーセル親コンテナを作る。 */
+export async function createCarouselContainer(
+  token: string,
+  childIds: string[],
+  text: string,
+  create: Omit<CreateTextOptions, "autoPublish">,
+  options: CallOptions,
+): Promise<{ id: string }> {
+  const params: ThreadsParams = {
+    media_type: "CAROUSEL",
+    children: childIds.join(","),
+    text,
+  };
   if (create.replyToId) params.reply_to_id = create.replyToId;
   if (create.replyControl) params.reply_control = create.replyControl;
   return (await call(token, "POST", "/me/threads", params, options)) as { id: string };

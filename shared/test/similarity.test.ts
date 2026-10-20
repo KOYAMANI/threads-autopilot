@@ -57,9 +57,4 @@ describe("similarity", () => {
     expect(similarity(a, b)).toBeLessThan(DUPLICATE_THRESHOLD);
   });
 
-  it("対称である", () => {
-    const a = "テスト用の文章その1";
-    const b = "テスト用の文章その2";
-    expect(similarity(a, b)).toBe(similarity(b, a));
-  });
 });

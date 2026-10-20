@@ -1,3 +1,4 @@
+import { publishingEnabledForUser } from "../lib/staging-beta-policy";
 /**
  * 認証（SPEC §5.1 / §5.3 / §5.4 / §7）。
  * register / login / logout / me / forgot / reset。
@@ -8,14 +9,17 @@ import type {
   AiSettingsSummary,
   MeResponse,
   NotificationSettings,
+  UserEntitlement,
+  UserProfile,
   UserSummary,
 } from "@tap/shared";
-import { ok } from "@tap/shared";
+import { AI_DEFAULT_MODEL, isAllowedAiModel, ok } from "@tap/shared";
 import { fail, type AppEnv } from "../app";
-import { ACCOUNT_COLUMNS, ACCOUNT_ORDER_BY, toAccountSummary, type AccountRow } from "../lib/accounts";
+import { ACCOUNT_COLUMNS, ACCOUNT_ORDER_BY, effectiveAccountLimit, toAccountSummary, type AccountRow } from "../lib/accounts";
 import { audit } from "../lib/audit";
 import type { Db } from "../lib/db";
 import { hashPassword, passwordHashNeedsUpgrade, sha256Hex, upgradeLegacyPasswordHash, verifyPassword } from "../lib/crypto";
+import { canPublishForUser } from "../lib/staging-review-policy";
 import { sendEmail } from "../lib/email";
 import {
   clearSessionCookie,
@@ -56,7 +60,7 @@ const passwordSchema = z.string().min(PASSWORD_MIN).max(200);
 const registerSchema = z.object({
   email: emailSchema,
   password: passwordSchema,
-  license_key: z.string().trim().min(1).max(64),
+  license_key: z.string().trim().min(1).max(64).optional(),
 });
 const loginSchema = z.object({ email: emailSchema, password: z.string().min(1).max(200) });
 const forgotSchema = z.object({ email: emailSchema });
@@ -109,20 +113,24 @@ async function readJson<T>(c: { req: { json: () => Promise<unknown> } }): Promis
 }
 
 /** GET /me が返す全体（SPEC §7）。M1 時点で accounts は常に空になりうる。 */
-async function buildMe(db: Db, userId: string): Promise<MeResponse | null> {
+async function buildMe(db: Db, userId: string, adminUserId?: string): Promise<MeResponse | null> {
   const user = await db.first<UserRow>(
     "SELECT id, email, pass_hash, pass_salt, license_id, created_at, last_login_at FROM users WHERE id=?",
     userId,
   );
   if (!user) return null;
 
-  const accountRows = await db.all<AccountRow & { ap_enabled: number | null }>(
-    `SELECT ${ACCOUNT_COLUMNS.split(", ").map(column => `a.${column}`).join(", ")}, ap.enabled AS ap_enabled
+  const accountRows = await db.all<AccountRow & { ap_enabled: number | null; pending_approval_count: number }>(
+    `SELECT ${ACCOUNT_COLUMNS.split(", ").map(column => `a.${column}`).join(", ")}, ap.enabled AS ap_enabled,
+        (SELECT COUNT(*) FROM queue q WHERE q.account_id=a.id AND q.status='pending_approval') AS pending_approval_count
        FROM accounts a LEFT JOIN autopilot ap ON ap.account_id = a.id
       WHERE a.user_id=? ORDER BY ${ACCOUNT_ORDER_BY}`,
     userId,
   );
-  const accounts = accountRows.map(account => toAccountSummary(account, { autopilotEnabled: Boolean(account.ap_enabled) }));
+  const accounts = accountRows.map(account => toAccountSummary(account, {
+    autopilotEnabled: Boolean(account.ap_enabled),
+    pendingApprovalCount: account.pending_approval_count,
+  }));
 
   const aiRow = await db.first<{
     provider: string;
@@ -134,7 +142,7 @@ async function buildMe(db: Db, userId: string): Promise<MeResponse | null> {
   const ai: AiSettingsSummary = aiRow
     ? {
         provider: aiRow.provider as AiSettingsSummary["provider"],
-        model: aiRow.model,
+        model: isAllowedAiModel(aiRow.provider, aiRow.model) ? aiRow.model : AI_DEFAULT_MODEL[aiRow.provider as keyof typeof AI_DEFAULT_MODEL],
         hasKey: Boolean(aiRow.key_enc),
         storeOnServer: Boolean(aiRow.store_on_server),
       }
@@ -154,11 +162,48 @@ async function buildMe(db: Db, userId: string): Promise<MeResponse | null> {
       }
     : { emailEnabled: true, pushEnabled: false, digestHour: 8 };
 
-  return { user: toUserSummary(user), accounts, ai, notifications };
+  const entitlementRow = await db.first<{
+    plan_code: string;
+    account_limit: number;
+    ai_advice_enabled: number;
+    platform_ai_enabled: number;
+  }>("SELECT plan_code, account_limit, ai_advice_enabled, platform_ai_enabled FROM user_entitlements WHERE user_id=?", userId);
+  const isAdmin = Boolean(adminUserId?.trim() && userId === adminUserId.trim());
+  const entitlement: UserEntitlement = entitlementRow ? {
+    plan: entitlementRow.plan_code as UserEntitlement["plan"],
+    accountLimit: effectiveAccountLimit(userId, adminUserId, entitlementRow.account_limit),
+    aiAdviceEnabled: Boolean(entitlementRow.ai_advice_enabled),
+    platformAiEnabled: Boolean(entitlementRow.platform_ai_enabled),
+  } : {
+    plan: "free",
+    accountLimit: effectiveAccountLimit(userId, adminUserId, 1),
+    aiAdviceEnabled: false,
+    platformAiEnabled: false,
+  };
+
+  const profileRow = await db.first<{
+    goal: string | null;
+    activity: string;
+    audience: string;
+    onboarding_completed: number;
+  }>("SELECT goal, activity, audience, onboarding_completed FROM user_profiles WHERE user_id=?", userId);
+  const profile: UserProfile = profileRow ? {
+    goal: profileRow.goal as UserProfile["goal"],
+    activity: profileRow.activity,
+    audience: profileRow.audience,
+    onboardingCompleted: Boolean(profileRow.onboarding_completed),
+  } : { goal: null, activity: "", audience: "", onboardingCompleted: false };
+
+  return { user: toUserSummary(user), accounts, ai, notifications, entitlement, profile, isAdmin };
 }
 
 export function authRoutes() {
   const r = new Hono<AppEnv>();
+  r.get("/publishing-capability", async c => c.json(ok({
+    enabled: await publishingEnabledForUser(c.env, c.get("db"), c.get("userId")),
+    review: c.env.APP_ENV === "staging" && canPublishForUser(c.env, c.get("userId")),
+  })));
+
 
   /* ── 登録（SPEC §5.1） ─────────────────────────── */
   r.post("/register", async (c) => {
@@ -171,27 +216,44 @@ export function authRoutes() {
         isPassword ? "WEAK_PASSWORD" : "BAD_REQUEST",
         isPassword
           ? `パスワードは${PASSWORD_MIN}文字以上にしてください`
-          : "入力に誤りがあります。メールアドレスとライセンスキーをご確認ください",
+          : "入力に誤りがあります。メールアドレスをご確認ください",
         400,
       );
     }
     const { email, password } = parsed.data;
-    const licenseKey = parsed.data.license_key.toUpperCase();
+    const suppliedLicenseKey = parsed.data.license_key?.toUpperCase();
     const db = c.get("db");
     const now = new Date();
-
-    const license = await db.first<LicenseRow>(
-      "SELECT id, key, status, user_id FROM licenses WHERE key=?",
-      licenseKey,
-    );
-    // 存在しない・使用済み・revoked は同じ扱い（どれかを漏らさない）
-    if (!license || license.status !== "unused") {
-      return fail("LICENSE_INVALID", "このライセンスキーは使えません", 400);
-    }
 
     const existing = await db.first<{ id: string }>("SELECT id FROM users WHERE email=?", email);
     if (existing) {
       return fail("EMAIL_TAKEN", "このメールアドレスは登録済みです", 409);
+    }
+
+    let generatedFreeLicense = false;
+    let license: LicenseRow | null;
+    if (suppliedLicenseKey) {
+      license = await db.first<LicenseRow>(
+        "SELECT id, key, status, user_id FROM licenses WHERE key=?",
+        suppliedLicenseKey,
+      );
+      if (!license || license.status !== "unused") {
+        return fail("LICENSE_INVALID", "このライセンスキーは使えません", 400);
+      }
+    } else {
+      generatedFreeLicense = true;
+      license = {
+        id: crypto.randomUUID(),
+        key: `FREE-${crypto.randomUUID().toUpperCase()}`,
+        status: "unused",
+        user_id: null,
+      };
+      await db.run(
+        "INSERT INTO licenses (id, key, status, note, issued_at, activated_at, user_id, revoked_at) VALUES (?,?,'unused','public-free',?,NULL,NULL,NULL)",
+        license.id,
+        license.key,
+        now.toISOString(),
+      );
     }
 
     const { hash, salt } = await hashPassword(password, c.env.PASSWORD_PEPPER);
@@ -212,6 +274,7 @@ export function authRoutes() {
     } catch (e) {
       // 上の SELECT と INSERT の間に同じメールで登録が入った場合（users.email の UNIQUE）
       if (/UNIQUE/i.test(String(e))) {
+        if (generatedFreeLicense) await db.run("DELETE FROM licenses WHERE id=? AND status='unused'", license.id);
         return fail("EMAIL_TAKEN", "このメールアドレスは登録済みです", 409);
       }
       throw e;
@@ -234,6 +297,16 @@ export function authRoutes() {
       nowIso,
     );
     await db.run(
+      "INSERT INTO user_entitlements (user_id, plan_code, account_limit, ai_advice_enabled, platform_ai_enabled, updated_at) VALUES (?,'free',1,0,0,?)",
+      userId,
+      nowIso,
+    );
+    await db.run(
+      "INSERT INTO user_profiles (user_id, goal, activity, audience, onboarding_completed, updated_at) VALUES (?,NULL,'','',0,?)",
+      userId,
+      nowIso,
+    );
+    await db.run(
       "INSERT INTO audit_log (id, user_id, at, action, detail) VALUES (?,?,?,?,?)",
       crypto.randomUUID(),
       userId,
@@ -243,7 +316,7 @@ export function authRoutes() {
     );
 
     const session = await createSession(db, userId, c.req.header("User-Agent") ?? null, now);
-    const me = await buildMe(db, userId);
+    const me = await buildMe(db, userId, c.env.ADMIN_USER_ID);
     return new Response(JSON.stringify(ok({ user: me!.user })), {
       status: 201,
       headers: { "Content-Type": "application/json", "Set-Cookie": sessionCookie(session.token) },
@@ -292,7 +365,7 @@ export function authRoutes() {
     );
     if (license?.status === "revoked") {
       await deleteUserSessions(db, user.id);
-      return fail("LICENSE_REVOKED", "ライセンスが無効化されています", 403);
+      return fail("LICENSE_REVOKED", "このアカウントは現在利用できません。運営へお問い合わせください", 403);
     }
 
     const stored = { hash: user.pass_hash, salt: user.pass_salt };
@@ -378,7 +451,7 @@ export function authRoutes() {
   /* ── me ──────────────────────────────────────── */
   r.get("/me", async (c) => {
     const userId = c.get("userId")!;
-    const me = await buildMe(c.get("db"), userId);
+    const me = await buildMe(c.get("db"), userId, c.env.ADMIN_USER_ID);
     if (!me) return fail("UNAUTHORIZED", "ログインしてください", 401);
     return c.json(ok(me));
   });

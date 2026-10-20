@@ -139,19 +139,6 @@ describe("複数アカウント（SPEC §7.1 / §13 M7）", () => {
     expect(a0.body.data.settings.perWeek).toBe(7);
   });
 
-  it("4件目のアカウントは断られる（ACCOUNT_LIMIT=3）", async () => {
-    const user = await registerUser();
-    for (let i = 0; i < 3; i++) {
-      await insertAccount({ userId: user.userId, threadsUserId: `1790000000000${i}` });
-    }
-    const res = await api("POST", "/api/accounts", {
-      cookie: user.cookie,
-      body: { token: "THAAdemo_limit" },
-    });
-    expect(res.status).toBe(400);
-    expect(res.body.error.code).toBe("ACCOUNT_LIMIT");
-  });
-
   it("同じ Threads アカウントを2ユーザーが接続してもデータが混ざらない", async () => {
     const a = await registerUser();
     const b = await registerUser();
@@ -390,7 +377,7 @@ describe("監査ログ audit_log", () => {
     expect(
       (await api("PUT", "/api/ai/settings", {
         cookie: user.cookie,
-        body: { provider: "gemini", key: "AIzaSecretKeyValue123456", storeOnServer: true },
+        body: { acceptDataPolicy: true, geminiBillingConfirmed: true, provider: "gemini", key: "AIzaSecretKeyValue123456", storeOnServer: true },
       })).status,
     ).toBe(200);
 

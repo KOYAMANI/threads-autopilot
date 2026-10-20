@@ -29,7 +29,10 @@ import {
   recentAutoTags,
   type AutopilotRow,
 } from "../lib/autopilot";
-import { AiError, buildContext, defaultModel, generateRaw, readCandidates, systemPrompt } from "../lib/ai";
+import { hasAiDataConsent, isAllowedAiModel } from "@tap/shared";
+import { AiError, defaultModel, generateRaw } from "../lib/ai";
+import { compose } from "../lib/composition";
+import { AI_GENERATION_TIMEOUT_MS } from "@tap/shared";
 import { decrypt } from "../lib/crypto";
 import type { Db } from "../lib/db";
 import { isBudgetExceeded } from "../lib/budget";
@@ -126,8 +129,9 @@ async function serverKey(ctx: JobContext, userId: string): Promise<ResolvedKey> 
     key_enc: string | null;
     model: string | null;
     store_on_server: number;
+    data_policy_version: string | null;
   }>(
-    "SELECT provider, key_enc, model, store_on_server FROM ai_settings WHERE user_id=?",
+    "SELECT provider, key_enc, model, store_on_server, data_policy_version FROM ai_settings WHERE user_id=?",
     userId,
   );
   if (!row || !row.store_on_server || !row.key_enc) {
@@ -137,9 +141,11 @@ async function serverKey(ctx: JobContext, userId: string): Promise<ResolvedKey> 
     );
   }
   const provider = row.provider as "gemini" | "openrouter";
+  const model = isAllowedAiModel(provider, row.model) ? row.model!.trim() : defaultModel(provider);
+  if (!hasAiDataConsent({...row, model})) throw new AiError("AI_KEY_REQUIRED", "設定でAIの送信先と利用条件を確認して保存してください", null, false);
   return {
     provider,
-    model: row.model && row.model.trim() !== "" ? row.model : defaultModel(provider),
+    model,
     // 復号した値はこの関数を出たあと生成に渡すだけで、ログにもレスポンスにも出さない（SPEC §5.2）
     apiKey: await decrypt(row.key_enc, ctx.env.ENC_KEY),
   };
@@ -197,37 +203,23 @@ async function planOne(
   const sourcesForPrompt =
     source.content.trim() === "" ? [] : [{ title: source.title, content: source.content }];
 
+  if (!sourcesForPrompt.length && !youtubeUrls.length) throw new AiError("AI_FAILED", "資料の本文を読み込めません。文字起こしや本文を追加してください", null, false);
+
   // 生成（SPEC §10.3 の AP プロンプト。型は固定、n=1）
   let body = "";
   let comments: string[] = [];
   let lastIssue = "";
+  const deadlineMs = Date.now() + AI_GENERATION_TIMEOUT_MS;
   for (let attempt = 0; attempt < (ctx.env.WORKERS_PLAN === "free" ? 1 : MAX_GENERATE_ATTEMPTS); attempt++) {
-    const raw = await generateRaw(
-      ctx.env,
-      {
-        provider: key.provider,
-        model: key.model,
-        apiKey: key.apiKey,
-        system: systemPrompt(constraints),
-        user: buildContext({
-          templates: tpl.texts,
-          rewriteFrom: null,
-          sources: sourcesForPrompt,
-          youtubeUrls,
-          links: link ? [{ label: link.label, url: link.url }] : [],
-          instruction:
-            attempt === 0
-              ? "オートパイロットの自動投稿です。参考情報の中身を1つの話にまとめる。"
-              : `オートパイロットの自動投稿です。前回の案は「${lastIssue}」で使えませんでした。別の切り口で書き直す。`,
-          n: 1,
-          fixedHook: hook.hook,
-        }),
-        youtubeUrls,
-        appOrigin: ctx.env.APP_ORIGIN,
-      },
-      { budget: ctx.budget },
-    );
-    const [candidate] = readCandidates(raw, 1);
+    const result = await compose({
+      mode: "information", references: tpl.texts, referenceOrigin: "own",
+      sources: sourcesForPrompt, youtubeUrls, links: link ? [{label:link.label,url:link.url}] : [],
+      instruction: `冒頭は「${hook.hook}」の型で、資料をもとに投稿を作る。`,
+      n: 1, constraints, account: {username:account.username},
+    }, (system,user,videos,responseJsonSchema) => generateRaw(ctx.env, {
+      ...key, system, user, youtubeUrls:videos,responseJsonSchema,appOrigin:ctx.env.APP_ORIGIN,
+    }, {budget:ctx.budget,deadlineMs,retries:0}));
+    const [candidate] = result.candidates;
     body = candidate!.body;
     comments = candidate!.comments;
     if (link && ap.link_placement === "comment") {
@@ -401,7 +393,7 @@ export async function planAccount(ctx: JobContext, accountId: string): Promise<P
   }
   // ライセンス（SPEC §5.4）
   if (!(await licenseActiveOrStop(ctx.db, accountId, ctx.now))) {
-    return { planned: [], skipped: "ライセンスが無効です" };
+    return { planned: [], skipped: "アカウントの利用が停止されています" };
   }
 
   const slots = await availablePostingSlots(ctx.db, account, ctx.now, {

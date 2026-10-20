@@ -4,6 +4,8 @@ import { createApp } from '../src/app';
 import { registerUser, testDb } from './helpers';
 import type { Env } from '../src/env';
 import { createSession } from '../src/lib/session';
+import * as threads from '../src/lib/threads';
+import * as accounts from '../src/routes/accounts';
 
 const app=createApp();
 const configured={...env,APP_ORIGIN:'https://test.local',THREADS_APP_ID:'test-app-id',THREADS_APP_SECRET:'test-app-secret'} as Env;
@@ -57,4 +59,66 @@ describe('Threads OAuth',()=>{
   const u=await registerUser();const s=await start(u.cookie);vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({error:{message:'test-app-secret test-code'}}),{status:400})));
   const r=await req('/complete','POST',s.cookie,{state:s.state,code:'test-code'});expect(r.status).toBe(400);expect(JSON.stringify(r.data)).not.toContain('test-app-secret');
  });
+ it.each([
+  {stage:'short_exchange',failureCode:'OAUTH_SHORT_EXCHANGE',before:0},
+  {stage:'long_exchange',failureCode:'OAUTH_LONG_EXCHANGE',before:1},
+  {stage:'profile_save',failureCode:'OAUTH_PROFILE_SAVE',before:2},
+ ])('reports $stage failure using only fixed labels and numeric provider metadata',async({stage,failureCode,before})=>{
+  const u=await registerUser(),s=await start(u.cookie);
+  const log=vi.spyOn(console,'error').mockImplementation(()=>{});
+  const fetcher=vi.fn();
+  if(before>=1) fetcher.mockResolvedValueOnce(new Response(JSON.stringify({access_token:'synthetic-short-secret'})));
+  if(before>=2) fetcher.mockResolvedValueOnce(new Response(JSON.stringify({access_token:'synthetic-long-secret'})));
+  fetcher.mockResolvedValueOnce(new Response(JSON.stringify({error:{code:190,error_subcode:463,message:'test-app-secret synthetic-short-secret synthetic-long-secret test-code '+s.state,fbtrace_id:'private-trace'}}),{status:400}));
+  vi.stubGlobal('fetch',fetcher);
+  const result=await req('/complete','POST',s.cookie,{state:s.state,code:'test-code'});
+  expect(result.status).toBe(before===0?400:502);
+  expect(result.data.error.code).toBe(failureCode);
+  expect(log).toHaveBeenCalledTimes(1);
+  expect(log.mock.calls[0]).toEqual(['[threads-oauth]',{stage,errorClass:'ThreadsApiError',providerCode:190,providerSubcode:463,...(before===0?{httpStatus:400}:{})}]);
+  const exposed=JSON.stringify([result.data,log.mock.calls]);
+  for(const secret of ['test-app-secret','synthetic-short-secret','synthetic-long-secret','test-code',s.state,'private-trace']) expect(exposed).not.toContain(secret);
+  expect(fetcher).toHaveBeenCalledTimes(before+1);
+ });
+ it('does not log message/stack/name even when thrown errors contain token-bearing URLs',async()=>{
+  const u=await registerUser(),s=await start(u.cookie),log=vi.spyOn(console,'error').mockImplementation(()=>{});
+  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({access_token:'synthetic-short-secret'}))));
+  const failure=new Error('https://graph.threads.net?access_token=private-token&client_secret=test-app-secret');
+  failure.name='private-name';failure.stack='private-stack';
+  vi.spyOn(threads,'exchangeToken').mockRejectedValue(failure);
+  const result=await req('/complete','POST',s.cookie,{state:s.state,code:'private-code'});
+  expect(result.data.error.code).toBe('OAUTH_LONG_EXCHANGE');
+  expect(log.mock.calls).toEqual([['[threads-oauth]',{stage:'long_exchange',errorClass:'Error'}]]);
+  expect(JSON.stringify([result.data,log.mock.calls])).not.toContain('private');
+ });
+ it('distinguishes malformed short responses and database/profile-save exceptions without logging them',async()=>{
+  const u=await registerUser(),log=vi.spyOn(console,'error').mockImplementation(()=>{});
+  let s=await start(u.cookie);
+  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response('private-response test-app-secret')));
+  let result=await req('/complete','POST',s.cookie,{state:s.state,code:'test-code'});
+  expect(result.data.error.code).toBe('OAUTH_SHORT_EXCHANGE');
+  expect(log.mock.calls).toEqual([['[threads-oauth]',{stage:'short_exchange',errorClass:'SyntaxError',httpStatus:200}]]);
+  log.mockClear();s=await start(u.cookie);
+  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({access_token:'synthetic-short-secret'}))));
+  vi.spyOn(threads,'exchangeToken').mockResolvedValue({access_token:'synthetic-long-secret'});
+  vi.spyOn(accounts,'connectThreadsAccount').mockRejectedValue(new Error('D1 details private-token private-user-id'));
+  result=await req('/complete','POST',s.cookie,{state:s.state,code:'test-code'});
+  expect(result.data.error.code).toBe('OAUTH_PROFILE_SAVE');
+  expect(log.mock.calls).toEqual([['[threads-oauth]',{stage:'profile_save',errorClass:'Error'}]]);
+ });
+ it('omits nonnumeric provider codes and rejects empty token responses at the correct stage',async()=>{
+  const u=await registerUser(),log=vi.spyOn(console,'error').mockImplementation(()=>{});
+  let s=await start(u.cookie);
+  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({error:{code:'private-code',error_subcode:'private-subcode',message:'private-message'}}),{status:400})));
+  let result=await req('/complete','POST',s.cookie,{state:s.state,code:'test-code'});
+  expect(result.data.error.code).toBe('OAUTH_SHORT_EXCHANGE');
+  expect(log.mock.calls).toEqual([['[threads-oauth]',{stage:'short_exchange',errorClass:'OAuthResponseError',httpStatus:400}]]);
+  log.mockClear();s=await start(u.cookie);
+  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({access_token:'synthetic-short-secret'}))));
+  vi.spyOn(threads,'exchangeToken').mockResolvedValue({access_token:''});
+  result=await req('/complete','POST',s.cookie,{state:s.state,code:'test-code'});
+  expect(result.status).toBe(400);expect(result.data.error.code).toBe('OAUTH_LONG_EXCHANGE');
+  expect(log.mock.calls).toEqual([['[threads-oauth]',{stage:'long_exchange',errorClass:'OAuthResponseError'}]]);
+ });
+
 });

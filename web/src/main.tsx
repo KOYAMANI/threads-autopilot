@@ -8,6 +8,20 @@ import EnvironmentNotice from "./components/EnvironmentNotice";
 import "./styles/tokens.css";
 import "./styles/workspace.css";
 
+const colorScheme = window.matchMedia("(prefers-color-scheme: dark)");
+function applyTheme() {
+  let choice = "system";
+  try { choice = localStorage.getItem("tap:theme") || "system"; } catch { /* OS fallback */ }
+  document.documentElement.dataset.theme = choice === "system" ? (colorScheme.matches ? "dark" : "light") : choice;
+}
+applyTheme();
+colorScheme.addEventListener("change", applyTheme);
+window.addEventListener("themechange", event => {
+  const choice = (event as CustomEvent<string>).detail;
+  if (choice) document.documentElement.dataset.theme = choice === "system" ? (colorScheme.matches ? "dark" : "light") : choice;
+  else applyTheme();
+});
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -27,7 +41,7 @@ createRoot(root).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <EnvironmentNotice />
+        <EnvironmentNotice outsideWorkspace />
         <App />
       </BrowserRouter>
     </QueryClientProvider>

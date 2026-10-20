@@ -62,7 +62,6 @@ function AuthForm() {
   const [mode, setMode] = useState<Mode>(params.get("mode") === "register" ? "register" : "login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [licenseKey, setLicenseKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [field, setField] = useState<Field | null>(null);
   // ログインの失敗はメールとパスワードのどちらが違うか言えない（言わない）ので、両方に印をつける
@@ -97,7 +96,7 @@ function AuthForm() {
         return;
       }
       if (mode === "register") {
-        await register.mutateAsync({ email, password, license_key: licenseKey });
+        await register.mutateAsync({ email, password });
       } else {
         await login.mutateAsync({ email, password });
       }
@@ -116,14 +115,14 @@ function AuthForm() {
   const title = mode === "register" ? "はじめる" : mode === "forgot" ? "パスワードの再設定" : "ログイン";
   const lead =
     mode === "register"
-      ? "管理者から届いたライセンスキーで登録します"
+      ? "登録は無料。まずは1アカウントから始められます"
       : mode === "forgot"
         ? "登録したメールアドレスに再設定リンクを送ります"
         : "Threads オートパイロット";
 
   return (
     <Shell title={title} lead={lead}>
-      {mode === "register" && <div className="registration-guide"><strong>初回登録は、この3ステップ</strong><ol><li>管理者からライセンスキーを受け取る</li><li>メールアドレスとパスワードを登録する</li><li>自分のThreadsとAIを連携する</li></ol><p>キーは1人につき1つ。お持ちでない場合は管理者にお問い合わせください。</p></div>}
+      {mode === "register" && <div className="registration-guide"><strong>登録後にすること</strong><ol><li>発信の目標を選ぶ</li><li>Threadsアカウントをつなぐ</li><li>必要なら自分のGemini APIキーをつなぐ</li></ol><p>講座生は、登録したアカウントへ運営が有料版を適用します。</p></div>}
       <form onSubmit={onSubmit}>
         <label className="field">
           <span>メールアドレス</span>
@@ -155,25 +154,6 @@ function AuthForm() {
               onChange={(e) => setPassword(e.target.value)}
             />
             {fieldError("password")}
-          </label>
-        )}
-
-        {mode === "register" && (
-          <label className="field">
-            <span>ライセンスキー</span>
-            <input
-              className="input"
-              type="text"
-              name="license_key"
-              placeholder="TAP-XXXX-XXXX-XXXX"
-              autoComplete="off"
-              spellCheck={false}
-              required
-              aria-invalid={invalid("license")}
-              value={licenseKey}
-              onChange={(e) => setLicenseKey(e.target.value.toUpperCase())}
-            />
-            {fieldError("license")}
           </label>
         )}
 

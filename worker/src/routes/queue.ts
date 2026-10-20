@@ -1,3 +1,4 @@
+import { canPublishForAccount } from "../lib/staging-beta-policy";
 /**
  * キュー（SPEC §7.4）。アプリ内から操作するときの経路。
  * メールのリンクからの承認/取消は `GET|POST /a/:token`（§7.9、M6）。
@@ -19,8 +20,9 @@ import {
 import { fail, type AppEnv } from "../app";
 import { audit } from "../lib/audit";
 import { canPublishAccount, loadOwnedAccount } from "../lib/accounts";
-import { canReservePostingSlot, isSlotConflict, isValidScheduleDate, loadPostingSchedule, nextPostingSlot } from "../lib/posting-schedule";
+import { availablePostingSlots, canReservePostingSlot, isSlotConflict, isValidScheduleDate, loadPostingSchedule, nextPostingSlot } from "../lib/posting-schedule";
 import { jobContextFrom } from "../lib/jobs";
+import { STAGING_PUBLISHING_MESSAGE } from "../lib/staging-review-policy";
 import { enqueuePublish } from "../jobs/publish";
 import {
   attachMetrics,
@@ -29,6 +31,7 @@ import {
   toQueueItem,
   type QueueRow,
 } from "../lib/queue";
+import { extendMediaRetention, queueMediaExpiry, validateOwnedMedia } from "../lib/media";
 
 const REPLY_CONTROLS = ["everyone", "accounts_you_follow", "mentioned_only"] as const;
 
@@ -40,6 +43,7 @@ const createSchema = z.object({
   body: z.string().max(4000),
   comments: z.array(z.string().max(4000)).max(10).optional(),
   imageUrl: z.string().trim().url().max(2000).nullable().optional(),
+  mediaUrls: z.array(z.string().trim().url().max(2000)).max(5).optional(),
   replyControl: z.enum(REPLY_CONTROLS).optional(),
   originPostId: z.string().max(64).nullable().optional(),
   sourceIds: z.array(z.string().max(64)).max(20).optional(),
@@ -51,6 +55,7 @@ const patchSchema = z.object({
   comments: z.array(z.string().max(4000)).max(10).optional(),
   scheduledAt: z.string().min(1).nullable().optional(),
   imageUrl: z.string().trim().url().max(2000).nullable().optional(),
+  mediaUrls: z.array(z.string().trim().url().max(2000)).max(5).optional(),
   replyControl: z.enum(REPLY_CONTROLS).optional(),
   status: z.enum(["draft", "scheduled", "next_slot"]).optional(),
 });
@@ -142,9 +147,12 @@ export function queueRoutes() {
     const account = await loadOwnedAccount(db, c.req.param("id"), c.get("userId")!);
     if (!account) return fail("NOT_FOUND", "見つかりませんでした", 404);
 
-    const slot = await nextPostingSlot(db, account);
+    const slots = await availablePostingSlots(db, account, new Date());
+    const slot = slots[0];
     if (!slot) return fail("CONFLICT", "7日先まで空いている投稿枠がありません。投稿スロットを見直してください", 409);
-    return c.json(ok({ at: slot.at, reason: "設定した投稿スロットの次の空き枠です", n: 0 }));
+    const firstDay = localDateKey(Date.parse(slot.at), account.timezone);
+    const nextDayAt = slots.find(candidate => localDateKey(Date.parse(candidate.at), account.timezone) !== firstDay)?.at ?? null;
+    return c.json(ok({ at: slot.at, nextDayAt, reason: "設定した投稿スロットの次の空き枠です", n: 0 }));
   });
 
   r.get("/:id/posting-schedule", async (c) => {
@@ -206,6 +214,8 @@ export function queueRoutes() {
     if (!account) return fail("NOT_FOUND", "見つかりませんでした", 404);
 
     const input = parsed.data;
+    const mediaUrls = input.mediaUrls ?? (input.imageUrl ? [input.imageUrl] : []);
+    if (input.status !== "draft" && !await canPublishForAccount(c.env, db, account.user_id, account.threads_user_id)) return fail("CONFLICT", STAGING_PUBLISHING_MESSAGE, 409);
     if (input.idempotencyKey) {
       const previous = await db.first<QueueRow>(`SELECT ${QUEUE_SELECT} FROM queue WHERE account_id=? AND request_id=?`, account.id, input.idempotencyKey);
       if (previous) return c.json(ok({ item: await itemOf(db, account.id, previous) }));
@@ -236,6 +246,9 @@ export function queueRoutes() {
       status = "draft";
     }
 
+    const ownedMedia = await validateOwnedMedia(db, c.env, c.get("userId")!, account.id, mediaUrls);
+    if (!ownedMedia.ok) return fail("BAD_REQUEST", "画像の保存期限が切れたか、このアカウントでは使えません。画像を選び直してください", 400);
+
     if (input.reserveSlot && (status !== "scheduled" || !(await canReservePostingSlot(db, account, scheduledAt)))) {
       return fail("CONFLICT", "この投稿枠は利用できません。スケジュールを更新して別の枠を選んでください", 409);
     }
@@ -243,18 +256,19 @@ export function queueRoutes() {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         await db.run(
-          `INSERT INTO queue (id, account_id, status, scheduled_at, body, comments_json, image_url, reply_control,
+          `INSERT INTO queue (id, account_id, status, scheduled_at, body, comments_json, image_url, media_urls_json, reply_control,
               source, approval_mode, approve_deadline, notified_at, action_token_used_at, step, next_step_at,
               container_id, container_polls, result_ids_json, error, error_raw, attempts, tags_json,
               origin_post_id, source_ids_json, created_at, updated_at, slot_managed, slot_day, request_id)
-            VALUES (?,?,?,?,?,?,?,?, 'manual', NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, '[]', NULL, NULL, 0, '{}', ?,?,?,?,?,?,?)`,
+            VALUES (?,?,?,?,?,?,?,?,?, 'manual', NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, '[]', NULL, NULL, 0, '{}', ?,?,?,?,?,?,?)`,
           id,
           account.id,
           status,
           scheduledAt,
           input.body,
           JSON.stringify(comments),
-          input.imageUrl ?? null,
+          mediaUrls[0] ?? null,
+          JSON.stringify(mediaUrls),
           input.replyControl ?? "everyone",
           input.originPostId ?? null,
           JSON.stringify(input.sourceIds ?? []),
@@ -278,6 +292,8 @@ export function queueRoutes() {
         scheduledAt = next.at;
       }
     }
+
+    await extendMediaRetention(db, ownedMedia.ids, queueMediaExpiry(status, scheduledAt, new Date(nowIso)));
 
     if (status === "scheduled" && scheduledAt) {
       await schedulePublish(c, account.id, scheduledAt);
@@ -321,10 +337,17 @@ export function queueRoutes() {
       if (!next) return fail("CONFLICT", "7日先まで空いている投稿枠がありません", 409);
       scheduledAt = next.at;
     }
+    if (["scheduled", "pending_approval"].includes(status) && !await canPublishForAccount(c.env, db, account.user_id, account.threads_user_id)) return fail("CONFLICT", STAGING_PUBLISHING_MESSAGE, 409);
     if ((status === "scheduled" || status === "pending_approval") && !canPublishAccount(account)) return fail("CONFLICT", "Threads APIを設定で連携し直してから予約してください", 409);
     if (status === "scheduled" && !scheduledAt) {
       return fail("BAD_REQUEST", "投稿する日時を指定してください", 400);
     }
+
+    const mediaUrls = input.mediaUrls === undefined && input.imageUrl === undefined
+      ? (parseJsonArray(row.media_urls_json).length > 0 ? parseJsonArray(row.media_urls_json) : (row.image_url ? [row.image_url] : []))
+      : (input.mediaUrls ?? (input.imageUrl ? [input.imageUrl] : []));
+    const ownedMedia = await validateOwnedMedia(db, c.env, c.get("userId")!, account.id, mediaUrls);
+    if (!ownedMedia.ok) return fail("BAD_REQUEST", "画像の保存期限が切れたか、このアカウントでは使えません。画像を選び直してください", 400);
 
     if (input.reserveSlot && (!["scheduled", "pending_approval"].includes(status) || !(await canReservePostingSlot(db, account, scheduledAt, row.id)))) {
       return fail("CONFLICT", "この投稿枠は利用できません。スケジュールを更新して別の枠を選んでください", 409);
@@ -339,7 +362,7 @@ export function queueRoutes() {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const updated = await db.run(
-          `UPDATE queue SET body=?, comments_json=?, image_url=?, reply_control=?, scheduled_at=?, status=?,
+          `UPDATE queue SET body=?, comments_json=?, image_url=?, media_urls_json=?, reply_control=?, scheduled_at=?, status=?,
              slot_managed=CASE WHEN ? THEN 1 ELSE slot_managed END, slot_day=?,
              error=NULL, error_raw=NULL,
              step=CASE WHEN ? THEN 0 ELSE step END,
@@ -347,7 +370,10 @@ export function queueRoutes() {
              updated_at=? WHERE id=? AND account_id=? AND status=? AND updated_at=? AND status NOT IN ('publishing','done')`,
           body,
           JSON.stringify(comments),
-          input.imageUrl === undefined ? row.image_url : input.imageUrl,
+          input.mediaUrls === undefined && input.imageUrl === undefined ? row.image_url : (mediaUrls[0] ?? null),
+          input.mediaUrls === undefined && input.imageUrl === undefined
+            ? row.media_urls_json
+            : JSON.stringify(mediaUrls),
           input.replyControl ?? row.reply_control,
           scheduledAt,
           status,
@@ -372,6 +398,8 @@ export function queueRoutes() {
       }
     }
 
+    await extendMediaRetention(db, ownedMedia.ids, queueMediaExpiry(status, scheduledAt, new Date(nowIso)));
+
     if (status === "scheduled" && scheduledAt) {
       await schedulePublish(c, account.id, scheduledAt);
     }
@@ -386,6 +414,7 @@ export function queueRoutes() {
     if (!account) return fail("NOT_FOUND", "見つかりませんでした", 404);
     const row = await loadRow(db, account.id, c.req.param("qid"));
     if (!row) return fail("NOT_FOUND", "見つかりませんでした", 404);
+    if (!await canPublishForAccount(c.env, db, account.user_id, account.threads_user_id)) return fail("CONFLICT", STAGING_PUBLISHING_MESSAGE, 409);
     if (!canPublishAccount(account)) return fail("CONFLICT", "Threads APIを設定で連携し直してから予約してください", 409);
     if (row.status !== "pending_approval" && row.status !== "scheduled") {
       return fail("CONFLICT", "この下書きは承認できる状態ではありません", 409);
@@ -441,6 +470,7 @@ export function queueRoutes() {
     if (!account) return fail("NOT_FOUND", "見つかりませんでした", 404);
     const row = await loadRow(db, account.id, c.req.param("qid"));
     if (!row) return fail("NOT_FOUND", "見つかりませんでした", 404);
+    if (!await canPublishForAccount(c.env, db, account.user_id, account.threads_user_id)) return fail("CONFLICT", STAGING_PUBLISHING_MESSAGE, 409);
     if (!canPublishAccount(account)) return fail("CONFLICT", "Threads APIを設定で連携し直してから予約してください", 409);
     if (row.status === "publishing" || row.status === "done") return fail("CONFLICT", "すでに投稿中または投稿済みです", 409);
 
@@ -470,23 +500,28 @@ export function queueRoutes() {
 
     const id = crypto.randomUUID();
     const nowIso = new Date().toISOString();
+    const mediaUrls = parseJsonArray(row.media_urls_json).length > 0 ? parseJsonArray(row.media_urls_json) : (row.image_url ? [row.image_url] : []);
+    const ownedMedia = await validateOwnedMedia(db, c.env, c.get("userId")!, account.id, mediaUrls);
+    if (!ownedMedia.ok) return fail("BAD_REQUEST", "画像の保存期限が切れています。画像を選び直してください", 400);
     await db.run(
-      `INSERT INTO queue (id, account_id, status, scheduled_at, body, comments_json, image_url, reply_control,
+      `INSERT INTO queue (id, account_id, status, scheduled_at, body, comments_json, image_url, media_urls_json, reply_control,
           source, approval_mode, approve_deadline, notified_at, action_token_used_at, step, next_step_at,
           container_id, container_polls, result_ids_json, error, error_raw, attempts, tags_json,
           origin_post_id, source_ids_json, created_at, updated_at)
-        VALUES (?,?, 'draft', NULL, ?,?,?,?, 'manual', NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, '[]', NULL, NULL, 0, '{}', ?,?,?,?)`,
+        VALUES (?,?, 'draft', NULL, ?,?,?,?,?, 'manual', NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, '[]', NULL, NULL, 0, '{}', ?,?,?,?)`,
       id,
       account.id,
       row.body,
       row.comments_json,
       row.image_url,
+      row.media_urls_json,
       row.reply_control,
       row.origin_post_id,
       row.source_ids_json,
       nowIso,
       nowIso,
     );
+    await extendMediaRetention(db, ownedMedia.ids, queueMediaExpiry("draft", null, new Date(nowIso)));
     const next = (await loadRow(db, account.id, id))!;
     return c.json(ok({ item: await itemOf(db, account.id, next) }), 201);
   });

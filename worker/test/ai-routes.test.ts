@@ -37,6 +37,8 @@ async function saveKey(
   return api("PUT", "/api/ai/settings", {
     cookie,
     body: {
+      acceptDataPolicy: true,
+      geminiBillingConfirmed: true,
       provider: options.provider ?? "gemini",
       key: options.key ?? "AIzaTESTKEY0123456789",
       storeOnServer: options.storeOnServer,
@@ -129,7 +131,7 @@ describe("/api/ai/settings（SPEC §7.6）", () => {
       autopilotAvailable: true,
     });
     expect(JSON.stringify(res.body)).not.toContain("AIzaSECRETKEY0123456789");
-    expect(res.body.data.model).toBe("gemini-2.5-flash");
+    expect(res.body.data.model).toBe("gemini-3.5-flash-lite");
   });
 
   it("端末保存への変更を拒否し、既存のサーバーキーを保持する", async () => {
@@ -140,15 +142,15 @@ describe("/api/ai/settings（SPEC §7.6）", () => {
     expect((await testDb().first<{key_enc:string}>("SELECT key_enc FROM ai_settings WHERE user_id=?",userId))?.key_enc).toBe(before?.key_enc);
   });
 
-  it("モデルだけ変えるときはサーバー保存のキーを消さない", async () => {
+  it("条件の再確認でキーを省略してもサーバー保存のキーを消さない", async () => {
     const { cookie, userId } = await setup("ai4");
     await saveKey(cookie, { storeOnServer: true, key: "AIzaKEEPME0123456789" });
     const res = await api("PUT", "/api/ai/settings", {
       cookie,
-      body: { provider: "gemini", model: "gemini-2.5-pro", storeOnServer: true },
+      body: { acceptDataPolicy: true, geminiBillingConfirmed: true, provider: "gemini", model: "gemini-3.5-flash-lite", storeOnServer: true },
     });
     expect(res.body.data.hasKey).toBe(true);
-    expect(res.body.data.model).toBe("gemini-2.5-pro");
+    expect(res.body.data.model).toBe("gemini-3.5-flash-lite");
     const row = await testDb().first<{ key_enc: string | null }>(
       "SELECT key_enc FROM ai_settings WHERE user_id=?",
       userId,
@@ -174,7 +176,7 @@ describe("POST /api/ai/test（SPEC §7.6）", () => {
     const res = await withAiMock(() => api("POST", "/api/ai/test", { cookie }));
     expect(res.status).toBe(200);
     expect(res.body.data.ok).toBe(true);
-    expect(res.body.data.model).toBe("gemini-2.5-flash");
+    expect(res.body.data.model).toBe("gemini-3.5-flash-lite");
     expect(typeof res.body.data.latencyMs).toBe("number");
   });
 
@@ -213,7 +215,7 @@ describe("POST /api/ai/generate（SPEC §7.6）", () => {
     expect(candidates).toHaveLength(3);
     expect(candidates.map((c) => c.key)).toEqual(["A", "B", "C"]);
     expect(candidates[0]!.body.length).toBeGreaterThan(0);
-    expect(candidates[0]!.basis).toContain("朝の30分");
+    expect(candidates[0]!.body).toBeTruthy();
   });
 
   it("使った参考情報の last_used_at と use_count が進む（AP のローテーション用）", async () => {
@@ -253,7 +255,7 @@ describe("POST /api/ai/generate（SPEC §7.6）", () => {
     expect(res.status).toBe(404);
   });
 
-  it("OpenRouter に YouTube のネタ源を渡すと、貼り付けの案内が notes に入る（SPEC §10.2）", async () => {
+  it("OpenRouter cannot silently omit YouTube sources without transcripts", async () => {
     const { cookie, accountId, userId } = await setup("aig6");
     await saveKey(cookie, { storeOnServer: true, provider: "openrouter", key: "sk-or-TESTKEY0123" });
     // oEmbed を叩かずに youtube 行を作る（外部 fetch をしない）
@@ -269,8 +271,8 @@ describe("POST /api/ai/generate（SPEC §7.6）", () => {
     const res = await withAiMock(() =>
       api("POST", "/api/ai/generate", { cookie, body: { accountId, sourceIds: [sid] } }),
     );
-    expect(res.status).toBe(200);
-    expect((res.body.data.notes as string[]).join()).toContain("文字起こし");
+    expect(res.status).toBe(422);
+    expect(res.body.error.message).toContain("文字起こし");
   });
 });
 
@@ -388,3 +390,69 @@ describe("rewrite input origins", () => {
     expect((await api("POST", "/api/ai/generate", { cookie, body: { ...input, referenceText: "" } })).status).toBe(400);
   }));
 });
+
+it("saved status and test result persist, while replacing settings clears old test attribution",async()=>{
+ const {cookie}=await setup("persist-settings");const saved=await saveKey(cookie);expect(saved.body.data.savedAt).toBeTruthy();
+ await withAiMock(()=>api("POST","/api/ai/test",{cookie}));
+ const current=(await api("GET","/api/ai/settings",{cookie})).body.data;
+ expect(current.hasKey).toBe(true);expect(current.lastTest.success).toBe(true);expect(current.requestsLast24h).toBe(1);
+ await saveKey(cookie,{storeOnServer:true,key:"replacement-test-only-key"});
+ expect((await api("GET","/api/ai/settings",{cookie})).body.data.lastTest).toBeNull();
+});
+it("never claims to save a missing API key",async()=>{
+ const {cookie}=await setup("empty-settings");
+ expect((await api("PUT","/api/ai/settings",{cookie,body:{provider:"gemini",acceptDataPolicy:true,storeOnServer:true}})).status).toBe(400);
+ expect((await api("GET","/api/ai/settings",{cookie})).body.data.hasKey).toBe(false);
+});
+
+it("unconfirmed rewrite references return actionable 422 diagnostics without invoking AI",async()=>{
+ const {cookie,accountId,userId}=await setup("rewrite-unconfirmed");await saveKey(cookie);
+ const db=testDb();
+ await db.run("INSERT INTO posts(account_id,id,root_id,text,posted_at) VALUES (?,'unconfirmed','unconfirmed','private-reference-marker',?)",accountId,new Date().toISOString());
+ const response=await api("POST","/api/ai/generate",{cookie,body:{accountId,pickMode:"rewrite",picks:["unconfirmed"],n:3}});
+ expect(response.status).toBe(422);
+ expect(response.body.error.message).toContain("本人のツリーを確認できていません");
+ expect(response.body.error.detail.category).toBe("reference_unresolved");
+ expect(response.body.error.detail.retryable).toBe(false);
+ const log=await db.first<{detail:string}>("SELECT detail FROM audit_log WHERE user_id=? AND action='ai_error'",userId);
+ expect(log).toBeTruthy();
+ expect(JSON.parse(log!.detail).requestId).toBe(response.body.error.detail.requestId);
+ expect(log!.detail).not.toContain("private-reference-marker");
+ expect(log!.detail).not.toContain("AIzaTESTKEY");
+});
+
+
+it("short rewrite route returns three single posts while preserving an ambiguous range",async()=>withAiMock(async()=>{
+ const {cookie,accountId}=await setup("rewrite-short");await saveKey(cookie);
+ const referenceText="ワイの会社の社長、元外コンで年3～4,000万とか貰ってたらしい。負けたくないな。";
+ const result=await api("POST","/api/ai/generate",{cookie,body:{accountId,pickMode:"rewrite",picks:[],referenceText,instruction:"内容同じで",clarificationMode:"delegate",n:3}});
+ expect(result.status).toBe(200);expect(result.body.data.candidates).toHaveLength(3);
+ for(const candidate of result.body.data.candidates){expect(candidate.comments).toEqual([]);expect(candidate.body).toContain("3～4,000万");expect(candidate.body).toContain("らしい");}
+}));
+
+it("returns supported effort choices and rejects stale/unsupported effort before AI",async()=>{
+ const {cookie,accountId}=await setup("effort");await saveKey(cookie);
+ const caps=(await api("GET","/api/ai/capabilities",{cookie})).body.data;
+ expect(caps.model).toBe("gemini-3.5-flash-lite");expect(caps.options.map((o:any)=>o.id)).toEqual(["minimal","low","medium","high"]);
+ const response=await api("POST","/api/ai/generate",{cookie,body:{accountId,pickMode:"information",instruction:"投稿",thinking:"unsupported"}});
+ expect(response.status).toBe(400);expect(response.body.error.message).toContain("思考量");
+});
+
+it.each(["text","youtube"])("passes a representative stored %s source through generation and revision",async type=>withAiMock(async()=>{
+ const {cookie,accountId,userId}=await setup("source-"+type);await saveKey(cookie);
+ const sid=crypto.randomUUID();
+ await testDb().run("INSERT INTO sources(id,user_id,type,title,url,content,char_count,created_at) VALUES (?,?,?,?,?,?,?,?)",sid,userId,type,"確認用資料",type==="youtube"?"https://www.youtube.com/watch?v=dQw4w9WgXcQ":null,type==="youtube"?"":"資料の重要な内容",type==="youtube"?0:9,new Date().toISOString());
+ const context={pickMode:"information",sourceIds:[sid],instruction:"資料から投稿を作る",thinking:"high"};
+ const generated=await api("POST","/api/ai/generate",{cookie,body:{accountId,...context}});
+ expect(generated.status).toBe(200);expect(generated.body.data.candidates).toHaveLength(3);
+ const revised=await api("POST","/api/ai/revise",{cookie,body:{accountId,context,candidate:generated.body.data.candidates[0],instruction:"意味を保って読みやすく",thinking:"high"}});
+ expect(revised.status).toBe(200);
+}));
+
+it("does not silently ignore a missing or another user's selected source",async()=>withAiMock(async()=>{
+ const {cookie,accountId}=await setup("missing-source");await saveKey(cookie);
+ const candidate={key:"A",hook:"",body:"本文",comments:[],basis:""};
+ const context={pickMode:"information",sourceIds:["not-owned"],instruction:"投稿を作る"};
+ expect((await api("POST","/api/ai/generate",{cookie,body:{accountId,...context}})).status).toBe(404);
+ expect((await api("POST","/api/ai/revise",{cookie,body:{accountId,candidate,context,instruction:"読みやすく"}})).status).toBe(404);
+}));

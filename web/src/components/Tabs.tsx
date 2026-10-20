@@ -1,11 +1,11 @@
 import AccountAvatar from "./AccountAvatar";
 /**
- * 下部5タブ（SPEC §12.1 / design-v0.2 §3-2）。
+ * 下部5タブ（SPEC §12.1 / design-v0.2 §3-2）。投稿ヒントは B 系統から（DECISIONS 2026-10-20）。
  * ラベルは中身の名前にする（apple-design §16「Direct, specific labels」）。
  */
 import type { AccountSummary } from "@tap/shared";
 import { useLocation, useNavigate } from "react-router-dom";
-import { GearIcon, HomeIcon, PenIcon, StackIcon } from "./Icons";
+import { GearIcon, HomeIcon, LightbulbIcon, PenIcon, StackIcon } from "./Icons";
 
 /**
  * オートパイロットは開発中のため入口を外している（DECISIONS 2026-10-19）。
@@ -16,12 +16,14 @@ export const TABS = [
   { path: "/app/home", label: "ホーム", desktop: "アナリティクス", Icon: HomeIcon },
   { path: "/app/create", label: "作る", desktop: "投稿をつくる", Icon: PenIcon },
   { path: "/app/queue", label: "キュー", desktop: "下書き・予約", Icon: StackIcon },
+  { path: "/app/tips", label: "ヒント", desktop: "投稿ヒント", Icon: LightbulbIcon },
   { path: "/app/settings", label: "設定", desktop: "設定", Icon: GearIcon },
 ] as const;
 
-export default function Tabs({ account, onAccount, email, onLogout }: { account: AccountSummary | null; onAccount: () => void; email?: string; onLogout: () => void }) {
+export default function Tabs({ account, onAccount, email, onLogout }: { account: AccountSummary | null; accountLimit?: number; onAccount: () => void; email?: string; onLogout: () => void }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const pending = account?.pendingApprovalCount ?? 0;
 
   return (
     <nav className="chrome tabs" aria-label="画面の切り替え">
@@ -40,7 +42,7 @@ export default function Tabs({ account, onAccount, email, onLogout }: { account:
             aria-current={current ? "page" : undefined}
             onClick={() => navigate(path)}
           >
-            <Icon size={20} />
+            <span className="tab-icon"><Icon size={20} />{path === "/app/queue" && pending > 0 && <span className="nav-badge" aria-label={`承認待ち${pending}件`}>{Math.min(pending, 9)}</span>}</span>
             <span className="nav-mobile-label">{label}</span><span className="nav-desktop-label">{desktop}</span>
           </button>
         );

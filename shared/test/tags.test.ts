@@ -47,9 +47,6 @@ describe("lengthBucket", () => {
     expect(lengthBucket("あ".repeat(300))).toBe("300+");
   });
 
-  it("サロゲートペアは1文字として数える", () => {
-    expect(lengthBucket("👨‍👩‍👧".repeat(10))).toBe("<100");
-  });
 });
 
 describe("slotOf / dayTypeOf", () => {

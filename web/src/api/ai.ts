@@ -1,6 +1,8 @@
 /** AI settings and content API. Credentials are stored only on the server. */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  AiThinkingCapabilities,
+  AiReviseRequest,
   AiCandidate,
   AiGenerateRequest,
   AiGenerateResponse,
@@ -9,6 +11,8 @@ import type {
   AiReviseResponse,
   AiSettingsResponse,
   AiTestResponse,
+  BuzzDiagnosisRequest,
+  BuzzDiagnosisResponse,
   CreateSourceRequest,
   PatchSourceRequest,
   PostListResponse,
@@ -18,6 +22,7 @@ import type {
 import { api } from "./client";
 import { accountKey } from "./accounts";
 import { meKey } from "./auth";
+import { generateInBackground } from "../lib/generation-task";
 
 /* ── 端末に置くキー（SPEC §12.3 Settings） ───────────── */
 
@@ -48,8 +53,11 @@ export function useSaveAiSettings() {
       key?: string;
       model?: string;
       storeOnServer: boolean;
+      acceptDataPolicy: true;
+      geminiBillingConfirmed?: boolean;
     }) => api.put<AiSettingsResponse>("/ai/settings", body),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      qc.setQueryData(aiSettingsKey, data);
       qc.invalidateQueries({ queryKey: aiSettingsKey });
       qc.invalidateQueries({ queryKey: meKey });
     },
@@ -121,19 +129,23 @@ export function usePostPicker(
 
 export function useGenerate() {
   return useMutation({
-    mutationFn: (body: AiGenerateRequest) => api.post<AiGenerateResponse>("/ai/generate", body),
+    mutationFn: (body: AiGenerateRequest & {signal?:AbortSignal}) => generateInBackground(body),
   });
 }
 
 export function useRevise() {
   return useMutation({
-    mutationFn: (body: {
-      accountId: string;
-      candidate: AiCandidate;
-      instruction: string;
-      history?: AiHistoryTurn[];
-      context?: AiGenerationContext;
-      clientKey?: string;
-    }) => api.post<AiReviseResponse>("/ai/revise", body),
+    mutationFn: ({signal,...body}: AiReviseRequest & {signal?:AbortSignal}) => api.post<AiReviseResponse>("/ai/revise", body, signal),
   });
+}
+
+export function useBuzzDiagnosis() {
+  return useMutation({
+    mutationFn: (body: BuzzDiagnosisRequest) => api.post<BuzzDiagnosisResponse>("/ai/buzz-diagnose", body),
+  });
+}
+
+export function useAiCapabilities(provider?:string|null,model?:string|null) {
+  return useQuery({queryKey:["ai","capabilities",provider,model],enabled:Boolean(provider),
+    queryFn:()=>api.get<AiThinkingCapabilities>("/ai/capabilities")});
 }

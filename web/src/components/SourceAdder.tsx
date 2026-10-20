@@ -1,17 +1,19 @@
+import AutoTextarea from "./AutoTextarea";
 /**
  * 箱2: 参考情報（design-v0.2 §3-4 / SPEC §12.3 Create / §10.4）。
  *
- * 入口は4つ。ためたものは**プール**として残り、オートパイロットのネタ源にもなる:
+ * 入口は3つ。ためたものは**プール**として残り、オートパイロットのネタ源にもなる:
  *   テキスト貼付 … そのまま `content`
- *   YouTube URL … サーバーで正規化してタイトルだけ取る。本文は取らない
+ *   URL          … YouTube は動画、それ以外は記事として自動判定する
  *   ファイル     … .txt / .md を**ブラウザで読んで** `content` として送る（2MB まで、SPEC §10.4）
  *   記事URL     … サーバーで本文を抽出（失敗したら「本文を貼ってください」）
  */
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import type { SourceSummary, SourceType } from "@tap/shared";
 import { ApiError } from "../api/client";
 import { useCreateSource, useDeleteSource, useSources } from "../api/ai";
 import { useToast } from "./Toast";
+import { PlusIcon } from "./Icons";
 
 /** ファイルの上限（SPEC §10.4）。 */
 export const MAX_FILE_BYTES = 2 * 1024 * 1024;
@@ -24,10 +26,9 @@ const TYPE_LABEL: Record<SourceType, string> = {
 };
 
 const ADDERS: Array<{ type: SourceType; label: string }> = [
-  { type: "text", label: "＋テキスト貼付" },
-  { type: "youtube", label: "＋YouTube URL" },
-  { type: "file", label: "＋ファイル" },
-  { type: "url", label: "＋記事URL" },
+  { type: "text", label: "テキストを追加" },
+  { type: "url", label: "URLを追加" },
+  { type: "file", label: "ファイルを選ぶ" },
 ];
 
 export default function SourceAdder({
@@ -45,6 +46,7 @@ export default function SourceAdder({
   const create = useCreateSource();
   const remove = useDeleteSource();
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const inputId = useId();
 
   const [adding, setAdding] = useState<SourceType | null>(null);
   const [text, setText] = useState("");
@@ -75,8 +77,9 @@ export default function SourceAdder({
     );
   }
 
-  function submitUrl(type: "youtube" | "url") {
+  function submitUrl() {
     if (url.trim() === "") return;
+    const type: "youtube" | "url" = /(?:youtube\.com|youtu\.be)/i.test(url) ? "youtube" : "url";
     create.mutate(
       { type, url },
       {
@@ -126,17 +129,17 @@ export default function SourceAdder({
 
       <p className="muted section">記事・YouTube・メモを足すと、その内容をもとに書きます。書き方（型）は選んだ投稿から取ります。</p>
       <div
-        className="chips"
+        className="source-add-actions"
         role="group"
         aria-label="参考情報の足しかた"
-        style={{ marginTop: "var(--sp)" }}
       >
         {ADDERS.map((a) => (
           <button
             key={a.type}
             type="button"
-            className="chip"
-            aria-pressed={adding === a.type}
+            className="btn btn-sub btn-fit"
+            aria-pressed={a.type === "file" ? undefined : adding === a.type}
+            aria-expanded={a.type === "file" ? undefined : adding === a.type}
             disabled={create.isPending}
             onClick={() => {
               if (a.type === "file") {
@@ -146,7 +149,7 @@ export default function SourceAdder({
               setAdding(adding === a.type ? null : a.type);
             }}
           >
-            {a.label}
+            <PlusIcon size={16} />{a.label}
           </button>
         ))}
       </div>
@@ -164,11 +167,11 @@ export default function SourceAdder({
 
       {adding === "text" && (
         <>
-          <label className="field" htmlFor="src-text">
+          <label className="field" htmlFor={`${inputId}-text`}>
             <span>貼り付ける本文</span>
-            <textarea
-              id="src-text"
-              className="input"
+            <AutoTextarea
+              id={`${inputId}-text`}
+              className="input auto-textarea-bounded"
               rows={5}
               autoFocus
               value={text}
@@ -187,12 +190,12 @@ export default function SourceAdder({
         </>
       )}
 
-      {(adding === "youtube" || adding === "url") && (
+      {adding === "url" && (
         <>
-          <label className="field" htmlFor="src-url">
-            <span>{adding === "youtube" ? "YouTube のURL" : "記事のURL"}</span>
+          <label className="field" htmlFor={`${inputId}-url`}>
+            <span>YouTube または記事のURL</span>
             <input
-              id="src-url"
+              id={`${inputId}-url`}
               className="input"
               autoFocus
               value={url}
@@ -201,15 +204,13 @@ export default function SourceAdder({
             />
           </label>
           <p className="muted" style={{ marginTop: "calc(var(--sp) * 0.5)" }}>
-            {adding === "youtube"
-              ? "Gemini なら動画をそのまま読みます。OpenRouter のときは文字起こしを貼ってください。"
-              : "本文をこちらで取り出します。取れなかったら本文を貼ってください。"}
+            YouTube は動画として、それ以外は記事として読みます。取れなかったら本文を貼ってください。
           </p>
           <button aria-busy={create.isPending}
             type="button"
             className="btn section"
             disabled={create.isPending || url.trim() === ""}
-            onClick={() => submitUrl(adding)}
+            onClick={submitUrl}
           >
             {create.isPending ? "読み込んでいます…" : "追加する"}
           </button>
@@ -238,7 +239,7 @@ export default function SourceAdder({
             </button>
             <button
               type="button"
-              className="icon-btn"
+              className="btn-quiet source-delete"
               aria-label={`${s.title} を消す`}
               disabled={remove.isPending}
               onClick={() =>
@@ -248,7 +249,7 @@ export default function SourceAdder({
                 })
               }
             >
-              ×
+              削除
             </button>
           </div>
         ))}

@@ -29,6 +29,7 @@ import { useShell } from "../components/Shell";
 import { useToast } from "../components/Toast";
 import PublishNotice, { publishBlock } from "../components/PublishNotice";
 import Composer from "../components/Composer";
+import { BuzzDiagnosis } from "../components/BuzzDiagnosis";
 import StepHeader from "../components/StepHeader";
 import CandidateCarousel from "../components/CandidateCarousel";
 import ReviseSheet from "../components/ReviseSheet";
@@ -407,16 +408,14 @@ export default function Create() {
       ...provenance(),
     };
     create.mutate(
-      pick.kind === "now"
-        ? { status: "now", ...common }
-        : pick.kind === "next_slot"
-          ? { status: "next_slot", ...common }
-          : { status: "scheduled", scheduledAt: pick.at ?? undefined, ...common },
+      pick.kind === "next_slot"
+        ? { status: "next_slot", ...common }
+        : { status: "scheduled", scheduledAt: pick.at ?? undefined, ...common },
       {
         onSuccess: () => {
           if (!mounted.current) return;
           setSheet(null);
-          toast.show(pick.kind === "now" ? "次の実行で出します" : "予約しました", "ok");
+          toast.show("予約しました", "ok");
           navigate("/app/queue");
         },
         onError: (e) => fail(e, "予約・投稿できませんでした"),
@@ -579,7 +578,17 @@ export default function Create() {
     title = "仕上げる";
     footerClass = "wizard-footer edit-bar";
     body = (
-      <Composer account={account} draft={draft} onChange={setDraft} autoFocus={mode === "write" && bodyEmpty} />
+      <>
+        <Composer account={account} draft={draft} onChange={setDraft} autoFocus={mode === "write" && bodyEmpty} />
+        <BuzzDiagnosis
+          accountId={account.id}
+          body={draft.body}
+          disabled={busy}
+          onNeedKey={aiBlocked ? () => setSheet("aikey") : undefined}
+          onBody={(next) => setDraft({ ...draft, body: next })}
+          onEditBody={() => document.querySelector<HTMLTextAreaElement>(".wizard-edit textarea")?.focus()}
+        />
+      </>
     );
     footer = (
       <>

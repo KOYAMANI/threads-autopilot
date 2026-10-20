@@ -12,7 +12,7 @@ const stage = (): Env => ({...env, APP_ENV:"staging", STAGING_THREADS_USER_ID:un
 describe("Staging isolation", () => {
   it.each(["POST","DELETE"] as const)("blocks %s before any Threads request", async method => {
     const fetch = vi.spyOn(globalThis,"fetch");
-    await expect(call("real-token-placeholder",method,"/me/threads",{}, {env:stage(),budget:createBudget()})).rejects.toThrow("ステージング");
+    await expect(call("real-token-placeholder",method,"/me/threads",{}, {env:stage(),budget:createBudget()})).rejects.toMatchObject({code:403});
     expect(fetch).not.toHaveBeenCalled();
   });
   it("does not send email even if a mail credential was accidentally configured", async () => {
@@ -80,5 +80,27 @@ describe("Staging test account bootstrap", () => {
     const { res, userId } = await connect({ STAGING_THREADS_USER_ID: "123456", STAGING_THREADS_USERNAME: "yama_threads.sub" }, { id: "123456", username: "renamed.test.account" });
     expect(res.status).toBe(201);
     expect(await testDb().first("SELECT threads_user_id FROM accounts WHERE user_id=?", userId)).toEqual({ threads_user_id: "123456" });
+  });
+
+  it("allows the administrator to connect another profile for analysis without widening publish access", async () => {
+    const user = await registerUser();
+    const fetch = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ id: "admin-analysis-profile", username: "admin.analysis" }))
+      .mockResolvedValueOnce(Response.json({ access_token: "test-long-lived-token", expires_in: 5184000 }));
+    const config = {
+      ...stage(),
+      THREADS_MOCK: "0",
+      ADMIN_USER_ID: user.userId,
+      STAGING_THREADS_USER_ID: "pinned-publishing-profile",
+    };
+    const res = await createApp().fetch(new Request("https://test.local/api/accounts", {
+      method: "POST",
+      headers: { Cookie: user.cookie, "Content-Type": "application/json", "X-Requested-With": "fetch" },
+      body: JSON.stringify({ token: "test-token-placeholder" }),
+    }), config);
+    expect(res.status).toBe(201);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(await testDb().first("SELECT threads_user_id FROM accounts WHERE user_id=?", user.userId))
+      .toEqual({ threads_user_id: "admin-analysis-profile" });
   });
 });

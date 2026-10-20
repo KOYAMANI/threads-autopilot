@@ -14,6 +14,7 @@ import { notifyTargets } from "../lib/notify";
 import type { JobContext, RunningJob } from "../lib/jobs";
 import { refreshLongLivedToken, type CallOptions } from "../lib/threads";
 import { DAY_MS } from "../lib/time";
+import { cleanupExpiredMedia } from "../lib/media";
 
 /** 延長できるようになるまで（発行から）。 */
 export const REFRESH_MIN_AGE_MS = 24 * 3600_000;
@@ -94,7 +95,7 @@ export async function cleanupJob(ctx: JobContext, _job: RunningJob): Promise<voi
 
   await ctx.db.batch([
     { sql: "DELETE FROM ap_log WHERE at < ?", params: [ago(90)] },
-    { sql: "DELETE FROM jobs WHERE status='done' AND updated_at < ?", params: [ago(7)] },
+    { sql: "DELETE FROM jobs WHERE status IN ('done','failed') AND updated_at < ?", params: [ago(7)] },
     { sql: "DELETE FROM sessions WHERE expires_at < ?", params: [nowIso] },
     { sql: "DELETE FROM google_oauth_states WHERE expires_at < ?", params: [nowIso] },
     { sql: "DELETE FROM threads_oauth_states WHERE expires_at < ?", params: [nowIso] },
@@ -113,4 +114,6 @@ export async function cleanupJob(ctx: JobContext, _job: RunningJob): Promise<voi
        )`,
     ago(90),
   );
+
+  await cleanupExpiredMedia(ctx.env, ctx.db, ctx.now);
 }

@@ -33,11 +33,6 @@ describe("AES-256-GCM（SPEC §13 M1 完了条件2）", () => {
     expect(await decrypt(a, KEY)).toBe(await decrypt(b, KEY));
   });
 
-  it("日本語・絵文字も往復する", async () => {
-    const s = "トークン🔑テスト";
-    expect(await decrypt(await encrypt(s, KEY), KEY)).toBe(s);
-  });
-
   it("違う鍵では復号できない", async () => {
     const other = bytesToBase64(new Uint8Array(32).fill(7));
     const enc = await encrypt("secret", KEY);

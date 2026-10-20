@@ -40,6 +40,22 @@ export const ACCOUNT_ORDER_BY = "a.sort_order IS NULL, a.sort_order ASC, a.creat
 
 /** SPEC §7.1: 同一ユーザーで3件まで。 */
 export const ACCOUNT_LIMIT = 3;
+export const ADMIN_ACCOUNT_LIMIT = 10;
+
+/**
+ * 管理者はステージング検証で複数アカウントを扱うため、無料プランの行が残っていても
+ * 10件まで接続できる。一般ユーザーの契約上限はそのまま尊重する。
+ */
+export function effectiveAccountLimit(
+  userId: string,
+  adminUserId: string | undefined,
+  configuredLimit: number | null | undefined,
+): number {
+  const planLimit = Math.max(1, configuredLimit ?? 1);
+  return adminUserId?.trim() === userId
+    ? ADMIN_ACCOUNT_LIMIT
+    : planLimit;
+}
 
 /**
  * アカウントの色。接続順に「まだ使っていない色」を割り当てる（下の `POST /accounts`）。
@@ -169,7 +185,7 @@ export function canPublishAccount(account: AccountRow, nowMs = Date.now()): bool
 
 export function toAccountSummary(
   account: AccountRow,
-  options: { autopilotEnabled?: boolean; nowMs?: number } = {},
+  options: { autopilotEnabled?: boolean; nowMs?: number; pendingApprovalCount?: number } = {},
 ): AccountSummary {
   const nowMs = options.nowMs ?? Date.now();
   return {
@@ -185,5 +201,6 @@ export function toAccountSummary(
     longLived: Boolean(account.token_long_lived),
     lastFullSyncAt: account.last_full_sync_at,
     autopilotEnabled: Boolean(options.autopilotEnabled),
+    pendingApprovalCount: Math.max(0, options.pendingApprovalCount ?? 0),
   };
 }

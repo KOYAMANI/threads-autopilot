@@ -15,6 +15,7 @@
  * 二重投稿の防止: Threads への publish が1回成功するたびに、**次に進む前に**
  * `result_ids_json` を保存する。途中で落ちても、再開時は保存済みの step から続く。
  */
+import { canPublishForAccount } from "../lib/staging-beta-policy";
 import { buildTags, startOfTzDay, validatePost, type PostTags } from "@tap/shared";
 import { accountToken, loadAccount, type AccountRow } from "../lib/accounts";
 import { apLog, loadAutopilot } from "../lib/autopilot";
@@ -31,6 +32,8 @@ import {
   type QueueRow,
 } from "../lib/queue";
 import {
+  createCarouselContainer,
+  createCarouselImageItem,
   createImageContainer,
   createTextPost,
   getContainerStatus,
@@ -288,6 +291,7 @@ const PUBLISHED_COLUMNS = [
   "account_id",
   "id",
   "root_id",
+  "reply_to_id",
   "is_reply",
   "text",
   "permalink",
@@ -314,6 +318,8 @@ export async function finishQueue(
 ): Promise<void> {
   const nowIso = ctx.now.toISOString();
   const comments = parseJsonArray(row.comments_json);
+  const mediaUrls = parseJsonArray(row.media_urls_json);
+  const primaryMediaUrl = mediaUrls[0] ?? row.image_url;
   const rootId = resultIds[0];
 
   if (rootId) {
@@ -327,11 +333,12 @@ export async function finishQueue(
       account.id,
       id,
       rootId,
+      i === 0 ? null : resultIds[i - 1],
       i === 0 ? 0 : 1,
       i === 0 ? row.body : (comments[i - 1] ?? ""),
       null, // permalink は応答に無い。次の full_sync で入る
-      i === 0 && row.image_url ? "IMAGE" : "TEXT_POST",
-      i === 0 ? row.image_url : null,
+      i === 0 && mediaUrls.length > 1 ? "CAROUSEL" : i === 0 && primaryMediaUrl ? "IMAGE" : "TEXT_POST",
+      i === 0 ? primaryMediaUrl : null,
       null,
       i === 0 ? (row.root_published_at ?? nowIso) : nowIso,
       i === 0 ? tags : "{}",
@@ -342,6 +349,7 @@ export async function finishQueue(
     await ctx.db.batch(
       buildUpsertChunks("posts", PUBLISHED_COLUMNS, rows, ["account_id", "id"], [
         "root_id",
+  "reply_to_id",
         "is_reply",
         "text",
         "media_type",
@@ -433,14 +441,18 @@ async function runStep(
       return "continue";
     }
 
-    if (row.image_url) {
-      const container = await createImageContainer(
-        token,
-        row.image_url,
-        row.body,
-        { replyControl },
-        call,
-      );
+    const mediaUrls = parseJsonArray(row.media_urls_json);
+    const effectiveMediaUrls = mediaUrls.length > 0 ? mediaUrls : (row.image_url ? [row.image_url] : []);
+    if (effectiveMediaUrls.length > 0) {
+      const container = effectiveMediaUrls.length === 1
+        ? await createImageContainer(token, effectiveMediaUrls[0]!, row.body, { replyControl }, call)
+        : await createCarouselContainer(
+            token,
+            await Promise.all(effectiveMediaUrls.map(async (url) => (await createCarouselImageItem(token, url, call)).id)),
+            row.body,
+            { replyControl },
+            call,
+          );
       await patchQueue(ctx.db, ctx, row.id, {
         containerId: container.id,
         containerPolls: 0,
@@ -695,6 +707,7 @@ export async function publishJob(ctx: JobContext, job: RunningJob): Promise<void
   if (!job.accountId) return;
   const account = await loadAccount(ctx.db, job.accountId);
   if (!account) return;
+  if (!await canPublishForAccount(ctx.env, ctx.db, account.user_id, account.threads_user_id, ctx.now.getTime())) return;
 
   if (await licenseRevoked(ctx, account)) {
     await ctx.db.run("UPDATE autopilot SET enabled=0, updated_at=? WHERE account_id=?", ctx.now.toISOString(), account.id);
@@ -704,14 +717,14 @@ export async function publishJob(ctx: JobContext, job: RunningJob): Promise<void
       account.id,
       ctx.now.toISOString(),
       "license",
-      "ライセンスが無効化されているため、自動投稿を停止しました",
+      "アカウントの利用が停止されているため、自動投稿を停止しました",
     );
     return;
   }
   if (account.status !== "ok") return;
 
   const token = await accountToken(ctx.env, account);
-  const call: CallOptions = { budget: ctx.budget, env: ctx.env, now: ctx.now.getTime() };
+  const call: CallOptions = { budget: ctx.budget, env: ctx.env, now: ctx.now.getTime(), publishingUserId: account.user_id, publishingThreadsUserId: account.threads_user_id };
   const nowIso = ctx.now.toISOString();
 
   for (let i = 0; i < (ctx.env.WORKERS_PLAN === "free" ? 1 : MAX_STEPS_PER_RUN); i++) {
@@ -720,11 +733,13 @@ export async function publishJob(ctx: JobContext, job: RunningJob): Promise<void
     const row = await ctx.db.first<QueueRow>(
       `SELECT ${QUEUE_SELECT} FROM queue
          WHERE account_id=? AND status IN ('scheduled','publishing')
+           AND (?=0 OR source<>'autopilot')
            AND (status='publishing' OR source<>'autopilot' OR EXISTS (
              SELECT 1 FROM autopilot ap WHERE ap.account_id=queue.account_id AND ap.enabled=1))
            AND scheduled_at<=? AND (next_step_at IS NULL OR next_step_at<=?)
          ORDER BY scheduled_at ASC LIMIT 1`,
       account.id,
+      ctx.env.APP_ENV === "staging" ? 1 : 0,
       nowIso,
       nowIso,
     );

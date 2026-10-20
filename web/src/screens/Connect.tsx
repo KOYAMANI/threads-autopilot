@@ -15,6 +15,7 @@ import { useMutation } from "@tanstack/react-query";
 import { activeAccountStorageKey } from "../lib/active-account";
 import { useToast } from "../components/Toast";
 import { CROSSFADE, SPRING, useReducedMotion } from "../lib/motion";
+import { useEnvironment } from "../api/environment";
 
 const STEPS = [
   "developers.facebook.com でアプリを作り、「Threads API」を追加します",
@@ -28,6 +29,7 @@ export default function Connect() {
   const navigate = useNavigate();
   const toast = useToast();
   const reduced = useReducedMotion();
+  const environment = useEnvironment();
 
   const isAdd = params.get("add") === "1";
   const [token, setToken] = useState("");
@@ -133,6 +135,7 @@ export default function Connect() {
       <p className="muted" style={{ marginTop: "0.375rem", marginBottom: "calc(var(--sp) * 3)" }}>
         下のボタンから Threads の画面に移り、「許可」を押すだけです。パスワードは預かりません。
       </p>
+      {environment.data?.environment === "local" && <div className="msg msg-warn" style={{marginBottom:"1.5rem"}}><strong>ローカル検証について</strong><p>下のアクセストークン接続は、実際のThreadsアカウントでも利用できます。接続後の「今すぐ投稿」と予約投稿は実アカウントへ公開されます。かんたん接続は、Meta側へのローカル戻り先登録と管理者用アプリキーがないため無効です。</p></div>}
 
       <div className="card" style={{ marginBottom: "1.5rem" }}>
         <h2>Threads でかんたん接続</h2>

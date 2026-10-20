@@ -6,7 +6,8 @@ import { sha256Hex } from "../lib/crypto";
 import { randomToken } from "../lib/google";
 import { readCookie } from "../lib/session";
 import { rateHit } from "../lib/rate";
-import { exchangeToken } from "../lib/threads";
+import { exchangeToken, ThreadsApiError } from "../lib/threads";
+import { BudgetExceeded } from "../lib/budget";
 import { connectThreadsAccount } from "./accounts";
 import type { Env } from "../env";
 
@@ -14,6 +15,32 @@ const COOKIE = "__Secure-tap_threads_oauth";
 export const THREADS_SCOPES = "threads_basic,threads_content_publish,threads_manage_insights,threads_read_replies,threads_manage_replies";
 const configured = (env: Env) => Boolean(env.THREADS_APP_ID && env.THREADS_APP_SECRET);
 const redirect = (env: Env) => new URL("/api/threads/oauth/callback", env.APP_ORIGIN).href;
+
+// Logs must never receive the error object, message, stack or provider payload:
+// fetch errors can embed token-bearing URLs and provider messages can echo secrets.
+type OAuthStage = "short_exchange" | "long_exchange" | "profile_save";
+const FAILURE_CODE:Record<OAuthStage,string> = {
+  short_exchange:"OAUTH_SHORT_EXCHANGE", long_exchange:"OAUTH_LONG_EXCHANGE", profile_save:"OAUTH_PROFILE_SAVE",
+};
+class OAuthResponseError extends Error {}
+const safeInteger = (value:unknown):number|undefined => typeof value==="number" && Number.isSafeInteger(value) ? value : undefined;
+function logOAuthFailure(stage:OAuthStage,error:unknown,httpStatus?:number) {
+  // Class labels are constants, never err.name / constructor.name supplied by input.
+  const errorClass = error instanceof ThreadsApiError ? "ThreadsApiError"
+    : error instanceof BudgetExceeded ? "BudgetExceeded"
+    : error instanceof OAuthResponseError ? "OAuthResponseError"
+    : error instanceof SyntaxError ? "SyntaxError"
+    : error instanceof TypeError ? "TypeError"
+    : error instanceof DOMException ? (error.name==="TimeoutError" ? "TimeoutError" : error.name==="AbortError" ? "AbortError" : "DOMException")
+    : error instanceof Error ? "Error" : "UnknownError";
+  console.error("[threads-oauth]", {
+    stage, errorClass,
+    ...(safeInteger(httpStatus)===undefined ? {} : {httpStatus}),
+    ...(error instanceof ThreadsApiError && safeInteger(error.code)!==undefined ? {providerCode:error.code} : {}),
+    ...(error instanceof ThreadsApiError && safeInteger(error.subcode)!==undefined ? {providerSubcode:error.subcode} : {}),
+    ...(error instanceof BudgetExceeded ? {used:error.used,limit:error.limit} : {}),
+  });
+}
 
 export function threadsOAuthRoutes() {
   const r = new Hono<AppEnv>();
@@ -57,16 +84,33 @@ export function threadsOAuthRoutes() {
     if (!consumed) return fail("OAUTH_INVALID","接続を開始し直してください",400);
     c.header("Set-Cookie",`${COOKIE}=; Path=/api/threads/oauth; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
     c.header("Cache-Control","no-store");
+    let stage:OAuthStage="short_exchange";
+    let upstreamStatus:number|undefined;
     try {
       c.get("budget").subrequests.use();
       const response=await fetch("https://graph.threads.net/oauth/access_token",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams({client_id:c.env.THREADS_APP_ID!,client_secret:c.env.THREADS_APP_SECRET!,redirect_uri:redirect(c.env),code:input.data.code,grant_type:"authorization_code"}),signal:AbortSignal.timeout(15000)});
-      const short=await response.json() as {access_token?:string};
-      if (!response.ok || !short.access_token) return fail("OAUTH_EXCHANGE","Threadsの認証をやり直してください",400);
+      upstreamStatus=response.status;
+      const short=await response.json() as {access_token?:unknown;error?:{code?:unknown;error_subcode?:unknown}}|null;
+      if (!response.ok || typeof short?.access_token!=="string" || !short.access_token) {
+        const providerCode=safeInteger(short?.error?.code);
+        const providerSubcode=safeInteger(short?.error?.error_subcode);
+        const error=providerCode===undefined ? new OAuthResponseError() : new ThreadsApiError({code:providerCode,subcode:providerSubcode,message:"OAuth response rejected",raw:""});
+        logOAuthFailure(stage,error,upstreamStatus);
+        return fail(FAILURE_CODE[stage],"Threadsの認証をやり直してください",400);
+      }
+      stage="long_exchange"; upstreamStatus=undefined;
       const long=await exchangeToken(short.access_token,c.env.THREADS_APP_SECRET!,{env:c.env,budget:c.get("budget")});
-      if (!long.access_token) return fail("OAUTH_EXCHANGE","長期トークンに交換できませんでした",400);
-      return await connectThreadsAccount(c,long.access_token,undefined,true);
-    } catch {
-      return fail("OAUTH_EXCHANGE","Threadsに接続できませんでした。権限を確認してやり直してください",502);
+      if (typeof long?.access_token!=="string" || !long.access_token) {
+        logOAuthFailure(stage,new OAuthResponseError());
+        return fail(FAILURE_CODE[stage],"長期トークンに交換できませんでした",400);
+      }
+      stage="profile_save";
+      const connected=await connectThreadsAccount(c,long.access_token,undefined,true);
+      if (!connected.ok) logOAuthFailure(stage,new OAuthResponseError(),connected.status);
+      return connected;
+    } catch (error) {
+      logOAuthFailure(stage,error,upstreamStatus);
+      return fail(FAILURE_CODE[stage],"Threadsに接続できませんでした。権限を確認してやり直してください",502);
     }
   });
   return r;

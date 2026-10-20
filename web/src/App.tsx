@@ -18,9 +18,11 @@ import { useMe } from "./api/auth";
  */
 const Connect = lazy(() => import("./screens/Connect"));
 const Home = lazy(() => import("./screens/Home"));
+const Tips = lazy(() => import("./screens/Tips"));
 const Create = lazy(() => import("./screens/Create"));
 const Queue = lazy(() => import("./screens/Queue"));
 const Settings = lazy(() => import("./screens/Settings"));
+const Onboarding = lazy(() => import("./screens/Onboarding"));
 
 function Loading() {
   return (
@@ -31,13 +33,21 @@ function Loading() {
 }
 
 /** 未認証は /login、アカウント0件は /connect（SPEC §12.1）。 */
+function AuthUnavailable({ retry }: { retry: () => void }) {
+  return <main className="screen-plain"><p role="alert">ログイン状態を確認できませんでした。通信を確認して再試行してください。</p><button className="btn" onClick={retry}>再試行</button></main>;
+}
+
 function RequireAuth({ children }: { children: ReactElement }) {
-  const { data, isPending, isError } = useMe();
+  const { data, isPending, isError, refetch } = useMe();
   const location = useLocation();
 
   if (isPending) return <Loading />;
-  if (isError || !data) {
+  if (isError && !data) return <AuthUnavailable retry={() => { void refetch(); }} />;
+  if (!data) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  }
+  if (!data.profile.onboardingCompleted && location.pathname !== "/app/settings") {
+    return <Navigate to="/onboarding" replace />;
   }
   if (data.accounts.length === 0 && !["/app/home", "/app/settings"].includes(location.pathname)) return <Navigate to="/connect" replace />;
   return children;
@@ -45,11 +55,12 @@ function RequireAuth({ children }: { children: ReactElement }) {
 
 /** /connect も認証は要る（アカウント0件でも通す）。 */
 function RequireLogin({ children }: { children: ReactElement }) {
-  const { data, isPending, isError } = useMe();
+  const { data, isPending, isError, refetch } = useMe();
   const location = useLocation();
 
   if (isPending) return <Loading />;
-  if (isError || !data) {
+  if (isError && !data) return <AuthUnavailable retry={() => { void refetch(); }} />;
+  if (!data) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
   return children;
@@ -63,6 +74,14 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         {/* メールのリンクは /login?reset=<token>。/reset でも同じ画面を出す */}
         <Route path="/reset" element={<Login />} />
+        <Route
+          path="/onboarding"
+          element={
+            <RequireLogin>
+              <Onboarding />
+            </RequireLogin>
+          }
+        />
 
         <Route
           path="/connect"
@@ -83,6 +102,9 @@ export default function App() {
         >
           <Route index element={<Navigate to="/app/home" replace />} />
           <Route path="home" element={<Home />} />
+          {/* 分析はホームが兼ねる（DECISIONS 2026-10-20） */}
+          <Route path="analytics" element={<Navigate to="/app/home" replace />} />
+          <Route path="tips" element={<Tips />} />
           <Route path="create" element={<Create />} />
           <Route path="queue" element={<Queue />} />
           {/* オートパイロットは開発中。画面（screens/Autopilot.tsx）は残し、入口だけ閉じる */}

@@ -81,11 +81,41 @@ export default function aiMockCall(input: MockAiInput): string {
   // The composition protocol is mocked explicitly; never call real providers in tests.
   if (input.user.startsWith("{")) {
     const request = JSON.parse(input.user);
-    if (request.task === "composition-plan") return JSON.stringify({ status: "ok", summary: "投稿を型、参考情報を内容として使用", structure: "導入と続き", style: "短い断定", partCount: 2, anchors: [], variants: Array.from({ length: request.n }, (_, i) => ({ label: `切り口${i + 1}`, approach: `焦点${i + 1}`, blueprint: { posts: ["{{body}}", "{{comment}}"], slots: [{ id: "body", task: "本文", maxChars: 450 }, { id: "comment", task: "続き", maxChars: 450 }] } })) });
-    if (request.task === "composition-slots") return JSON.stringify({ slots: { body: MOCK_BODIES[request.index % MOCK_BODIES.length], comment: MOCK_COMMENTS[request.index % MOCK_COMMENTS.length]![0] } });
-    if (request.task === "composition-write") {
-      const i = request.index % MOCK_BODIES.length;
-      return JSON.stringify({ candidates: [{ hook: MOCK_HOOKS[i], body: MOCK_BODIES[i], comments: [MOCK_COMMENTS[i]![0]], basis: `「${request.sources[0]?.title ?? "指示"}」の内容を使いました` }] });
+    if (request.task === "buzz-diagnosis") {
+      const body = String(request.body ?? "");
+      const hasMedia = request.hasMedia === true;
+      const firstLine = body.split(/\r?\n/).find((line: string) => line.trim())?.trim() ?? "";
+      const hookScore = firstLine.length >= 12 && firstLine.length <= 55 ? 38 : 29;
+      const bodyScore = body.length >= 120 ? 30 : hasMedia ? 27 : 22;
+      const ctaScore = /ください|どうですか|試して|見て|教えて|保存/.test(body) ? 12 : 9;
+      return JSON.stringify({
+        score: hookScore + bodyScore + ctaScore,
+        priority: hookScore < 35 ? "hook" : bodyScore < 27 ? "body" : "cta",
+        sections: [
+          { key: "hook", label: "1行目", score: hookScore, maxScore: 50, feedback: hookScore < 35 ? "読む人の場面が浮かぶ具体語を入れてみましょう。" : "内容と読む理由が最初に伝わります。" },
+          { key: "body", label: "本文", score: bodyScore, maxScore: 35, feedback: body.length < 120 && hasMedia ? "本文は短めですが、画像で補足されているなら問題ありません。" : body.length < 120 ? "体験か具体例を一つ足すと伝わりやすくなります。" : "体験と具体策の流れが読みやすいです。" },
+          { key: "cta", label: "締め", score: ctaScore, maxScore: 15, feedback: ctaScore < 10 ? "読んだ人が次にできる一歩を具体的にしましょう。" : "次の行動が分かる締めです。" },
+        ],
+        hookSuggestions: [
+          "毎日投稿しているのに、反応につながらない人へ。",
+          "同じ作業を毎回ゼロから始めていませんか。",
+          "続けても結果が変わらなかった理由があります。",
+        ],
+        mediaAnalyzed: false,
+      });
+    }
+    if(request.task === "abstract-reference") return JSON.stringify({structure:request.posts.map((p:string,i:number)=>`${i+1}投稿目: 導入と${(p.match(/^\s*・/gm)??[]).length}項目。`).join("\n"),tone:"短い口語"});
+    if (request.task === "post-edit") return JSON.stringify({preparation:request.preparation ?? "",candidates:request.drafts,notes:[]});
+    if (request.task === "post-compose") {
+      const original = request.currentDraft ? [request.currentDraft.body, ...request.currentDraft.comments] : request.reference.posts;
+      const offset = [...(request.sources[0]?.title ?? "")].reduce((sum: number, ch: string) => (sum + ch.codePointAt(0)!) % MOCK_BODIES.length, 0);
+      return JSON.stringify({ candidates: Array.from({length: request.n}, (_, i) => {
+        let posts: string[];
+        if (request.operation === "revise") posts = original.map((p: string, index: number) => index ? p : p + "（" + request.request + "）");
+        else if (original.length && request.mode !== "information") posts = original.map((p: string, index: number) => index ? p : ["", "うん、", "そう、", "ほんと、", "やっぱり、"][i] + p);
+        else posts = Array.from({length:request.resolvedRules.postCount ?? 1},(_,j)=>j ? "続きの説明。" : MOCK_BODIES[(i + offset) % MOCK_BODIES.length]!);
+        return {posts};
+      }), notes: [] });
     }
   }
   // revise は1案だけ返す（直前の案の本文の先頭に指示を織り込んだ体で差し替える）

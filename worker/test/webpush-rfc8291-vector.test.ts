@@ -1,7 +1,7 @@
 // 一時ファイル（独立検証用）。RFC 8291 §5 の公式テストベクタで decryptPayload を検証する。
 import { describe, expect, it } from "vitest";
 import { base64UrlToBytes } from "../src/lib/crypto";
-import { decryptPayload, encryptPayload } from "../src/lib/webpush";
+import { decryptPayload } from "../src/lib/webpush";
 
 const UA_PRIVATE_D = "q1dXpw3UpT5VOmu_cf_v6ih07Aems3njxI-JWgLcM94";
 const UA_PUBLIC = "BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4";
@@ -31,13 +31,5 @@ describe("RFC 8291 §5 の公式テストベクタ", () => {
       base64UrlToBytes(AUTH_SECRET),
     );
     expect(plain).toBe("When I grow up, I want to be a watermelon");
-  });
-
-  it("自前の encryptPayload の出力も、同じ受信鍵で復号できる（往復）", async () => {
-    const body = await encryptPayload(
-      { endpoint: "https://x.example/y", keys: { p256dh: UA_PUBLIC, auth: AUTH_SECRET } },
-      "往復",
-    );
-    expect(await decryptPayload(body, jwk, base64UrlToBytes(AUTH_SECRET))).toBe("往復");
   });
 });

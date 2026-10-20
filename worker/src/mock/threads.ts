@@ -282,6 +282,14 @@ export function mockCall(req: MockRequest): unknown {
     return page(replies, p, store);
   }
 
+  const directReplies = /^\/([^/]+)\/replies$/.exec(path);
+  if (directReplies && req.method === "GET") {
+    const replies = store.posts.filter(x => x.replied_to_id === directReplies[1])
+      .sort((a,b) => Date.parse(a.timestamp)-Date.parse(b.timestamp));
+    const result=page(replies,p,store);
+    return {...result,paging:{...result.paging,...(result.paging.cursors?.after ? {next:"mock-next-page"} : {})}};
+  }
+
   // ── 投稿の作成 ────────────────────────────────────
   if (path === "/me/threads" && req.method === "POST") {
     const text = p.text ?? "";
@@ -508,6 +516,8 @@ function page(posts: MockPost[], p: Params, store: MockStore) {
       root_post: { id: x.root_id },
       replied_to: x.replied_to_id ? { id: x.replied_to_id } : undefined,
       owner: { id: store.user.id },
+      username: store.user.username,
+      is_reply_owned_by_me: x.is_reply,
     })),
     paging: next < posts.length ? { cursors: { after: String(next) } } : {},
   };

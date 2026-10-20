@@ -22,6 +22,7 @@ import { HANDLERS } from "../jobs/registry";
 
 export const JOB_TYPES = [
   "publish",
+  "ai_generate",
   "full_sync",
   "insights_recent",
   "insights_daily",
@@ -44,6 +45,7 @@ export type JobType = (typeof JOB_TYPES)[number];
 /** 小さいほど先に走る。publish 系は常に最優先（SPEC §8.2）。 */
 export const JOB_PRIORITY: Record<JobType, number> = {
   publish: 1,
+  ai_generate: 2,
   insights_recent: 3,
   // ap_notify は「もう出る」と伝えるものなので、計画より先に届かせる
   ap_notify: 3,
@@ -308,6 +310,8 @@ export type RunJobsResult = {
   failed: number;
   /** 予算切れで打ち切ったか */
   exhausted: boolean;
+  /** A handled failure was put back in pending state for this many seconds. */
+  retryDelaySeconds?: number;
 };
 
 function parseState(json: string): JobState {
@@ -423,7 +427,7 @@ export async function runJobs(
       } else {
         const delayMin = BACKOFF_MIN[Math.min(attempts - 1, BACKOFF_MIN.length - 1)]!;
         await ctx.sys.run(
-          "UPDATE jobs SET status='pending', attempts=?, last_error=?, state_json=?, next_run_at=?, updated_at=? WHERE id=?",
+          "UPDATE jobs SET status='pending', attempts=?, last_error=?, state_json=?, next_run_at=?, updated_at=? WHERE id=? AND status='running'",
           attempts,
           describeError(e),
           JSON.stringify(job.state),
@@ -431,6 +435,8 @@ export async function runJobs(
           nowIso,
           job.id,
         );
+        const retryDelaySeconds = delayMin * 60;
+        result.retryDelaySeconds = Math.min(result.retryDelaySeconds ?? retryDelaySeconds, retryDelaySeconds);
         result.failed++;
       }
     }
@@ -454,7 +460,7 @@ async function finish(
 ): Promise<void> {
   const nowIso = ctx.now.toISOString();
   await ctx.sys.run(
-    "UPDATE jobs SET status=?, state_json=?, last_error=?, updated_at=? WHERE id=?",
+    "UPDATE jobs SET status=?, state_json=?, last_error=?, updated_at=? WHERE id=? AND status='running'",
     status,
     JSON.stringify(job.state),
     error,
@@ -467,7 +473,7 @@ async function finish(
 async function defer(ctx: JobContext, job: RunningJob): Promise<void> {
   const nowIso = ctx.now.toISOString();
   await ctx.sys.run(
-    "UPDATE jobs SET status='pending', state_json=?, next_run_at=?, updated_at=? WHERE id=?",
+    "UPDATE jobs SET status='pending', state_json=?, next_run_at=?, updated_at=? WHERE id=? AND status='running'",
     JSON.stringify(job.state),
     nowIso,
     nowIso,

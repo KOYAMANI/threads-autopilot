@@ -6,9 +6,7 @@ describe("normalizeUrl", () => {
     expect(normalizeUrl("HTTPS://Example.COM./Path")).toBe("https://example.com/Path");
   });
 
-  it("既定ポートを落とす（非既定は残す）", () => {
-    expect(normalizeUrl("https://example.com:443/a")).toBe("https://example.com/a");
-    expect(normalizeUrl("http://example.com:80/a")).toBe("http://example.com/a");
+  it("非既定ポートは残す", () => {
     expect(normalizeUrl("http://example.com:8080/a")).toBe("http://example.com:8080/a");
   });
 

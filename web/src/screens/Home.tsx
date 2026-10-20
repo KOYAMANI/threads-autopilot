@@ -276,6 +276,8 @@ function Loaded({
         </div>
       </section>
 
+      <TimeBuckets posts={data.posts} tz={tz} />
+
       </div>
       {/* トップ投稿 */}
       <section className="section" aria-label="トップ投稿">
@@ -350,6 +352,48 @@ function Loaded({
         <Pagination label="リンク" paging={linkPaging} />
       </section>
     </>
+  );
+}
+
+/** 朝・昼・夕・夜ごとの1投稿あたりの表示回数（B 系統の分析画面から。DECISIONS 2026-10-20） */
+function TimeBuckets({ posts, tz }: { posts: DashboardResponse["posts"]; tz: string }) {
+  const buckets = [
+    { label: "朝", total: 0, count: 0 },
+    { label: "昼", total: 0, count: 0 },
+    { label: "夕", total: 0, count: 0 },
+    { label: "夜", total: 0, count: 0 },
+  ];
+  for (const post of posts) {
+    const hour = Number(new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "2-digit", hourCycle: "h23" }).format(new Date(post.postedAt)));
+    const i = hour >= 5 && hour < 11 ? 0 : hour >= 11 && hour < 16 ? 1 : hour >= 16 && hour < 21 ? 2 : 3;
+    buckets[i]!.total += post.views;
+    buckets[i]!.count += 1;
+  }
+  const rows = buckets.map((b) => ({ ...b, average: b.count ? Math.round(b.total / b.count) : 0 }));
+  const max = Math.max(1, ...rows.map((b) => b.average));
+  const best = rows.reduce((a, b) => (b.average > a.average ? b : a), rows[0]!);
+  return (
+    <section className="section" aria-label="時間帯別の結果">
+      <div className="chart-card">
+        <div className="chart-title">時間帯別の結果</div>
+        {posts.length === 0 ? (
+          <div className="chart-empty"><p className="muted">投稿が増えると、反応の良い時間帯がここに出ます。</p></div>
+        ) : (
+          <>
+            <div className="time-bucket-chart" aria-label="時間帯別の1投稿平均表示数">
+              {rows.map((b) => (
+                <div key={b.label}>
+                  <span><i style={{ height: `${Math.max(b.average ? 8 : 0, (b.average / max) * 100)}%` }} /></span>
+                  <b className="num">{fmtN(b.average)}</b>
+                  <small>{b.label}</small>
+                </div>
+              ))}
+            </div>
+            <p className="muted time-insight">この期間は「{best.label}」が1投稿あたりいちばん多く表示されています。</p>
+          </>
+        )}
+      </div>
+    </section>
   );
 }
 
