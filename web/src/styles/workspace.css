@@ -475,6 +475,9 @@ textarea.wizard-textarea { min-height:9rem; padding:.9rem 1rem; border-color:var
 .picked { display:grid; gap:.35rem; min-width:0; margin-bottom:1rem; padding:.75rem .9rem; border-radius:10px; background:var(--paper2); font-size:.8125rem; color:var(--ink2); }
 .picked > span { font-size:.6875rem; letter-spacing:.04em; }
 /* The sample is shown whole (thread included); long ones scroll inside the box. */
+.picked-edit { margin-bottom:1.25rem; }
+.picked-edit summary { cursor:pointer; font-size:.6875rem; letter-spacing:.04em; }
+.picked-edit p { margin-top:.35rem; max-height:30vh; }
 .picked p { margin:0; max-height:40vh; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font-size:.875rem; line-height:1.7; color:var(--ink); }
 
 /* candidates: one card per view, swipe sideways (inner scroll only — the page never widens). */

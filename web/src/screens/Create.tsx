@@ -266,7 +266,8 @@ export default function Create() {
     setPicks(has ? [] : [p.id]);
     setPickedText((t) => ({ ...t, [p.id]: [p.text, ...p.children.map((c) => c.text)].join("\n\n") }));
     setViewerOpen(false);
-    if (!has) go("brief");
+    // 選んだら本文を書く画面へ。AI に書かせるときはそこから「AIで3案つくる」（2026-10-21）
+    if (!has) go("edit");
   }
 
   function startGenerate() {
@@ -493,7 +494,7 @@ export default function Create() {
     body = (
       <>
         <h1 className="wizard-title">{rewrite ? "リライトする投稿を選ぶ" : "見本にする投稿を選ぶ"}</h1>
-        <p className="wizard-sub">{rewrite ? "1本選ぶと、次に進みます。" : "1本選ぶと、次に進みます。表示回数の多い順です。"}</p>
+        <p className="wizard-sub">{rewrite ? "1本選ぶと、本文を書く画面に進みます。" : "1本選ぶと、本文を書く画面に進みます。表示回数の多い順です。"}</p>
         {/* 上で出どころを切り替え、下に中身（DECISIONS 2026-10-20） */}
         <div className="pick-source" role="tablist" aria-label="見本の出どころ">
           <button
@@ -618,11 +619,27 @@ export default function Create() {
   if (step === "edit") {
     title = "仕上げる";
     footerClass = "wizard-footer edit-bar";
+    const sampleText = referenceOrigin === "paste" ? referenceText.trim() : (picks[0] && pickedText[picks[0]]) || "";
+    const showSample = mode === "template" && sampleText !== "";
     body = (
-      <Composer account={account} draft={draft} onChange={setDraft} autoFocus={mode === "write" && bodyEmpty} />
+      <>
+        {/* 型で作るときは、見本を上に出したまま書く。AI に書かせるなら下の「AIで3案つくる」（2026-10-21） */}
+        {showSample && (
+          <details className="picked picked-edit" open={candidates.length === 0}>
+            <summary>見本</summary>
+            <p>{sampleText}</p>
+          </details>
+        )}
+        <Composer account={account} draft={draft} onChange={setDraft} autoFocus={bodyEmpty} />
+      </>
     );
     footer = (
       <>
+        {mode === "template" && candidates.length === 0 && (
+          <button type="button" className="btn btn-sub" disabled={busy} onClick={() => go("brief")}>
+            AIで3案つくる
+          </button>
+        )}
         <button type="button" className="btn btn-sub" disabled={busy} onClick={openRevise}>
           AIで直す
         </button>
