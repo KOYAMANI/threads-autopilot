@@ -490,6 +490,9 @@ textarea.wizard-textarea { min-height:9rem; padding:.9rem 1rem; border-color:var
 .thread-preview-meta { display:flex; gap:.5rem; align-items:baseline; font-size:.75rem; line-height:28px; color:var(--ink3); }
 .thread-preview-meta strong { color:var(--ink); }
 .thread-preview-text { margin:0; font-size:.875rem; line-height:1.6; color:var(--ink); white-space:pre-wrap; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+/* 「全文を見る」でその場で開く（貼り付けなど、全文表示のシートが無いとき）。長いときは箱の中でスクロール */
+.thread-preview.expanded .thread-preview-text { display:block; -webkit-line-clamp:unset; overflow:visible; }
+.thread-preview.expanded .thread-preview-list { max-height:50vh; overflow:auto; }
 .picked p { margin:0; max-height:40vh; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font-size:.875rem; line-height:1.7; color:var(--ink); }
 
 /* candidates: one card per view, swipe sideways (inner scroll only — the page never widens). */

@@ -581,7 +581,7 @@ function DailySlots({ date, data, loading, error, now, tz, canPublish, onOpen, o
       const past = new Date(slot.at).getTime() <= now;
       return <div className="slot-timeline-row" key={slot.at}>
         <div className="slot-timeline-time num"><time dateTime={slot.at}>{slot.time}</time><span className={`slot-timeline-dot${slot.item ? " is-filled" : ""}`} /></div>
-        {slot.item ? renderItem(slot.item) : <div className={`slot-empty${past || slot.skipped ? " is-muted" : ""}`}><div><strong>{slot.skipped ? "取り消した枠" : past ? "過ぎた空き枠" : "空き枠"}</strong><p className="muted">{slot.skipped ? "自動作成では埋め直しません" : past ? "この時刻は過ぎています" : "下書きを選んで、この時刻に予約"}</p></div>{!past && !slot.skipped && <button type="button" className="btn btn-sub btn-fit" disabled={!canPublish} onClick={() => onFill(slot.at)}>＋ 下書きを入れる</button>}</div>}
+        {slot.item ? renderItem(slot.item) : <div className={`slot-empty${past || slot.skipped ? " is-muted" : ""}`}><div><strong>{slot.skipped ? "取り消した枠" : past ? "過ぎた空き枠" : "空き枠"}</strong><p className="muted">{slot.skipped ? "この枠には入れません" : past ? "この時刻は過ぎています" : "下書きを選んで、この時刻に予約"}</p></div>{!past && !slot.skipped && <button type="button" className="btn btn-sub btn-fit" disabled={!canPublish} onClick={() => onFill(slot.at)}>＋ 下書きを入れる</button>}</div>}
       </div>;
     })}</div>
     {data.unslotted.length > 0 && <div className="section"><h3>スロット以外の予約・投稿</h3><p className="muted">日時を直接指定した投稿や、スロット設定を変える前の予約です。</p><div className="rows section">{data.unslotted.map(renderItem)}</div></div>}

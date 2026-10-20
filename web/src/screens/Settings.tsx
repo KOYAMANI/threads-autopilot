@@ -488,7 +488,7 @@ function AiKeyCard() {
             onClick={() => {
               if (
                 window.confirm(
-                  "保存したAIキーを削除し、自動運用を停止しますか？",
+                  "保存したAIキーを削除しますか？AI で作る・直すが使えなくなります。",
                 )
               )
                 remove.mutate(undefined, {
@@ -581,7 +581,7 @@ function NotificationCard() {
             <span className="body">
               <span className="t">メールで知らせる</span>
               <span className="n">
-                自動投稿の下書き・投稿の失敗・トークンの期限。承認と取消のリンクが付きます
+                投稿の失敗・トークンの期限を知らせます
               </span>
             </span>
             <span className="state">
@@ -655,13 +655,13 @@ function EditableLink({ accountId, link }: { accountId: string; link: LinkSummar
       onError: e => toast.show(e instanceof ApiError ? e.message : "保存できませんでした", "bad"),
     });
   }
-  return <details className="section link-editor"><summary><span className="link-editor-name">{link.label}</span><span className="muted">名前・自動投稿の設定</span></summary>
+  // 「自動投稿の候補に含める」のスイッチは、オートパイロットの入口を閉じているあいだ出さない（DECISIONS 2026-10-21）
+  return <details className="section link-editor"><summary><span className="link-editor-name">{link.label}</span><span className="muted">名前の設定</span></summary>
     <form onSubmit={e => { e.preventDefault(); if (label.trim()) save({ label: label.trim() }); }}>
       <label className="field"><span>リンクの名前</span><input className="input" value={label} maxLength={100} onChange={e => setLabel(e.target.value)} placeholder="例：自分のBrain" /></label>
       <p className="muted" style={{ overflowWrap: "anywhere" }}>{link.url}</p>
       <button className="btn btn-sub" type="submit" disabled={update.isPending || !label.trim() || label.trim() === link.label}>名前を保存</button>
     </form>
-    <button className="btn btn-sub section" type="button" role="switch" aria-checked={link.enabledForAp} disabled={update.isPending} onClick={() => save({ enabledForAp: !link.enabledForAp })}>自動投稿の候補に含める：{link.enabledForAp ? "オン" : "オフ"}</button>
   </details>;
 }
 
@@ -685,7 +685,7 @@ function LinksCard() {
           まだありません。投稿に入れたURLは、同期のときに自動で拾って並びます。
         </p>
       )}
-      <p className="muted">名前を保存すると、アナリティクスのリンク一覧にも反映されます。項目を開くと、名前と自動投稿で使うかを変更できます。</p>
+      <p className="muted">名前を保存すると、アナリティクスのリンク一覧にも反映されます。項目を開くと、名前を変更できます。</p>
       <label className="field section"><span>リンクを探す</span><input className="input" type="search" placeholder="名前・URLで検索" value={search} onChange={e => setSearch(e.target.value)} /></label>
       {account && paging.items.map(l => <EditableLink key={account.id + l.id} accountId={account.id} link={l} />)}
       {search && !filtered.length && <p className="muted">一致するリンクがありません。</p>}

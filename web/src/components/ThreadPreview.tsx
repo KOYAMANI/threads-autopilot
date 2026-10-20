@@ -4,6 +4,7 @@
  * 全文表示（PostViewer）と同じ並び（左にアバターと縦線、右に @名前 1/3・本文・表示回数）だが、
  * 本文は2行で切る。どのツリーを型にしているかが分かればよく、読むのは「全文を見る」で開く。
  */
+import { useState } from "react";
 import type { AccountSummary } from "@tap/shared";
 import AccountAvatar from "./AccountAvatar";
 import { fmtN, md } from "../lib/format";
@@ -26,20 +27,28 @@ export default function ThreadPreview({
   segments: PreviewSegment[];
   postedAt?: string;
   tz: string;
-  /** 全文表示を開く。無ければリンクを出さない */
+  /**
+   * 全文表示（PostViewer）を開く。無いとき（貼り付けた他人の投稿など、数字も投稿日も無いもの）は
+   * その場で2行の切り詰めを外して全文を出す（2026-10-21）
+   */
   onOpen?: () => void;
 }) {
   const total = segments.reduce((n, s) => n + (s.views ?? 0), 0);
+  const [expanded, setExpanded] = useState(false);
   return (
-    <section className="thread-preview" aria-label={label}>
+    <section className={`thread-preview${expanded ? " expanded" : ""}`} aria-label={label}>
       <div className="thread-preview-head">
         <span className="thread-preview-label">{label}</span>
         {postedAt && <span className="num">{md(postedAt, tz)}</span>}
         {total > 0 && <span className="num">表示 {fmtN(total)}</span>}
         {segments.length > 1 && <span>{segments.length}投稿のツリー</span>}
-        {onOpen && (
+        {onOpen ? (
           <button type="button" className="btn-link" onClick={onOpen}>
             全文を見る
+          </button>
+        ) : (
+          <button type="button" className="btn-link" aria-expanded={expanded} onClick={() => setExpanded((v) => !v)}>
+            {expanded ? "たたむ" : "全文を見る"}
           </button>
         )}
       </div>

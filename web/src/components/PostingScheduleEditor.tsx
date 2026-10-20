@@ -42,6 +42,6 @@ export default function PostingScheduleEditor({ accountId }: { accountId: string
       onSuccess: () => toast.show("投稿スロットを保存しました", "ok"),
       onError: error => toast.show(error instanceof ApiError ? error.message : "保存できませんでした", "bad"),
     })}>{save.isPending ? "保存しています…" : "スロットを保存"}</button></div>
-    <p className="muted section">保存しても、予約済みの投稿は移動しません。オートパイロットはこの枠から毎日最大3本分を使います。</p>
+    <p className="muted section">保存しても、予約済みの投稿は移動しません。</p>
   </div>;
 }
