@@ -64,6 +64,21 @@ describe("役割を分けた投稿生成", () => {
   it("不足情報は生成案の代わりに質問として返す", async () => {
     const result = await compose(input, async () => JSON.stringify({ status: "needs_input", question: "新しい比較対象は？" }));
     expect(result.notes).toEqual(["新しい比較対象は？"]); expect(result.candidates).toHaveLength(0);
+    expect(result.question).toBe("新しい比較対象は？");
+  });
+  it("「任せる」(assume) は計画の依頼に渡り、質問が返らなければ案になる", async () => {
+    const requests: any[] = [];
+    const result = await compose({ ...input, assume: true }, async (_system, user) => {
+      const q = JSON.parse(user); requests.push(q);
+      return JSON.stringify(q.task === "composition-plan" ? plan : output(samples[q.index]!));
+    });
+    expect(requests[0].assume).toBe(true);
+    expect(result.candidates).toHaveLength(3); expect(result.question).toBeUndefined();
+  });
+  it("assume でも AI が質問を返したら、そのまま質問として返す（回し続けない）", async () => {
+    let calls = 0;
+    const result = await compose({ ...input, assume: true }, async () => { calls++; return JSON.stringify({ status: "needs_input", question: "何を比べますか？" }); });
+    expect(calls).toBe(1); expect(result.question).toBe("何を比べますか？"); expect(result.candidates).toHaveLength(0);
   });
 });
 

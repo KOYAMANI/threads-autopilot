@@ -63,7 +63,7 @@ const START_CHOICES: Array<{ mode: Mode; title: string; note: string }> = [
 /** 貼り付けの上限（SPEC §7.6 の referenceText）。 */
 const MAX_REFERENCE = 20000;
 
-type SheetKind = "aikey" | "sources" | "replace" | "revise" | "publish" | "schedule";
+type SheetKind = "aikey" | "sources" | "replace" | "revise" | "publish" | "schedule" | "question";
 
 function draftOf(c: AiCandidate): PostDraft {
   const comments = [...c.comments, "", "", ""].slice(0, 3);
@@ -125,6 +125,9 @@ export default function Create() {
   /** 案ごとの会話履歴（SPEC §12.3「指示で直す（会話履歴保持）」）。自分で書いた本文は "own"。 */
   const [history, setHistory] = useState<Record<string, AiHistoryTurn[]>>({});
   const [sheet, setSheet] = useState<SheetKind | null>(null);
+  // AI が素材の不足を質問してきたとき（`AiGenerateResponse.question`）。シートで答えるか任せる
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState("");
   /** 全文を開いている投稿（pick）。閉じる動きの間も中身を残すため、開閉とは分けて持つ。 */
   const [viewerPost, setViewerPost] = useState<PostSummary | null>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -252,22 +255,34 @@ export default function Create() {
     runGenerate();
   }
 
-  function runGenerate() {
+  /**
+   * `opts.instruction` は質問に答えたあとの指示（state の更新を待たずに送る）。
+   * `opts.assume` は「この内容で任せる」。文脈（再生成に使う）には入れない
+   */
+  function runGenerate(opts: { instruction?: string; assume?: boolean } = {}) {
     const context: AiGenerationContext = {
       pickMode, picks: referenceOrigin === "own" ? picks : [],
       referenceText: referenceOrigin === "paste" ? referenceText : undefined,
-      sourceIds, instruction,
+      sourceIds, instruction: opts.instruction ?? instruction,
     };
     generate.mutate(
       withClientKey(settings.data, {
         accountId: account!.id,
         ...context,
         n: N_CANDIDATES,
+        assume: opts.assume,
       }),
       {
         onSuccess: (r) => {
           if (!mounted.current) return;
           if (!r.candidates.length) {
+            if (r.question) {
+              // AI の質問はシートで受ける（答える / 任せる / 材料を足す）
+              setQuestion(r.question);
+              setAnswer("");
+              setSheet("question");
+              return;
+            }
             // 0件のときだけ、サーバーの理由をトーストで出す（画面には常駐させない）
             toast.show(r.notes?.length ? r.notes.join(" ") : "案を作れませんでした。指示を変えて、もう一度試してください", "bad");
             return;
@@ -484,6 +499,7 @@ export default function Create() {
             pickMode={pickMode}
             onChange={(next) => setPicks(next.picks)}
             onOpen={openPost}
+            onToggle={togglePick}
           />
         ) : (
           <label className="field wizard-field" htmlFor="reference-post">
@@ -528,7 +544,7 @@ export default function Create() {
     body = (
       <>
         <h1 className="wizard-title">{rewrite ? "どう変えますか？" : "誰に、何を伝えますか？"}</h1>
-        <p className="wizard-sub">{rewrite ? "空のままでも大丈夫です。" : "1〜2行で十分です。"}</p>
+        <p className="wizard-sub">{rewrite ? "空のままでも大丈夫です。" : "見本は書き方の型に使います。書く内容のもとになる情報（記事・メモ・動画）か、伝えたいことを書いてください。"}</p>
         <div className="picked">
           <span>{pickedLabel}</span>
           <strong>{pickedBody}</strong>
@@ -545,18 +561,19 @@ export default function Create() {
             onChange={(e) => setInstruction(e.target.value)}
           />
         </label>
-        <p className="wizard-alt">
-          <button type="button" className="btn-link" aria-haspopup="dialog" onClick={() => setSheet("sources")}>
-            {sourceIds.length ? `記事や動画を材料に足す（${sourceIds.length}件）` : "記事や動画を材料に足す（任意）"}
-          </button>
-        </p>
+        <button type="button" className="btn btn-sub brief-sources" aria-haspopup="dialog" onClick={() => setSheet("sources")}>
+          {sourceIds.length ? `記事・メモ・動画を材料に足す（${sourceIds.length}件）` : "記事・メモ・動画を材料に足す"}
+        </button>
       </>
     );
+    // 型で作るときは、指示か材料のどちらかが要る（無いと AI が「テーマと参考情報を足して」と返すだけ）
+    const briefEmpty = !rewrite && instruction.trim() === "" && sourceIds.length === 0;
     footer = (
       <>
-        <button aria-busy={generate.isPending} type="button" className="btn" disabled={busy} onClick={startGenerate}>
+        <button aria-busy={generate.isPending} type="button" className="btn" disabled={busy || briefEmpty} onClick={startGenerate}>
           {generate.isPending ? "3つの切り口で書いています…" : `AIで${N_CANDIDATES}案つくる`}
         </button>
+        {briefEmpty && <p className="btn-hint">伝えたいことを書くか、記事やメモを足すと押せます。</p>}
         {/* 「Claude で作る」ボタンを後から置く場所（DECISIONS 2026-10-19）。AIキーの有無に関係なく
             生成ボタンの横に常にある。空のあいだは幅を取らない（workspace.css の .create-ai-slot:empty） */}
         <div className="create-ai-slot" data-slot="claude" />
@@ -669,6 +686,41 @@ export default function Create() {
           <button type="button" className="btn" onClick={() => { setSheet(null); navigate("/app/settings"); }}>
             設定で登録する
           </button>
+        </div>
+      </Sheet>
+
+      <Sheet open={sheet === "question"} onClose={() => setSheet(null)} title="AI から確認">
+        <p className="sheet-text question-text">{question}</p>
+        <label className="field wizard-field" htmlFor="question-answer">
+          <span className="visually-hidden">答え</span>
+          <textarea
+            id="question-answer"
+            className="input wizard-textarea question-answer"
+            rows={4}
+            value={answer}
+            autoFocus
+            placeholder="例: 初めて講座を作る人向け。準備の順番を3つに分けて伝えたい。"
+            onChange={(e) => setAnswer(e.target.value)}
+          />
+        </label>
+        <div className="sheet-row question-actions">
+          <button
+            type="button"
+            className="btn"
+            disabled={busy || answer.trim() === ""}
+            onClick={() => {
+              const next = `${instruction.trim()}\n\n補足: ${answer.trim()}`.trim();
+              setInstruction(next);
+              setSheet(null);
+              runGenerate({ instruction: next });
+            }}
+          >
+            答えて書く
+          </button>
+          <button type="button" className="btn btn-sub" disabled={busy} onClick={() => { setSheet(null); runGenerate({ assume: true }); }}>
+            この内容で任せる
+          </button>
+          <button type="button" className="btn-link" onClick={() => setSheet("sources")}>記事やメモを足す</button>
         </div>
       </Sheet>
 

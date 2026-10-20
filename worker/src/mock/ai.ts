@@ -81,6 +81,8 @@ export default function aiMockCall(input: MockAiInput): string {
   // The composition protocol is mocked explicitly; never call real providers in tests.
   if (input.user.startsWith("{")) {
     const request = JSON.parse(input.user);
+    // 画面の「AI から確認」シートを手元で試すための合図（本番バンドルには入らない）
+    if (request.task === "composition-plan" && typeof request.instruction === "string" && request.instruction.includes("質問テスト") && !request.instruction.includes("補足:") && !request.assume) return JSON.stringify({ status: "needs_input", question: "誰に向けた投稿ですか？ 伝えたい要点を1つ教えてください。" });
     if (request.task === "composition-plan") return JSON.stringify({ status: "ok", summary: "投稿を型、参考情報を内容として使用", structure: "導入と続き", style: "短い断定", partCount: 2, anchors: [], variants: Array.from({ length: request.n }, (_, i) => ({ label: `切り口${i + 1}`, approach: `焦点${i + 1}`, blueprint: { posts: ["{{body}}", "{{comment}}"], slots: [{ id: "body", task: "本文", maxChars: 450 }, { id: "comment", task: "続き", maxChars: 450 }] } })) });
     if (request.task === "composition-slots") return JSON.stringify({ slots: { body: MOCK_BODIES[request.index % MOCK_BODIES.length], comment: MOCK_COMMENTS[request.index % MOCK_COMMENTS.length]![0] } });
     if (request.task === "composition-write") {

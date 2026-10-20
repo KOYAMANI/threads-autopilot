@@ -5,6 +5,8 @@ import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
+// 別の worktree が 8787 を使っているときは `WORKER_PORT=8788 npm run dev:web` のように変える
+const workerPort = process.env.WORKER_PORT ?? "8787";
 
 export default defineConfig({
   plugins: [
@@ -76,8 +78,8 @@ export default defineConfig({
     // ビルド済みの `web/dist` が返り、vite の更新が画面に出なくなる。
     // `^` 始まりのキーは正規表現として扱われるので、`/a/` だけを厳密に拾う（SPEC §7.9）。
     proxy: {
-      "^/api(/|$)": { target: "http://127.0.0.1:8787", changeOrigin: true },
-      "^/a/": { target: "http://127.0.0.1:8787", changeOrigin: true },
+      "^/api(/|$)": { target: `http://127.0.0.1:${workerPort}`, changeOrigin: true },
+      "^/a/": { target: `http://127.0.0.1:${workerPort}`, changeOrigin: true },
     },
   },
   build: {

@@ -509,7 +509,7 @@ type PostSummary = { id, text, permalink, postedAt, mediaType, hasImage, views, 
 |---|---|
 | `GET /ai/settings` / `PUT /ai/settings` `{provider, key?, model?, storeOnServer}` | `storeOnServer=false` ならキーを保存せず、`hasKey=false`。その場合オートパイロットは有効化できない（`PUT` の応答に `{autopilotAvailable:false}` を含め、画面は保存前に確認を出す。§12.3 Settings） |
 | `POST /ai/test` | 1回だけ短い生成を試して `{ok, model, latencyMs}` |
-| `POST /ai/generate` `{accountId, picks:[postId], pickMode:'template'|'rewrite', sourceIds:[], instruction, n:3, clientKey?}` | `{candidates:[{key,hook,body,comments[],basis}]}`。`clientKey` はブラウザ保存モード用（サーバーに保存しない） |
+| `POST /ai/generate` `{accountId, picks:[postId], pickMode:'template'|'rewrite', sourceIds:[], instruction, n:3, assume?, clientKey?}` | `{candidates:[{key,hook,body,comments[],basis}], notes[], question?}`。素材が足りないと AI は候補0件で `question` を返し、画面はシートで「答える」（指示に補足を足して送り直す）か「任せる」（`assume:true`。計画段階で質問を返さず一般論で補う）を選ぶ。`clientKey` はブラウザ保存モード用（サーバーに保存しない） |
 | `POST /ai/revise` `{accountId, candidate, instruction, history:[], clientKey?}` | 1案を直す |
 
 ### 7.7 オートパイロット

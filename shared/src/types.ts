@@ -396,6 +396,8 @@ export type AiGenerateRequest = {
   sourceIds?: string[];
   instruction?: string;
   n?: number;
+  /** AI の質問に答えずに「この内容で任せる」。計画段階で質問を返さず、足りない素材は一般論で補う */
+  assume?: boolean;
   /** ブラウザ保存モードのときだけ付く。サーバーに保存しない */
   clientKey?: string;
 };
@@ -405,6 +407,8 @@ export type AiGenerateResponse = {
   analysis?: string;
   /** OpenRouter に YouTube を渡せないときなど、画面に出す案内 */
   notes: string[];
+  /** 候補が0件で、AI が素材の不足を質問しているとき。画面はシートで受ける */
+  question?: string;
 };
 
 /** 会話履歴（SPEC §7.6 の `history`）。 */

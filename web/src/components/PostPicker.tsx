@@ -22,9 +22,9 @@ function postNote(p: PostSummary, tz: string): string {
 }
 
 /** minimal の1ページ分（5件）。最後のページだけ「もっと見る」を持つ。 */
-function MinimalPage({ accountId, tz, cursor, picks, last, first, onOpen, onMore }: {
+function MinimalPage({ accountId, tz, cursor, picks, last, first, onOpen, onToggle, onMore }: {
   accountId: string | null; tz: string; cursor: string; picks: string[]; last: boolean; first: boolean;
-  onOpen: (post: PostSummary) => void; onMore: (cursor: string) => void;
+  onOpen: (post: PostSummary) => void; onToggle: (post: PostSummary) => void; onMore: (cursor: string) => void;
 }) {
   const list = usePostPicker(accountId, { q: "", sort: "views", cursor });
   const posts = list.data?.posts ?? [];
@@ -34,7 +34,8 @@ function MinimalPage({ accountId, tz, cursor, picks, last, first, onOpen, onMore
   return <>
     {posts.map(p => {
       const picked = picks.includes(p.id);
-      return <button key={p.id} type="button" className="choice post-choice pick-row" role="checkbox" aria-checked={picked} aria-haspopup="dialog" onClick={() => onOpen(p)}>
+      // 選んだ行はもう一度押すと外れる。未選択の行は全文を開いてから選ぶ（DECISIONS 2026-10-20）
+      return <button key={p.id} type="button" className="choice post-choice pick-row" role="checkbox" aria-checked={picked} aria-haspopup={picked ? undefined : "dialog"} onClick={() => (picked ? onToggle(p) : onOpen(p))}>
         <span className="choice-title">{p.text.slice(0, 100) || "（本文なし）"}</span>
         <span className="choice-note">{postNote(p, tz)}</span>
         {picked && <span className="tag pick-tag">選択中</span>}
@@ -44,24 +45,26 @@ function MinimalPage({ accountId, tz, cursor, picks, last, first, onOpen, onMore
   </>;
 }
 
-function MinimalPicker({ accountId, tz, picks, onOpen }: {
-  accountId: string | null; tz: string; picks: string[]; onOpen: (post: PostSummary) => void;
+function MinimalPicker({ accountId, tz, picks, onOpen, onToggle }: {
+  accountId: string | null; tz: string; picks: string[]; onOpen: (post: PostSummary) => void; onToggle: (post: PostSummary) => void;
 }) {
   const [cursors, setCursors] = useState<string[]>([""]);
   return <div className="choices pick-list" data-testid="post-picker-list">
-    {cursors.map((c, i) => <MinimalPage key={c || "first"} accountId={accountId} tz={tz} cursor={c} picks={picks} first={i === 0} last={i === cursors.length - 1} onOpen={onOpen} onMore={next => setCursors(p => p.includes(next) ? p : [...p, next])} />)}
+    {cursors.map((c, i) => <MinimalPage key={c || "first"} accountId={accountId} tz={tz} cursor={c} picks={picks} first={i === 0} last={i === cursors.length - 1} onOpen={onOpen} onToggle={onToggle} onMore={next => setCursors(p => p.includes(next) ? p : [...p, next])} />)}
   </div>;
 }
 
-export default function PostPicker({ accountId, tz, picks, pickMode, onChange, minimal = false, onOpen }: {
+export default function PostPicker({ accountId, tz, picks, pickMode, onChange, minimal = false, onOpen, onToggle }: {
   accountId: string | null; tz: string; picks: string[]; pickMode: AiPickMode;
   onChange: (next: { picks: string[]; pickMode: AiPickMode }) => void;
   /** 見出し・検索・並べ替え・ページ送りを出さず、「もっと見る」で足していく形にする */
   minimal?: boolean;
-  /** minimal で行を押したとき（選択はせず、全文を開く） */
+  /** minimal で未選択の行を押したとき（選択はせず、全文を開く） */
   onOpen?: (post: PostSummary) => void;
+  /** minimal で選択中の行を押したとき（外す） */
+  onToggle?: (post: PostSummary) => void;
 }) {
-  if (minimal) return <MinimalPicker accountId={accountId} tz={tz} picks={picks} onOpen={onOpen ?? (() => {})} />;
+  if (minimal) return <MinimalPicker accountId={accountId} tz={tz} picks={picks} onOpen={onOpen ?? (() => {})} onToggle={onToggle ?? (() => {})} />;
   return <FullPicker accountId={accountId} tz={tz} picks={picks} pickMode={pickMode} onChange={onChange} />;
 }
 

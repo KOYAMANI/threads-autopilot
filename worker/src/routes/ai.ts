@@ -74,6 +74,8 @@ const generateSchema = z.object({
   sourceIds: z.array(z.string().min(1)).max(10).optional(),
   instruction: z.string().max(2000).optional(),
   n: z.number().int().min(1).max(5).optional(),
+  /** AI の質問に答えずに「この内容で任せる」（`lib/composition.ts` の assume） */
+  assume: z.boolean().optional(),
   clientKey: z.never().optional(),
 });
 
@@ -406,7 +408,7 @@ export function aiRoutes() {
     const fullSources = sourceRows.filter(s => s.content.trim() !== "").map(s => ({ title: s.title, content: s.content }));
     const sources = clipSources(fullSources);
     if (sources.reduce((n, s) => n + s.content.length, 0) < fullSources.reduce((n, s) => n + s.content.length, 0)) notes.push("参考情報は各3,000文字・合計9,000文字まで使用しています。重要な内容を先頭にまとめてください。");
-    const result = await compose({ mode: pickMode, references, sources, youtubeUrls, links, instruction: input.instruction ?? "", n, constraints },
+    const result = await compose({ mode: pickMode, references, sources, youtubeUrls, links, instruction: input.instruction ?? "", n, constraints, assume: input.assume },
       (system, user, videoUrls) => generateRaw(c.env, { ...key, system, user, youtubeUrls: videoUrls, appOrigin: c.env.APP_ORIGIN }, { budget: c.get("budget"), retries: 0 }));
     const { candidates } = result;
 
@@ -420,7 +422,7 @@ export function aiRoutes() {
       );
     }
 
-    return c.json(ok({ candidates, notes: [...notes, ...result.notes], analysis: result.analysis }));
+    return c.json(ok({ candidates, notes: [...notes, ...result.notes], analysis: result.analysis, question: result.question }));
   });
 
   /* ── 修正（SPEC §7.6 / §10.3） ───────────────────── */

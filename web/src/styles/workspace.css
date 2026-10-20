@@ -459,6 +459,14 @@ textarea.wizard-textarea { min-height:9rem; padding:.9rem 1rem; border-color:var
 .pick-row .choice-title { font-size:.9rem; line-height:1.5; }
 .pick-tag { justify-self:start; margin-top:.1rem; background:var(--accent); color:#fff; }
 .pick-more { display:flex; justify-content:center; margin:.25rem 0 0; }
+/* A chosen row is un-chosen by tapping it again; the tag says so (2026-10-20). */
+.pick-row[aria-checked="true"] .pick-tag::after { content:"  ✕"; opacity:.8; }
+/* brief: the sources button sits under the text; the AI's question comes as a sheet. */
+.brief-sources { margin-top:.75rem; }
+.question-text { font-size:1rem; line-height:1.7; color:var(--ink); }
+.question-answer { margin-top:.75rem; }
+.question-actions { flex-wrap:wrap; }
+.question-actions .btn-link { flex-basis:100%; text-align:center; }
 .viewer-hint { flex-basis:100%; margin:0; text-align:right; }
 
 /* brief: what was chosen, in one quiet strip. */
