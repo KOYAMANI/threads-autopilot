@@ -61,7 +61,7 @@ const isMode = (v: string | null): v is Mode => v === "template" || v === "rewri
 
 // 入口は2つ（DECISIONS 2026-10-20）。リライトはホーム・キューの「リライト」から preset で入る
 const START_CHOICES: Array<{ mode: Mode; title: string; note: string }> = [
-  { mode: "template", title: "型を選んで作る", note: "見本を1本選ぶと、同じ書き方で AI が3投稿" },
+  { mode: "template", title: "型を選んで作る", note: "見本を参考にAIが3投稿作ります" },
   { mode: "write", title: "自分で書く", note: "白紙から。あとで AI に直させることもできます" },
 ];
 
@@ -534,7 +534,7 @@ export default function Create() {
     body = (
       <>
         <h1 className="wizard-title">{rewrite ? "リライトする投稿を選ぶ" : "見本にする投稿を選ぶ"}</h1>
-        <p className="wizard-sub">{rewrite ? "1本選ぶと、次に進みます。" : "1本選ぶと、AIで3投稿つくる画面に進みます。表示回数の多い順です。"}</p>
+        <p className="wizard-sub">{rewrite ? "1本選ぶと、次に進みます。" : "見本を選ぶとAIが3投稿作る画面に進みます"}</p>
         {/* 上で出どころを切り替え、下に中身（DECISIONS 2026-10-20） */}
         <div className="pick-source" role="tablist" aria-label="見本の出どころ">
           <button
@@ -751,7 +751,7 @@ export default function Create() {
       )}
 
       <Sheet open={sheet === "aikey"} onClose={() => setSheet(null)} title="AIキーが必要です">
-        <p className="muted sheet-text">AI で投稿を作ったり直したりするには、設定で AI キーを登録します。自分で書くだけなら、このままできます。</p>
+        <p className="muted sheet-text">AI で投稿を作ったり直したりするには、設定画面から AI キーを登録してください。</p>
         <div className="sheet-row">
           <button type="button" className="btn btn-sub" onClick={() => setSheet(null)}>あとで</button>
           <button type="button" className="btn" onClick={() => { setSheet(null); navigate("/app/settings"); }}>
@@ -762,7 +762,7 @@ export default function Create() {
 
       <Sheet open={sheet === "question"} onClose={() => setSheet(null)} title={`AI から確認 ${questionNo}/${QUESTION_LIMIT}`}>
         <p className="sheet-text question-text">{question}</p>
-        <p className="muted sheet-text">答えると、その内容を使って書きます。「AIにお任せ」は、これ以上聞かずにいまある材料だけで書きます（架空の数字や実績は入れません）。確認は{QUESTION_LIMIT}回まで。それでも足りないときは、いまある材料で書きます。</p>
+        <p className="muted sheet-text">AIに指示しながら投稿を作成します（指示は最大{QUESTION_LIMIT}回まで）。「AIにお任せ」を押すと作成を丸投げできます。</p>
         <label className="field wizard-field" htmlFor="question-answer">
           <span className="visually-hidden">答え</span>
           <textarea

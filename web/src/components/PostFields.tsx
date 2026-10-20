@@ -81,7 +81,7 @@ export default function PostFields({
           rows={6}
           autoFocus={autoFocus}
           value={draft.body}
-          placeholder="1行目で止まらせる。ここに本文を書きます。"
+          placeholder="ここに本文を書く"
           onChange={(e) => onChange({ ...draft, body: e.target.value })}
         />
       </label>

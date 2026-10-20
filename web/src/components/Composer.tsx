@@ -79,12 +79,12 @@ export default function Composer({
   }
 
   const segments = [
-    { id: "composer-body", value: draft.body, label: "1投稿目", placeholder: "1行目で止まらせる。ここに本文を書きます。", set: (v: string) => onChange({ ...draft, body: v }) },
+    { id: "composer-body", value: draft.body, label: "1投稿目", placeholder: "ここに本文を書く", set: (v: string) => onChange({ ...draft, body: v }) },
     ...comments.slice(0, visible).map((c, i) => ({
       id: `composer-c${i}`,
       value: c,
       label: `続きの投稿 ${i + 1}`,
-      placeholder: i === 0 ? "続き。リンクはここに置くのが既定です。" : "続き。空のままなら投稿しません。",
+      placeholder: "ここにコメントを書く",
       set: (v: string) => setComment(i, v),
     })),
   ];

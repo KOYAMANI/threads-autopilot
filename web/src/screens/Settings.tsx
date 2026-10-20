@@ -36,13 +36,6 @@ import Sheet from "../components/Sheet";
 import Pagination, { usePagination } from "../components/Pagination";
 import { useToast } from "../components/Toast";
 import { useShell } from "../components/Shell";
-import {
-  useGoogleStatus,
-  useGoogleConnect,
-  useGoogleSync,
-  useGoogleDisconnect,
-  useGoogleRepair,
-} from "../api/google";
 import { pushSupported, subscribePush, unsubscribePush } from "../lib/push";
 
 const PROVIDERS: Array<{ key: AiProvider; label: string; note: string }> = [
@@ -68,9 +61,8 @@ export default function Settings() {
       const next = e.key === "ArrowRight" ? (i + 1) % tabs.length : e.key === "ArrowLeft" ? (i + tabs.length - 1) % tabs.length : e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : -1;
       if (next >= 0) { e.preventDefault(); const id = tabs[next]!.id; setTab(id); document.getElementById(`settings-tab-${id}`)?.focus(); }
     }} onClick={() => setTab(t.id)}>{t.label}</button>)}</div>
-    {new URLSearchParams(window.location.search).get("google") === "failed" && <p className="msg msg-bad" role="alert">Google連携が完了しませんでした。ログイン状態とアクセス許可を確認して、もう一度連携してください。</p>}
     <div role="tabpanel" id="settings-panel" aria-labelledby={`settings-tab-${tab}`} className="settings-content" key={tab}>
-      {tab === "connections" && <><AccountsCard /><AiKeyCard /><ExportCard /><GoogleSheetsCard /></>}
+      {tab === "connections" && <><AccountsCard /><AiKeyCard /><ExportCard /></>}
       {tab === "links" && <LinksCard />}
       {tab === "notifications" && <NotificationCard />}
       {tab === "security" && <><PasswordCard /><LicenseCard /><DangerCard /></>}
@@ -164,8 +156,7 @@ function AccountsCard() {
         title={`@${confirmRemove?.username ?? ""} を外しますか？`}
       >
         <p>
-          このアカウントの投稿の記録・数字・キュー・学習・リンクが消えます。Threads
-          側の投稿は消えません。
+          このアプリからアカウントの投稿の記録・数字・キュー・学習・リンクが消えます。
         </p>
         <div
           className="section"
@@ -377,7 +368,7 @@ function AiKeyCard() {
     <section className="card section">
       <h2>AIキー</h2>
       <p className="muted">
-        キーはサーバーで暗号化して保存し、AI実行時に復号して使用します。ブラウザやスプレッドシートには保存しません。
+        キーはサーバーで暗号化して保存します。
       </p>
       {!settings.data?.storeOnServer && (
         <p className="msg msg-warn">
@@ -718,7 +709,7 @@ function LicenseCard() {
             <span className="body">
               <span className="t">キー</span>
               <span className="n">
-                安全のため末尾4桁だけ出しています。全体は購入時のメールをご確認ください
+                セキュリティのため末尾4桁のみ表示
               </span>
             </span>
             <span className="state num">TAP-••••-••••-{l.keyTail}</span>
@@ -762,7 +753,7 @@ function ExportCard() {
         <h2>CSV で書き出す</h2>
       </div>
       <p className="muted">
-        投稿と数字（表示回数・いいね・推定クリック・48時間後の断面）を CSV で保存します。Excel や Google スプレッドシートでそのまま開けます。他人の投稿へのコメントは入れません。
+        投稿と数字（表示回数・いいね・推定クリック・48時間後の断面）を CSV で保存します。
       </p>
       {list.length === 0 && !accounts.isPending && (
         <p className="muted">Threads のアカウントをつなぐと、ここから書き出せます。</p>
@@ -824,8 +815,7 @@ function DangerCard() {
           <h2>退会</h2>
         </div>
         <p className="muted">
-          アカウント・投稿の記録・数字・キュー・参考情報・AIキー・Threads
-          のトークンを全部消します。ライセンスキーも無効になり、もう使えません。取り消せません。
+          このアプリ内の情報を全て削除します。この操作は取り消せません。
         </p>
         <button
           type="button"
@@ -903,121 +893,5 @@ function DangerCard() {
         </div>
       </Sheet>
     </>
-  );
-}
-
-function GoogleSheetsCard() {
-  const status = useGoogleStatus(),
-    connect = useGoogleConnect(),
-    sync = useGoogleSync(),
-    disconnect = useGoogleDisconnect(),
-    repair = useGoogleRepair(),
-    toast = useToast();
-  const data = status.data;
-  const error = (e: unknown) =>
-    toast.show(e instanceof Error ? e.message : "処理に失敗しました", "bad");
-  // Google の設定が無い環境では出さない。「管理者の設定待ち」の札だけ出しても使い道が無い（2026-10-21）
-  if (!data?.configured) return null;
-  return (
-    <section className="card section">
-      <h2>Googleスプレッドシート</h2>
-      <p className="muted">
-        あなたの Google ドライブに管理表を作り、投稿・数字・下書きを約1時間ごとに書き出します。
-      </p>
-      <details className="more">
-        <summary>詳しく</summary>
-        <p className="muted">
-          表の編集はアプリに戻りません。APIキーや Threads のトークンは書き出しません。アプリが使う5つのタブは毎回上書きされるので、自由な編集や集計は「自由メモ」か、足したタブで行ってください。
-        </p>
-      </details>
-      {data?.lastError && (
-        <p role="status" className="msg msg-warn">
-          {data.lastError}
-        </p>
-      )}
-      {data?.connected && (
-        <p>
-          最終同期：
-          {data.lastSyncAt
-            ? new Date(data.lastSyncAt).toLocaleString()
-            : "初回の作成・同期を待っています"}
-        </p>
-      )}
-      {data?.spreadsheetUrl && (
-        <p>
-          <a
-            className="btn btn-sub"
-            href={data.spreadsheetUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            管理用スプレッドシートを開く ↗
-          </a>
-        </p>
-      )}
-      <div className="section" style={{ display: "grid", gap: 12 }}>
-        <button
-          className="btn"
-          disabled={!data?.configured || connect.isPending}
-          onClick={() => connect.mutate(undefined, { onError: error })}
-        >
-          {data?.connected ? "Googleと再連携" : "Googleと連携して管理表を作る"}
-        </button>
-        {data?.connected && (
-          <>
-            <button
-              className="btn btn-sub"
-              disabled={sync.isPending || data.status !== "connected"}
-              onClick={() =>
-                sync.mutate(undefined, {
-                  onSuccess: () =>
-                    toast.show("同期を受け付けました。順番に反映します", "ok"),
-                  onError: error,
-                })
-              }
-            >
-              今すぐ同期
-            </button>
-            {data.status === "needs_attention" && (
-              <button
-                className="btn btn-sub"
-                disabled={repair.isPending}
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      "アクセスできる管理表を探し、なければ再作成します。元の表の独自編集は復元できません。続けますか？",
-                    )
-                  )
-                    repair.mutate(undefined, {
-                      onSuccess: () =>
-                        toast.show("管理表の復旧を受け付けました", "ok"),
-                      onError: error,
-                    });
-                }}
-              >
-                管理表を復旧する
-              </button>
-            )}
-            <button
-              className="btn btn-sub danger"
-              disabled={disconnect.isPending}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    "連携を解除しますか？スプレッドシートは残り、自動同期が停止します。",
-                  )
-                )
-                  disconnect.mutate(undefined, { onError: error });
-              }}
-            >
-              連携を解除
-            </button>
-            <p className="muted">
-              解除後もスプシはあなたのドライブに残ります。Google側のアクセス許可も取り消す場合は、Googleアカウントの連携設定から行ってください。
-            </p>
-          </>
-        )}
-      </div>
-    </section>
   );
 }

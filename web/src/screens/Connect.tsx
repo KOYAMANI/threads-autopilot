@@ -83,7 +83,7 @@ export default function Connect() {
         <p className="muted" style={{ marginTop: "0.375rem", marginBottom: "calc(var(--sp) * 3)" }}>
           {done
             ? "取り込みが終わりました。ホームに移ります"
-            : "これまでの投稿と数字は裏で取り込みます。先にホームへ進んでも大丈夫です"}
+            : "データをバックグラウンドで取り込み中です。ホームへ進んでも大丈夫です。"}
         </p>
         <div className="card">
           <div className="bar">
@@ -131,7 +131,7 @@ export default function Connect() {
     <main className="screen-plain">
       <div className="connect-heading">{isAdd ? <span className="muted">アカウントを追加</span> : <span />}<button className="btn-link" onClick={() => navigate("/app/settings")}>設定を開く</button></div><h1>Threads をつなぐ</h1>
       <p className="muted" style={{ marginTop: "0.375rem", marginBottom: "calc(var(--sp) * 3)" }}>
-        下のボタンから Threads の画面に移り、「許可」を押すだけです。パスワードは預かりません。
+        下のボタンから Threads の画面に移り「許可」を押してください。
       </p>
 
       <div className="card" style={{ marginBottom: "1.5rem" }}>

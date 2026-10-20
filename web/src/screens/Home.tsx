@@ -84,7 +84,7 @@ export default function Home() {
   const { data, isPending, isError, error, isPlaceholderData, isFetching } = useDashboard(account?.id ?? null, period);
 
   if (!account) {
-    return <div className="onboarding"><h1>はじめに、2つだけ設定します</h1><p className="muted">どちらも数分で終わります。終わると、投稿の数字と下書きづくりが使えます。</p><div className="onboarding-grid"><section className="card"><span className="step-number" aria-hidden="true">1</span><h2>Threads をつなぐ</h2><p>あなたの Threads アカウントから、投稿と数字を取り込みます。</p><button className="btn" onClick={() => navigate("/connect")}>Threads をつなぐ</button></section><section className="card"><span className="step-number" aria-hidden="true">2</span><h2>AIキーを登録する</h2><p>下書きを AI で作るときに使います。あとからでも登録できます。</p><button className="btn btn-sub" onClick={() => navigate("/app/settings")}>設定でAIキーを登録</button></section></div></div>;
+    return <div className="onboarding"><h1>はじめに、2つだけ設定します</h1><p className="muted">どちらも数分で終わります。</p><div className="onboarding-grid"><section className="card"><span className="step-number" aria-hidden="true">1</span><h2>Threads をつなぐ</h2><p>あなたの Threads アカウントから、投稿と数字を取り込みます。</p><button className="btn" onClick={() => navigate("/connect")}>Threads をつなぐ</button></section><section className="card"><span className="step-number" aria-hidden="true">2</span><h2>AIキーを登録する</h2><p>下書きを AI で作るときに使います。あとからでも登録できます。</p><button className="btn btn-sub" onClick={() => navigate("/app/settings")}>設定でAIキーを登録</button></section></div></div>;
   }
 
   if (isError && !data) {

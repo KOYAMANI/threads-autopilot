@@ -17,16 +17,16 @@ export function publishBlock(account: AccountSummary): { title: string; body: st
   const expired = account.status === "ok" && account.tokenExpiresInDays === 0;
   const title =
     account.status === "needs_reauth"
-      ? "Threads とのつながりが切れています"
+      ? "Threads との接続が切れています"
       : expired
         ? "Threads のトークンの期限が切れています"
         : "いまは予約・投稿できません";
   const body =
     account.status === "needs_reauth"
-      ? "つなぎ直すと、予約と投稿ができるようになります。下書きの保存はこのままできます。"
+      ? "つなぎ直すと、予約と投稿ができるようになります。"
       : expired
-        ? "延長すると、予約と投稿ができるようになります。下書きの保存はこのままできます。"
-        : "設定の「診断」で原因を確かめられます。下書きの保存はこのままできます。";
+        ? "延長すると、予約と投稿ができるようになります。"
+        : "設定の「診断」で原因を確かめられます。";
   return { title, body, expired };
 }
 

@@ -124,7 +124,7 @@ export default function SourceAdder({
         <span className="step-optional">{selected.length > 0 ? `${selected.length}件を使う` : "なくてもOK"}</span>
       </div>
 
-      <p className="muted section">記事・YouTube・メモを足すと、その内容をもとに書きます。書き方（型）は選んだ投稿から取ります。</p>
+      <p className="muted section">記事・YouTube・メモを足すと、その内容をもとに執筆します。</p>
       <div
         className="chips"
         role="group"
@@ -202,7 +202,7 @@ export default function SourceAdder({
           </label>
           <p className="muted" style={{ marginTop: "calc(var(--sp) * 0.5)" }}>
             {adding === "youtube"
-              ? "Gemini なら動画をそのまま読みます。OpenRouter のときは文字起こしを貼ってください。"
+              ? "動画のURLを貼り付けてください。"
               : "本文をこちらで取り出します。取れなかったら本文を貼ってください。"}
           </p>
           <button aria-busy={create.isPending}
