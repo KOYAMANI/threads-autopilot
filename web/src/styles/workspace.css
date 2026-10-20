@@ -472,9 +472,10 @@ textarea.wizard-textarea { min-height:9rem; padding:.9rem 1rem; border-color:var
 .viewer-hint { flex-basis:100%; margin:0; text-align:right; }
 
 /* brief: what was chosen, in one quiet strip. */
-.picked { display:flex; align-items:center; gap:.5rem; min-width:0; margin-bottom:1rem; padding:.6rem .8rem; border-radius:10px; background:var(--paper2); font-size:.8125rem; color:var(--ink2); }
-.picked > span { flex:none; }
-.picked strong { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; color:var(--ink); }
+.picked { display:grid; gap:.35rem; min-width:0; margin-bottom:1rem; padding:.75rem .9rem; border-radius:10px; background:var(--paper2); font-size:.8125rem; color:var(--ink2); }
+.picked > span { font-size:.6875rem; letter-spacing:.04em; }
+/* The sample is shown whole (thread included); long ones scroll inside the box. */
+.picked p { margin:0; max-height:40vh; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font-size:.875rem; line-height:1.7; color:var(--ink); }
 
 /* candidates: one card per view, swipe sideways (inner scroll only — the page never widens). */
 .carousel-wrap { min-width:0; }

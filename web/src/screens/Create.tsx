@@ -33,6 +33,7 @@ import StepHeader from "../components/StepHeader";
 import CandidateCarousel from "../components/CandidateCarousel";
 import ReviseSheet from "../components/ReviseSheet";
 import { CROSSFADE, SPRING, useReducedMotion } from "../lib/motion";
+import { clearCreateSession, selectCreateAccount, useCreateSessionState } from "../lib/create-session";
 import { fmtN, mdhm } from "../lib/format";
 import type { CreatePreset } from "./Home";
 
@@ -89,7 +90,14 @@ export default function Create() {
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const location = useLocation();
   // ホーム・キューからの下敷き（SPEC §12.3 の `location.state.preset`）。URL を書き換えると state は消えるので、最初に取っておく
-  const [initial] = useState(() => (location.state as { preset?: CreatePreset } | null)?.preset ?? null);
+  const [initial] = useState(() => {
+    // 途中経過はアカウントごと。下敷き（preset）で入ってきたときは、前の途中経過を捨てて下敷きから始める
+    selectCreateAccount(account?.id ?? null);
+    const preset = (location.state as { preset?: CreatePreset } | null)?.preset ?? null;
+    if (preset) clearCreateSession();
+    return preset;
+  });
+  const acc = account?.id ?? null;
   const presetPending = useRef(Boolean(initial));
   const [params, setParams] = useSearchParams();
   const entryIdx = useRef(historyIdx());
@@ -100,30 +108,33 @@ export default function Create() {
   const create = useCreateQueue(account?.id ?? null);
 
   /** いま進めている作り方（start に戻っても覚えておき、同じ作り方なら入力を残す）。 */
-  const [workMode, setWorkMode] = useState<Mode | null>(initial?.mode ?? null);
-  const [picks, setPicks] = useState<string[]>(() => (initial?.postId ? [initial.postId] : []));
-  /** 選んだ投稿の本文（brief の「見本」帯に出す）。 */
-  const [pickedText, setPickedText] = useState<Record<string, string>>(() =>
+  // ここから下の入力は、別の画面へ行って戻っても残る（lib/create-session.ts。DECISIONS 2026-10-21）
+  const [workMode, setWorkMode] = useCreateSessionState<Mode | null>(acc, "workMode", initial?.mode ?? null);
+  const [picks, setPicks] = useCreateSessionState<string[]>(acc, "picks", () => (initial?.postId ? [initial.postId] : []));
+  /** 選んだ投稿の本文（続きまで。brief の「見本」に全文を出す）。 */
+  const [pickedText, setPickedText] = useCreateSessionState<Record<string, string>>(acc, "pickedText", () =>
     initial?.postId ? { [initial.postId]: initial.text } : {},
   );
-  const [referenceOrigin, setReferenceOrigin] = useState<"own" | "paste">("own");
-  const [referenceText, setReferenceText] = useState("");
-  const [generationContext, setGenerationContext] = useState<AiGenerationContext>();
-  const [sourceIds, setSourceIds] = useState<string[]>([]);
-  const [instruction, setInstruction] = useState("");
+  const [referenceOrigin, setReferenceOrigin] = useCreateSessionState<"own" | "paste">(acc, "referenceOrigin", "own");
+  const [referenceText, setReferenceText] = useCreateSessionState(acc, "referenceText", "");
+  const [generationContext, setGenerationContext] = useCreateSessionState<AiGenerationContext | undefined>(acc, "generationContext", undefined);
+  const [sourceIds, setSourceIds] = useCreateSessionState<string[]>(acc, "sourceIds", []);
+  const [instruction, setInstruction] = useCreateSessionState(acc, "instruction", "");
 
-  const [candidates, setCandidates] = useState<AiCandidate[]>([]);
+  const [candidates, setCandidates] = useCreateSessionState<AiCandidate[]>(acc, "candidates", []);
   /** カルーセルでいま見えている案。 */
-  const [shown, setShown] = useState(0);
+  const [shown, setShown] = useCreateSessionState(acc, "shown", 0);
   /** エディタに入れた案（-1 = 入れていない。自分で書いた本文）。 */
-  const [active, setActive] = useState(-1);
+  const [active, setActive] = useCreateSessionState(acc, "active", -1);
   // リライトの下敷きは本文に流し込んでおく（型の見本は本文に入れない）
-  const [draft, setDraft] = useState<PostDraft>(() =>
+  const [draft, setDraft] = useCreateSessionState<PostDraft>(acc, "draft", () =>
     initial?.mode === "rewrite" ? { ...emptyDraft(), body: initial.text } : emptyDraft(),
   );
   const [reviseText, setReviseText] = useState("");
   /** 案ごとの会話履歴（SPEC §12.3「指示で直す（会話履歴保持）」）。自分で書いた本文は "own"。 */
-  const [history, setHistory] = useState<Record<string, AiHistoryTurn[]>>({});
+  const [history, setHistory] = useCreateSessionState<Record<string, AiHistoryTurn[]>>(acc, "history", {});
+  /** 離れたときにいた手順。URL に step が無いときはここへ戻す */
+  const [resume, setResume] = useCreateSessionState<{ step: Step; mode: Mode } | null>(acc, "resume", null);
   const [sheet, setSheet] = useState<SheetKind | null>(null);
   // AI が素材の不足を質問してきたとき（`AiGenerateResponse.question`）。シートで答えるか任せる
   const [question, setQuestion] = useState("");
@@ -147,6 +158,18 @@ export default function Create() {
   if (step === "start") mode = workMode ?? "write";
   const rewrite = mode === "rewrite";
   const pickMode: AiPickMode = rewrite ? "rewrite" : "template";
+
+  // 別の画面から戻ってきたら（URL に step が無い）、離れたときの手順に戻す。下敷きで来たときは下敷きが優先
+  const resumeOnce = useRef(resume);
+  useEffect(() => {
+    if (rawStep !== null || fromPreset || !resumeOnce.current) return;
+    setParams(urlFor(resumeOnce.current.step, resumeOnce.current.mode), { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (rawStep === null) return;
+    setResume(step === "start" ? null : { step, mode });
+  }, [rawStep, step, mode, setResume]);
 
   // 足りない入力で開かれた手順や、ホームからの下敷きは URL を置き換えてそろえる（履歴は積まない）
   const needsUrl = rawStep !== null || fromPreset;
@@ -237,14 +260,13 @@ export default function Create() {
     setViewerOpen(true);
   }
 
+  /** 見本は1本。選んだらそのまま次の手順へ進み、選んだ行をもう一度押すと外れる（DECISIONS 2026-10-21） */
   function togglePick(p: PostSummary) {
     const has = picks.includes(p.id);
-    const next = rewrite
-      ? (has ? [] : [p.id])
-      : has ? picks.filter((x) => x !== p.id) : [...picks, p.id].slice(0, 3);
-    setPicks(next);
-    setPickedText((t) => ({ ...t, [p.id]: p.text }));
+    setPicks(has ? [] : [p.id]);
+    setPickedText((t) => ({ ...t, [p.id]: [p.text, ...p.children.map((c) => c.text)].join("\n\n") }));
     setViewerOpen(false);
+    if (!has) go("brief");
   }
 
   function startGenerate() {
@@ -401,6 +423,7 @@ export default function Create() {
         onSuccess: () => {
           if (!mounted.current) return;
           toast.show("下書きに保存しました", "ok");
+          clearCreateSession();
           navigate("/app/queue");
         },
         onError: (e) => fail(e, "保存できませんでした"),
@@ -432,6 +455,7 @@ export default function Create() {
           if (!mounted.current) return;
           setSheet(null);
           toast.show(pick.kind === "now" ? "次の実行で出します" : "予約しました", "ok");
+          clearCreateSession();
           navigate("/app/queue");
         },
         onError: (e) => fail(e, "予約・投稿できませんでした"),
@@ -469,7 +493,7 @@ export default function Create() {
     body = (
       <>
         <h1 className="wizard-title">{rewrite ? "リライトする投稿を選ぶ" : "見本にする投稿を選ぶ"}</h1>
-        <p className="wizard-sub">{rewrite ? "1本だけ。" : "最大3本。表示回数の多い順です。"}</p>
+        <p className="wizard-sub">{rewrite ? "1本選ぶと、次に進みます。" : "1本選ぶと、次に進みます。表示回数の多い順です。"}</p>
         {/* 上で出どころを切り替え、下に中身（DECISIONS 2026-10-20） */}
         <div className="pick-source" role="tablist" aria-label="見本の出どころ">
           <button
@@ -519,21 +543,15 @@ export default function Create() {
         )}
       </>
     );
-    footer = (
+    // 自分の投稿は、選んだ時点で次へ進む。貼り付けだけ「次へ」が要る
+    footer = referenceOrigin === "paste" ? (
       <>
-        {referenceOrigin === "own" && picks.length > 0 && (
-          <span className="wizard-picked num">{rewrite ? "1本 選択中" : `${picks.length}/3本 選択中`}</span>
-        )}
         <button type="button" className="btn" disabled={!hasReference} onClick={() => go("brief")}>
           次へ
         </button>
-        {!hasReference && (
-          <p className="btn-hint">
-            {referenceOrigin === "paste" ? "投稿を貼り付けると押せます。" : rewrite ? "投稿を1本選ぶと押せます。" : "投稿を選ぶと押せます。"}
-          </p>
-        )}
+        {!hasReference && <p className="btn-hint">投稿を貼り付けると押せます。</p>}
       </>
-    );
+    ) : null;
   }
 
   if (step === "brief") {
@@ -545,10 +563,10 @@ export default function Create() {
       <>
         <h1 className="wizard-title">{rewrite ? "どう変えますか？" : "誰に、何を伝えますか？"}</h1>
         <p className="wizard-sub">{rewrite ? "空のままでも大丈夫です。" : "見本は書き方の型に使います。書く内容のもとになる情報（記事・メモ・動画）か、伝えたいことを書いてください。"}</p>
+        {/* 見本は全文（続きまで）。切ると何を型にするのか分からない（2026-10-21） */}
         <div className="picked">
           <span>{pickedLabel}</span>
-          <strong>{pickedBody}</strong>
-          {referenceOrigin === "own" && picks.length > 1 && <span className="picked-more">ほか{picks.length - 1}本</span>}
+          <p>{pickedBody}</p>
         </div>
         <label className="field wizard-field" htmlFor="create-instruction">
           <span className="visually-hidden">{rewrite ? "どう変えたいか" : "誰に、何を伝えるか"}</span>
@@ -621,7 +639,7 @@ export default function Create() {
 
   const progress = step !== "start" && mode !== "write" ? `${order}/4` : undefined;
   const viewerPicked = viewerPost ? picks.includes(viewerPost.id) : false;
-  const viewerFull = !rewrite && picks.length >= 3 && !viewerPicked;
+
 
   return (
     <div className="wizard">
@@ -665,15 +683,9 @@ export default function Create() {
           }
           actions={
             <>
-              <button
-                type="button"
-                className={viewerPicked ? "btn btn-sub" : "btn"}
-                disabled={viewerFull}
-                onClick={() => togglePick(viewerPost)}
-              >
-                {viewerPicked ? "選択を外す" : "この投稿を選ぶ"}
+              <button type="button" className={viewerPicked ? "btn btn-sub" : "btn"} onClick={() => togglePick(viewerPost)}>
+                {viewerPicked ? "選択を外す" : "この投稿を見本にする"}
               </button>
-              {viewerFull && <p className="btn-hint viewer-hint">選べるのは3本までです。先に1本外してください。</p>}
             </>
           }
         />
@@ -691,6 +703,7 @@ export default function Create() {
 
       <Sheet open={sheet === "question"} onClose={() => setSheet(null)} title="AI から確認">
         <p className="sheet-text question-text">{question}</p>
+        <p className="muted sheet-text">答えると、その内容を使って書きます。「AIにお任せ」は、これ以上聞かずにいまある材料だけで書きます（架空の数字や実績は入れません）。</p>
         <label className="field wizard-field" htmlFor="question-answer">
           <span className="visually-hidden">答え</span>
           <textarea
@@ -715,10 +728,10 @@ export default function Create() {
               runGenerate({ instruction: next });
             }}
           >
-            答えて書く
+            答える
           </button>
           <button type="button" className="btn btn-sub" disabled={busy} onClick={() => { setSheet(null); runGenerate({ assume: true }); }}>
-            この内容で任せる
+            AIにお任せ
           </button>
           <button type="button" className="btn-link" onClick={() => setSheet("sources")}>記事やメモを足す</button>
         </div>

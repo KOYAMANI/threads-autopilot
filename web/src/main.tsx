@@ -6,6 +6,7 @@ import { installSessionBoundary } from "./lib/session-boundary";
 import App from "./App";
 import EnvironmentNotice from "./components/EnvironmentNotice";
 import { registerSW } from "virtual:pwa-register";
+import { clearCreateSession } from "./lib/create-session";
 import "./styles/tokens.css";
 import "./styles/workspace.css";
 
@@ -19,7 +20,10 @@ const queryClient = new QueryClient({
   },
 });
 
-installSessionBoundary(() => queryClient.clear());
+installSessionBoundary(() => {
+  queryClient.clear();
+  clearCreateSession();
+});
 
 /**
  * PWA の更新（SPEC §12.4）。新しい版の Service Worker が入れ替わったら、そのページを読み込み直す。
