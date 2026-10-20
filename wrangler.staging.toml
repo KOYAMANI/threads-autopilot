@@ -33,6 +33,11 @@ migrations_dir = "worker/migrations"
 binding = "MEDIA_BUCKET"
 bucket_name = "threads-autopilot-staging-media"
 
+# Claude 連携（MCP）の OAuth の置き場所（@cloudflare/workers-oauth-provider）。2026-10-20 に作成
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "48b7b86ed43d41a99155cba3a9e52022"
+
 [triggers]
 crons = ["* * * * *"] # Dispatch only explicitly granted reviewer/student manual posts.
 
