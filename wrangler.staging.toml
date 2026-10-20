@@ -29,7 +29,11 @@ database_id = "dcce5294-b2de-4c72-9a81-5dc6f6d2e00a"
 migrations_dir = "worker/migrations"
 
 [triggers]
-crons = ["* * * * *"] # Arrival monitor only; APP_ENV=staging never enqueues jobs.
+# Minutely: arrival record + job dispatch. 18:00 UTC (03:00 JST): the daily sweep
+# (full_sync / followers / daily_views / clicks / insights_daily / ap_score).
+# The hourly insights_recent cron is deliberately not registered on staging (DECISIONS 2026-10-21).
+# Outbound writes stay blocked by code: lib/threads.ts rejects non-GET and lib/email.ts never sends on staging.
+crons = ["* * * * *", "0 18 * * *"]
 
 [vars]
 APP_ENV = "staging"
@@ -38,9 +42,10 @@ STAGING_THREADS_USERNAME = "yama_threads.sub" # Bootstrap; pin authenticated num
 MAINTENANCE_MODE = "0" # set to 1 and deploy before database recovery
 APP_ORIGIN = "https://threads-autopilot-staging.yama-threads-apps.workers.dev"
 DEFAULT_TZ = "Asia/Tokyo"
-WORKERS_PLAN = "free"
-MAX_SUBREQUESTS = "20"
-MAX_DB_QUERIES = "32"
+# Workers Paid since 2026-10-21 (DECISIONS). Same per-invocation budgets as production.
+WORKERS_PLAN = "paid"
+MAX_SUBREQUESTS = "300"
+MAX_DB_QUERIES = "800"
 JOB_TIME_BUDGET_MS = "20000"
 THREADS_MOCK = "0"
 AI_MOCK = "0"
