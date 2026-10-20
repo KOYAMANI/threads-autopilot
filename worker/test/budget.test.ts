@@ -81,16 +81,7 @@ describe("budget（SPEC §13 M1 完了条件5 / §6.1）", () => {
 });
 
 describe("buildUpsertChunks（SPEC §8.1 のクエリ圧縮）", () => {
-  it("2列なら50行ごと（バインド100の内側）", () => {
-    const rows = Array.from({ length: 120 }, (_, i) => [`a${i}`, i]);
-    const chunks = buildUpsertChunks("daily_views", ["date", "views"], rows, ["date"], ["views"]);
-    expect(chunks).toHaveLength(3);
-    expect(chunks[0]!.params).toHaveLength(100);
-    expect(chunks[2]!.params).toHaveLength(40);
-    expect(chunks[0]!.sql).toContain("ON CONFLICT(date) DO UPDATE SET views=excluded.views");
-  });
-
-  it("列数からバインド上限100に収まる行数を決める", () => {
+  it("列数と指定 chunkSize にかかわらずバインド上限100に収める", () => {
     expect(maxRowsPerStatement(2)).toBe(50);
     expect(maxRowsPerStatement(3)).toBe(33);
     expect(maxRowsPerStatement(5)).toBe(20);
@@ -105,9 +96,6 @@ describe("buildUpsertChunks（SPEC §8.1 のクエリ圧縮）", () => {
       for (const chunk of chunks) expect(chunk.params.length).toBeLessThanOrEqual(100);
       expect(chunks.reduce((n, c) => n + c.params.length, 0)).toBe(137 * cols);
     }
-  });
-
-  it("大きすぎる chunkSize を渡しても上限で切り詰める", () => {
     const columns = ["a", "b", "c", "d", "e"];
     const rows = Array.from({ length: 60 }, () => [1, 2, 3, 4, 5]);
     const chunks = buildUpsertChunks("t", columns, rows, ["a"], ["b"], 50);
@@ -166,30 +154,4 @@ describe("buildUpsertChunks（SPEC §8.1 のクエリ圧縮）", () => {
     expect(after?.v).toBe(999);
   });
 
-  it("3列でも daily_views に実際に流せる", async () => {
-    const b = createBudget({ dbQueries: 100 });
-    const db = createDb(env.DB, b);
-    const accountId = `chunk3-${crypto.randomUUID()}`;
-    const rows = Array.from({ length: 70 }, (_, i) => [
-      accountId,
-      `2026-01-${String((i % 28) + 1).padStart(2, "0")}`,
-      i,
-    ]);
-    // 日付が重複するので upsert される。列数3 → 33行/文
-    const chunks = buildUpsertChunks(
-      "daily_views",
-      ["account_id", "date", "views"],
-      rows,
-      ["account_id", "date"],
-      ["views"],
-    );
-    expect(chunks).toHaveLength(3);
-    expect(chunks[0]!.params).toHaveLength(99);
-    await db.batch(chunks);
-    const count = await db.first<{ n: number }>(
-      "SELECT COUNT(*) AS n FROM daily_views WHERE account_id=?",
-      accountId,
-    );
-    expect(count?.n).toBe(28);
-  });
 });

@@ -18,7 +18,7 @@ import {
 } from "../src/lib/ai";
 
 const BASE = {
-  model: "gemini-2.5-flash",
+  model: "gemini-3.5-flash-lite",
   apiKey: "AIza-test-key-000",
   system: "システム",
   user: "ユーザー",
@@ -40,15 +40,21 @@ const GOOD = JSON.stringify({
 
 describe("buildRequest（SPEC §10.1）", () => {
   it("Gemini はキーをURLに含めずヘッダーへ付け、JSON 固定にする", () => {
-    const plan = buildRequest({ ...BASE, provider: "gemini" });
+    const responseJsonSchema = {
+      type: "object",
+      properties: { slots: { type: "object", properties: { intro_A: { type: "string" } }, required: ["intro_A"] } },
+      required: ["slots"],
+    };
+    const plan = buildRequest({ ...BASE, provider: "gemini", responseJsonSchema });
     expect(plan.url).toContain(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
     );
     expect(plan.url).not.toContain("key=");
     expect(new Headers(plan.init.headers).get("x-goog-api-key")).toBe(BASE.apiKey);
     const body = JSON.parse(String(plan.init.body));
     expect(body.generationConfig.responseMimeType).toBe("application/json");
-    expect(body.systemInstruction.parts[0].text).toBe("システム");
+    expect(body.generationConfig.responseJsonSchema).toEqual(responseJsonSchema);
+    expect(body.system_instruction.parts[0].text).toBe("システム");
     expect(body.contents[0].parts[0].text).toBe("ユーザー");
   });
 
@@ -76,6 +82,15 @@ describe("buildRequest（SPEC §10.1）", () => {
     expect(h["HTTP-Referer"]).toBe("https://app.example.com");
     expect(h["X-Title"]).toBe("Threads Autopilot");
     const body = JSON.parse(String(plan.init.body));
+    expect(body.provider).toEqual({
+      only: ["amazon-bedrock/us"],
+      order: ["amazon-bedrock/us"],
+      allow_fallbacks: false,
+      require_parameters: true,
+      data_collection: "deny",
+      zdr: true,
+    });
+    expect(body.models).toBeUndefined();
     expect(body.response_format).toEqual({ type: "json_object" });
     expect(body.messages[0]).toEqual({ role: "system", content: "システム" });
     expect(body.messages[1]).toEqual({ role: "user", content: "ユーザー" });
@@ -152,7 +167,7 @@ describe("応答の解析（SPEC §10.1）", () => {
 
 /* ── タイムアウトとリトライ（SPEC §10.1） ────────────── */
 
-describe("callAi（SPEC §10.1 タイムアウト60秒・1回リトライ）", () => {
+describe("callAi（SPEC §10.1 共通期限・最大1回リトライ）", () => {
   it("1回目が 500 でも2回目で成功すれば返る", async () => {
     const fetchImpl = vi
       .fn()
@@ -210,10 +225,10 @@ describe("callAi（SPEC §10.1 タイムアウト60秒・1回リトライ）", (
       { fetchImpl, timeoutMs: 10, retries: 0 },
     ).catch((x) => x)) as AiError;
     expect(e.code).toBe("AI_FAILED");
-    expect(e.message).toContain("60秒");
+    expect(e.message).toContain("制限時間");
   });
 
-  it("エラーの原文はキーを伏せてから持つ（redact）", async () => {
+  it("エラーの原文を保持せずキーを診断にも残さない", async () => {
     const fetchImpl = vi
       .fn()
       .mockImplementation(async () => new Response("bad key: AIzaSyTHISLOOKSLIKEAKEY123", { status: 401 }));
@@ -221,8 +236,8 @@ describe("callAi（SPEC §10.1 タイムアウト60秒・1回リトライ）", (
       { ...BASE, provider: "gemini" },
       { fetchImpl: fetchImpl as unknown as typeof fetch },
     ).catch((x) => x)) as AiError;
-    expect(e.raw).toContain("AIza***");
-    expect(e.raw).not.toContain("AIzaSyTHISLOOKSLIKEAKEY123");
+    expect(e.raw).toBeNull();
+    expect(JSON.stringify(e)).not.toContain("AIzaSyTHISLOOKSLIKEAKEY123");
   });
 });
 

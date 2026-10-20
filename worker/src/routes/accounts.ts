@@ -10,9 +10,9 @@ import { fail, type AppEnv } from "../app";
 import {
   ACCOUNT_COLORS,
   ACCOUNT_COLUMNS,
-  ACCOUNT_LIMIT,
   accountToken,
   deleteAccountData,
+  effectiveAccountLimit,
   loadOwnedAccount,
   toAccountSummary,
   tokenExpiresInDays,
@@ -76,10 +76,11 @@ export function accountRoutes() {
   /* ── 一覧 ────────────────────────────────────────── */
   r.get("/", async (c) => {
     const db = c.get("db");
-    const rows = await db.all<AccountRow & { ap_enabled: number | null }>(
+    const rows = await db.all<AccountRow & { ap_enabled: number | null; pending_approval_count: number }>(
       `SELECT ${ACCOUNT_COLUMNS.split(", ")
         .map((x) => `a.${x}`)
-        .join(", ")}, ap.enabled AS ap_enabled
+        .join(", ")}, ap.enabled AS ap_enabled,
+          (SELECT COUNT(*) FROM queue q WHERE q.account_id=a.id AND q.status='pending_approval') AS pending_approval_count
          FROM accounts a LEFT JOIN autopilot ap ON ap.account_id=a.id
         WHERE a.user_id=? ORDER BY a.created_at ASC`,
       c.get("userId")!,
@@ -88,7 +89,7 @@ export function accountRoutes() {
     return c.json(
       ok({
         accounts: rows.map((a) =>
-          toAccountSummary(a, { autopilotEnabled: Boolean(a.ap_enabled), nowMs }),
+          toAccountSummary(a, { autopilotEnabled: Boolean(a.ap_enabled), nowMs, pendingApprovalCount: a.pending_approval_count }),
         ),
       }),
     );
@@ -261,11 +262,38 @@ export function accountRoutes() {
     if (!account) return fail("NOT_FOUND", "見つかりませんでした", 404);
 
     const jobs = await db.all<{type:string; status:string; state_json:string; last_error:string|null; updated_at:string}>(
-      `SELECT type,status,state_json,last_error,updated_at FROM jobs WHERE account_id=? AND type IN (${SYNC_JOB_TYPES.map(()=>"?").join(",")}) ORDER BY created_at DESC`,
+      `SELECT type,status,state_json,last_error,updated_at FROM jobs WHERE account_id=? AND type IN (${SYNC_JOB_TYPES.map(()=>"?").join(",")}) ORDER BY created_at DESC, rowid DESC`,
       account.id, ...SYNC_JOB_TYPES,
     );
     const latest = [...new Map(jobs.slice().reverse().map(j => [j.type,j])).values()];
     const job = latest.find(j => j.type === "full_sync");
+    const clickJob = latest.find(j => j.type === "clicks");
+    const completedClickJob = jobs.find(j => j.type === "clicks" && j.status === "done");
+    const clickRows = await db.first<{n:number; last_synced_at:string|null}>(
+      "SELECT COUNT(*) AS n, MAX(fetched_at) AS last_synced_at FROM click_weeks WHERE account_id=?",
+      account.id,
+    );
+    const hasClickSnapshot = Boolean(completedClickJob || (clickRows?.n ?? 0) > 0);
+    const clickRunning = clickJob?.status === "pending" || clickJob?.status === "running";
+    const clickFailed = clickJob?.status === "failed";
+    const clickState = hasClickSnapshot
+      ? "ready"
+      : clickRunning
+        ? "syncing"
+        : clickFailed
+          ? "failed"
+          : "unavailable";
+    const clickMessage = clickState === "ready"
+      ? clickRunning
+        ? "取得済みのクリックを表示しています。最新データへ更新中です。"
+        : clickFailed
+          ? "取得済みのクリックを表示しています。最新データの更新に失敗しました。"
+          : "クリックを取得済みです。0は取得結果が0件だったことを表します。"
+      : clickState === "syncing"
+        ? "クリックを取り込んでいます。完了するまで数字は表示しません。"
+        : clickState === "failed"
+          ? "クリックを取得できませんでした。もう一度同期してください。"
+          : "クリックはまだ取得していません。同期を開始してください。";
     const failed = latest.find(j => j.status === "failed");
     const running = latest.some(j => j.status === "pending" || j.status === "running");
     const count = await db.first<{n:number}>("SELECT COUNT(*) AS n FROM posts WHERE account_id=? AND deleted=0", account.id);
@@ -286,6 +314,12 @@ export function accountRoutes() {
         message: failed ? "一部の取り込みに失敗しました。診断で権限を確認して、もう一度同期してください。" : null,
         lastSyncedAt: account.last_full_sync_at,
         total: SYNC_TOTAL_PAGES,
+        clicks: {
+          state: clickState,
+          refreshing: hasClickSnapshot && clickRunning,
+          lastSyncedAt: clickRows?.last_synced_at ?? completedClickJob?.updated_at ?? null,
+          message: clickMessage,
+        },
       }),
     );
   });
@@ -346,7 +380,11 @@ export async function connectThreadsAccount(c: Context<AppEnv>, token: string, a
     const stagingAccountMatches = stagingId
       ? profile.id === stagingId
       : Boolean(stagingUsername) && normalizeUsername(profile.username) === stagingUsername;
-    if (c.env.APP_ENV === "staging" && !stagingAccountMatches && !await claimBetaProfile(c.env, db, userId, profile)) {
+    // 管理者は分析・接続確認のため任意の本人アカウントを接続できる。
+    // 投稿可否は canPublishForAccount 側で従来どおり検証用アカウントに限定する。
+    const adminCanConnect = c.env.ADMIN_USER_ID?.trim() === userId
+      && !await db.first("SELECT id FROM accounts WHERE threads_user_id=? AND user_id<>?", profile.id, userId);
+    if (c.env.APP_ENV === "staging" && !stagingAccountMatches && !adminCanConnect && !await claimBetaProfile(c.env, db, userId, profile)) {
       return fail("STAGING_ACCOUNT_REQUIRED", "このログインで許可された検証用Threadsアカウントのみ接続できます。招待キーと接続先アカウントを確認してください", 403);
     }
     const existing = await db.first<AccountRow>(
@@ -360,10 +398,15 @@ export async function connectThreadsAccount(c: Context<AppEnv>, token: string, a
         "SELECT COUNT(*) AS n FROM accounts WHERE user_id=?",
         userId,
       );
-      if ((countRow?.n ?? 0) >= ACCOUNT_LIMIT) {
+      const entitlement = await db.first<{ account_limit: number }>(
+        "SELECT account_limit FROM user_entitlements WHERE user_id=?",
+        userId,
+      );
+      const accountLimit = effectiveAccountLimit(userId, c.env.ADMIN_USER_ID, entitlement?.account_limit);
+      if ((countRow?.n ?? 0) >= accountLimit) {
         return fail(
           "ACCOUNT_LIMIT",
-          `つなげるアカウントは${ACCOUNT_LIMIT}つまでです。設定から1つ外してください`,
+          `現在のプランでつなげるアカウントは${accountLimit}つまでです。設定から1つ外してください`,
           400,
         );
       }

@@ -15,6 +15,7 @@ import { createDb, type Db } from "./lib/db";
 import { getSession, hasRequestedWith, readCookie, SESSION_COOKIE } from "./lib/session";
 import { redact } from "./lib/redact";
 import { ThreadsApiError, threadsReason } from "./lib/threads-error";
+import { audit } from "./lib/audit";
 import { AiError } from "./lib/ai";
 import { authRoutes } from "./routes/auth";
 import { adminRoutes } from "./routes/admin";
@@ -26,12 +27,15 @@ import { linkRoutes } from "./routes/links";
 import { healthRoutes } from "./routes/health";
 import { sourceRoutes } from "./routes/sources";
 import { aiRoutes } from "./routes/ai";
+import { aiTaskRoutes } from "./routes/ai-tasks";
 import { autopilotRoutes } from "./routes/autopilot";
 import { notificationRoutes, pushRoutes } from "./routes/notifications";
 import { exportRoutes } from "./routes/export";
 import { threadsOAuthRoutes } from "./routes/threads-oauth";
 import { googleRoutes } from "./routes/google";
 import { userRoutes } from "./routes/users";
+import { mediaRoutes } from "./routes/media";
+import { MAX_POST_MEDIA_BYTES } from "./lib/media";
 
 export type Vars = {
   db: Db;
@@ -53,12 +57,12 @@ const PUBLIC_PATHS = new Set([
   "/auth/reset",
 ]);
 
-function isPublic(path: string): boolean {
-  return PUBLIC_PATHS.has(path) || path.startsWith("/admin/");
+function isPublic(path: string, method: string): boolean {
+  return PUBLIC_PATHS.has(path) || path.startsWith("/admin/") || (method === "GET" && path.startsWith("/media/"));
 }
 
-export function fail(code: string, message: string, status = 400): Response {
-  const body: ApiErr = { ok: false, error: { code, message } };
+export function fail(code: string, message: string, status = 400, detail?: unknown): Response {
+  const body: ApiErr = { ok: false, error: { code, message, ...(detail ? { detail } : {}) } };
   return Response.json(body, { status });
 }
 
@@ -72,7 +76,7 @@ export function createApp() {
     c.header("Referrer-Policy", "no-referrer");
     await next();
   });
-  app.use("*", bodyLimit({ maxSize: 1_000_000, onError: () => fail("BAD_REQUEST", "送信データが大きすぎます", 413) }));
+  app.use("*", bodyLimit({ maxSize: MAX_POST_MEDIA_BYTES, onError: () => fail("BAD_REQUEST", "送信データが大きすぎます", 413) }));
 
   // 1リクエスト＝1予算。D1 クエリ数は lib/db.ts が自動で数える（SPEC §8.1）
   app.use("*", async (c, next) => {
@@ -86,7 +90,8 @@ export function createApp() {
 
   // CSRF（SPEC §5.1）
   app.use("*", async (c, next) => {
-    if (!hasRequestedWith(c.req.raw)) {
+    const publicMediaRead = c.req.method === "GET" && c.req.path.startsWith("/api/media/");
+    if (!publicMediaRead && !hasRequestedWith(c.req.raw)) {
       return fail("CSRF", "リクエストの形式が正しくありません。画面を再読み込みしてください", 403);
     }
     await next();
@@ -104,7 +109,7 @@ export function createApp() {
         c.header("X-Authenticated-User", session.user_id);
       }
     }
-    if (!isPublic(path) && !c.get("userId")) {
+    if (!isPublic(path, c.req.method) && !c.get("userId")) {
       return fail("UNAUTHORIZED", "ログインしてください", 401);
     }
     await next();
@@ -135,23 +140,28 @@ export function createApp() {
   app.route("/accounts", autopilotRoutes());
   app.route("/sources", sourceRoutes());
   app.route("/ai", aiRoutes());
+  app.route("/ai", aiTaskRoutes());
   app.route("/notifications", notificationRoutes());
   app.route("/push", pushRoutes());
   app.route("/export", exportRoutes());
   app.route("/users", userRoutes());
+  app.route("/media", mediaRoutes());
 
   app.notFound(() => fail("NOT_FOUND", "見つかりませんでした", 404));
 
-  app.onError((err) => {
+  app.onError(async (err, c) => {
     if (err instanceof ThreadsApiError) {
       // Threads の失敗は、日本語＋原文をそのままユーザーに見せる（SPEC §2.4 / §6.2）
       return fail("THREADS_ERROR", threadsReason(err.toThreadsError()), 502);
     }
     if (err instanceof AiError) {
       // キー未設定は 400、応答が読めない・呼べないは 502（外部の失敗）
-      const status = err.code === "AI_KEY_REQUIRED" ? 400 : 502;
-      if (err.raw) console.error(`[ai] ${err.code}: ${redact(err.raw)}`);
-      return fail(err.code, err.message, status);
+      const referenceError = ["input", "content_validation", "reference_unresolved", "reference_invalid", "reference_too_long"].includes(err.category);
+      const status = referenceError ? 422 : err.code === "AI_KEY_REQUIRED" ? 400 : 502;
+      const detail = { requestId: crypto.randomUUID(), category: err.category, reason:err.reason, upstreamStatus: err.upstreamStatus, retryable: err.retryable };
+      console.error("[ai]", JSON.stringify({ code: err.code, ...detail }));
+      await audit(c.get("db"), c.get("userId") ?? null, "ai_error", {code:err.code,...detail});
+      return fail(err.code, err.code === "AI_BAD_OUTPUT" && !referenceError ? "AIの生成結果がアプリの検証条件を満たしませんでした。入力は保持しています。再試行し、続く場合は診断情報を運営へお知らせください。" : err.message, status, detail);
     }
     if (err instanceof BudgetExceeded) {
       console.error(`[api] budget exceeded: ${err.kind} ${err.used}/${err.limit}`);

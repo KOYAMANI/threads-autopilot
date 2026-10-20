@@ -109,7 +109,7 @@ describe("トークン失効（code 190）", () => {
 });
 
 describe("cleanup（SPEC §8.7）", () => {
-  it("古い ap_log / done ジョブ / 期限切れセッション / rate_events を消す", async () => {
+  it("古い ap_log / 完了・失敗ジョブ / 期限切れセッション / rate_events を消す", async () => {
     const u = await registerUser();
     const accountId = await insertAccount({ userId: u.userId, token: mockToken("cl1") });
     const db = testDb();
@@ -137,6 +137,15 @@ describe("cleanup（SPEC §8.7）", () => {
       old(8),
     );
     await db.run(
+      "INSERT INTO jobs (id, type, account_id, state_json, status, priority, next_run_at, attempts, created_at, updated_at) VALUES (?,?,?,'{}','failed',5,?,1,?,?)",
+      "stale-failed-job",
+      "ai_generate",
+      accountId,
+      old(8),
+      old(8),
+      old(8),
+    );
+    await db.run(
       "INSERT INTO sessions (id, user_id, expires_at, created_at, ua) VALUES (?,?,?,?,NULL)",
       "expired-session",
       u.userId,
@@ -156,6 +165,7 @@ describe("cleanup（SPEC §8.7）", () => {
     );
     expect(apLogs.map((x) => x.message)).toEqual(["new"]);
     expect(await db.first("SELECT id FROM jobs WHERE id='stale-done-job'")).toBeNull();
+    expect(await db.first("SELECT id FROM jobs WHERE id='stale-failed-job'")).toBeNull();
     expect(await db.first("SELECT id FROM sessions WHERE id='expired-session'")).toBeNull();
     const rates = await db.all<{ key: string }>(
       "SELECT key FROM rate_events WHERE key LIKE 'login:%@example.com'",

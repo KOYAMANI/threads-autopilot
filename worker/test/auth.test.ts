@@ -1,11 +1,39 @@
-import { env } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api, issueLicense, registerUser, testDb, uniqueEmail } from "./helpers";
 import { clearOutbox, getOutbox } from "../src/lib/email";
+import * as cryptoLib from "../src/lib/crypto";
 
 beforeEach(() => clearOutbox());
 
 describe("register → login → me（SPEC §13 M1 完了条件1）", () => {
+  it("ライセンスキーなしで無料登録でき、初期設定前の状態を返す", async () => {
+    const email = uniqueEmail("free");
+    const reg = await api("POST", "/api/auth/register", {
+      body: { email, password: "password1234" },
+    });
+    expect(reg.status).toBe(201);
+    const me = await api("GET", "/api/auth/me", { cookie: reg.cookie });
+    expect(me.body.data.entitlement).toEqual({
+      plan: "free",
+      accountLimit: 1,
+      aiAdviceEnabled: false,
+      platformAiEnabled: false,
+    });
+    expect(me.body.data.profile).toEqual({
+      goal: null,
+      activity: "",
+      audience: "",
+      onboardingCompleted: false,
+    });
+
+    const profile = await api("PUT", "/api/users/me/profile", {
+      cookie: reg.cookie,
+      body: { goal: "monetize", activity: "講座販売", audience: "副業を始めたい人", onboardingCompleted: true },
+    });
+    expect(profile.status).toBe(200);
+    expect(profile.body.data.profile).toMatchObject({ goal: "monetize", onboardingCompleted: true });
+  });
+
   it("登録できてセッションが張られ、me が自分を返す", async () => {
     const license = await issueLicense();
     const email = uniqueEmail();
@@ -71,29 +99,24 @@ describe("register → login → me（SPEC §13 M1 完了条件1）", () => {
     expect(res.body.error.code).toBe("LOGIN_FAILED");
   });
 
-  it("存在しないメールでも PBKDF2 を回すので応答時間で存在が分からない", async () => {
+  it("存在しないメールでも既存ユーザーと同じパスワード検証経路を通る", async () => {
     const u = await registerUser();
-
-    const time = async (email: string) => {
-      const t = Date.now();
-      const res = await api("POST", "/api/auth/login", { body: { email, password: "wrongpassword" } });
-      expect(res.body.error.code).toBe("LOGIN_FAILED");
-      return Date.now() - t;
-    };
-
-    // 存在するメール / 存在しないメールを交互に計り、中央値を比べる
-    const known: number[] = [];
-    const unknown: number[] = [];
-    for (let i = 0; i < 4; i++) {
-      known.push(await time(u.email));
-      unknown.push(await time(`nobody${i}@example.com`));
+    const verify = vi.spyOn(cryptoLib, "verifyPassword").mockResolvedValue(false);
+    try {
+      for (const email of [u.email, "nobody@example.com"]) {
+        const res = await api("POST", "/api/auth/login", {
+          body: { email, password: "wrongpassword" },
+        });
+        expect(res.body.error.code).toBe("LOGIN_FAILED");
+      }
+      expect(verify).toHaveBeenCalledTimes(2);
+      expect(verify.mock.calls.map(([password]) => password)).toEqual([
+        "wrongpassword",
+        "wrongpassword",
+      ]);
+    } finally {
+      verify.mockRestore();
     }
-    const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
-    const a = median(known);
-    const b = median(unknown);
-    // PBKDF2 100,000回ぶんの差（実測で 4ms 対 18ms 級）が出ていないこと。
-    // 片方が 0ms になり得るので比ではなく差の絶対値で見る
-    expect(Math.abs(a - b)).toBeLessThan(Math.max(a, b) * 0.6 + 5);
   });
 
   it("変更系は X-Requested-With が無いと 403（CSRF）", async () => {
@@ -259,12 +282,5 @@ describe("forgot → reset（SPEC §13 M1 完了条件4）", () => {
     expect((await api("POST", "/api/auth/reset", { body: { token: secondToken, password: "newpassword5678" } })).status).toBe(200);
     const stale = await api("POST", "/api/auth/reset", { body: { token: first, password: "yetanother123" } });
     expect(stale.body.error.code).toBe("RESET_INVALID");
-  });
-});
-
-describe("環境", () => {
-  it("テスト用の D1 が使える", async () => {
-    const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM users").first<{ n: number }>();
-    expect(typeof row?.n).toBe("number");
   });
 });

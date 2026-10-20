@@ -102,7 +102,7 @@ export async function pushToUser(
   env: Env,
   db: Db,
   userId: string,
-  _payload: PushPayload,
+  payload: PushPayload,
 ): Promise<{ sent: number; removed: number }> {
   const publicKey = (env.VAPID_PUBLIC_KEY ?? "").trim();
   const privateKey = (env.VAPID_PRIVATE_KEY ?? "").trim();
@@ -148,7 +148,7 @@ export async function pushToUser(
       removed++;
       continue;
     }
-    const res = await sendPush({ publicKey, privateKey }, sub, {title:"Threads オートパイロット",body:"アプリに新しいお知らせがあります。ログインして確認してください。",url:"/app/queue"}, subject);
+    const res = await sendPush({ publicKey, privateKey }, sub, {title:"Threads オートパイロット",body:"アプリに新しいお知らせがあります。ログインして確認してください。",url:payload.url ?? "/app/home"}, subject);
     if (res.ok) {
       sent++;
       if (row.fail_count > 0) {

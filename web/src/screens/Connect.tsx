@@ -15,6 +15,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { activeAccountStorageKey } from "../lib/active-account";
 import { useToast } from "../components/Toast";
 import { CROSSFADE, SPRING, useReducedMotion } from "../lib/motion";
+import { useEnvironment } from "../api/environment";
 
 const STEPS = [
   "developers.facebook.com でアプリを作り、「Threads API」を追加します",
@@ -28,6 +29,7 @@ export default function Connect() {
   const navigate = useNavigate();
   const toast = useToast();
   const reduced = useReducedMotion();
+  const environment = useEnvironment();
 
   const isAdd = params.get("add") === "1";
   const [token, setToken] = useState("");
@@ -119,6 +121,7 @@ export default function Connect() {
       <p className="muted" style={{ marginTop: "0.375rem", marginBottom: "calc(var(--sp) * 3)" }}>
         ご自身の Meta アプリで作ったトークンを貼り付けます。パスワードは預かりません。
       </p>
+      {environment.data?.environment === "local" && <div className="msg msg-warn" style={{marginBottom:"1.5rem"}}><strong>ローカル検証について</strong><p>下のアクセストークン接続は、実際のThreadsアカウントでも利用できます。接続後の「今すぐ投稿」と予約投稿は実アカウントへ公開されます。かんたん接続は、Meta側へのローカル戻り先登録と管理者用アプリキーがないため無効です。</p></div>}
 
       <div className="card" style={{marginBottom:"1.5rem"}}><h2>Threadsでかんたん接続</h2><p className="muted" style={{margin:"1rem 0"}}>Threadsの画面で許可するだけ。トークンの取得・長期化・更新はアプリが行います。</p><button className="btn" disabled={!oauth.data?.configured || startOAuth.isPending} onClick={()=>startOAuth.mutate()}>{startOAuth.isPending ? "Threadsへ移動中…" : "Threadsで接続する"}</button>{!oauth.data?.configured && <p className="muted" style={{marginTop:".75rem"}}>管理者のMetaアプリ設定が済むまで、下のトークン接続を使えます。</p>}{params.get("threads") === "failed" && <p className="msg msg-bad" role="alert">Threadsに接続できませんでした。許可する権限とアプリ設定を確認して、接続をやり直してください。</p>}</div>
       <h2 style={{marginBottom:"1rem"}}>アクセストークンで接続</h2>

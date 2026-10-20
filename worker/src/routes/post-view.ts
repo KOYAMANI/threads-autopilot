@@ -2,11 +2,13 @@
  * `posts` の行 → API の `PostSummary`（SPEC §7.2 / §7.3）。
  * ダッシュボードと投稿一覧・詳細で同じ形を返すためにここに1つだけ置く。
  */
+import { readOwnTree } from "../lib/reference-thread";
 import { classifyHook, extractUrls, normalizeUrl, type PostSummary } from "@tap/shared";
 
 export type PostRow = {
   id: string;
   root_id: string;
+  own_thread_json?: string | null;
   is_reply: number;
   text: string;
   permalink: string | null;
@@ -25,7 +27,7 @@ export type PostRow = {
 };
 
 export const POST_SELECT =
-  "id, root_id, is_reply, text, permalink, media_type, media_url, link_attachment_url, posted_at, views, likes, replies, reposts, quotes, shares, clicks, tags_json";
+  "id, root_id, own_thread_json, is_reply, text, permalink, media_type, media_url, link_attachment_url, posted_at, views, likes, replies, reposts, quotes, shares, clicks, tags_json";
 
 function hookOf(row: PostRow): string {
   try {
@@ -62,7 +64,15 @@ export function toPostSummary(
   children: PostRow[],
   links: Map<string, { label: string; kind: string }>,
 ): PostSummary {
+  const tree = readOwnTree(row.own_thread_json);
+  const stored = new Map(children.map(child => [child.id, child]));
+  children = tree?.complete ? tree.chain.map(media => ({
+    ...row, ...stored.get(media.id), id: media.id, text: media.text ?? "",
+    views: stored.get(media.id)?.views ?? 0,
+    link_attachment_url: media.link_attachment_url ?? null,
+  })) : [];
   return {
+    treeStatus: tree?.complete ? "ready" : "pending",
     id: row.id,
     text: row.text,
     permalink: row.permalink,

@@ -5,7 +5,7 @@
  * 出し、日をタップするとその日だけに絞る。
  *
  * 操作（design-v0.2 §3-5）: 編集 / 複製 / 削除 / 今すぐ投稿 / 日時変更。
- * 投稿済からは リライト（作る画面へ）/ リポスト / 数字を見る。
+ * 投稿済からは リポスト / 数字を見る。
  * 失敗は日本語の理由（`error`）と Threads の返答そのまま（`error_raw`）を出す。
  * `approve_deadline` の残り時間は client 側で数える（SPEC §12.3）。
  *
@@ -13,7 +13,7 @@
  * に任せる（SPEC §12.5 / apple-design）。
  */
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import type { QueueItem, QueueSlotsResponse } from "@tap/shared";
 import {
@@ -37,7 +37,6 @@ import { DotsIcon, PlusIcon } from "../components/Icons";
 import { useToast } from "../components/Toast";
 import { CROSSFADE, SPRING, useReducedMotion } from "../lib/motion";
 import { fmtN, md, mdhm, remaining } from "../lib/format";
-import type { CreatePreset } from "./Home";
 
 /* ── 小さな道具 ────────────────────────────────────── */
 
@@ -100,9 +99,10 @@ function draftOf(item: QueueItem): PostDraft {
 type SheetKind = "actions" | "edit" | "schedule" | "publish" | null;
 
 export default function Queue() {
-  const { account } = useShell();
+  const { account, accounts, setAccountId } = useShell();
   const toast = useToast();
   const navigate = useNavigate();
+  const location = useLocation();
   const now = useNow();
 
   const tz = account?.timezone ?? "Asia/Tokyo";
@@ -116,6 +116,7 @@ export default function Queue() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sheet, setSheet] = useState<SheetKind>(null);
+  const [approvalId, setApprovalId] = useState<string | null>(() => (location.state as { approveId?: string } | null)?.approveId ?? null);
   const [editDraft, setEditDraft] = useState<PostDraft>({ body: "", comments: ["", "", ""] });
 
   const { data: items, isPending, isError, error } = useQueue(accountId, tab);
@@ -133,6 +134,9 @@ export default function Queue() {
     () => [...(items ?? []), ...(daily.data?.slots.flatMap(slot => slot.item ? [slot.item] : []) ?? []), ...(daily.data?.unslotted ?? [])].find(i => i.id === selectedId) ?? null,
     [items, daily.data, selectedId],
   );
+  const approvals = useMemo(() => (items ?? []).filter(item => item.status === "pending_approval"), [items]);
+  const approvalItem = approvals.find(item => item.id === approvalId) ?? null;
+  const otherApprovals = accounts.filter(item => item.id !== accountId && (item.pendingApprovalCount ?? 0) > 0);
 
   // 週表示の7日（今日から6日後まで）。予約タブでだけ出す
   const week = useMemo(() => {
@@ -169,12 +173,6 @@ export default function Queue() {
     setSelectedId(item.id);
     if (kind === "edit") setEditDraft(draftOf(item));
     setSheet(kind);
-  }
-
-  function toCreate(item: QueueItem) {
-    const preset: CreatePreset = { mode: "rewrite", postId: item.id, text: item.body };
-    setSheet(null);
-    navigate("/app/create", { state: { preset } });
   }
 
   function saveEdit() {
@@ -216,13 +214,13 @@ export default function Queue() {
     <>
       <div className="page-heading queue-heading">
         <div>
-          <p className="eyebrow">PLAN YOUR NEXT CHAPTER</p><h1>下書き・予約</h1>
+          <p className="eyebrow">QUEUE</p><h1>キュー</h1>
           {!canPublish && <p className="msg msg-warn">設定でThreads APIを連携すると、予約・投稿できるようになります。</p>}
           <p className="muted" style={{ marginTop: "0.125rem" }}>
             @{account.username} の予約と下書き
           </p>
         </div>
-        <div className="queue-heading-actions"><button type="button" className="btn btn-sub btn-fit" onClick={() => setShowSlots(true)}>投稿スロット設定</button>
+        <div className="queue-heading-actions"><select className="input queue-filter" aria-label="表示する状態" value={tab} onChange={e => {setTab(e.target.value as QueueTabKey);setDay(e.target.value === "scheduled" ? dayKey(Date.now(),tz) : null);}}>{QUEUE_TABS.map(t=><option key={t.key} value={t.key}>{t.label}</option>)}</select><button type="button" className="icon-btn queue-menu" aria-label="投稿スロット設定" onClick={() => setShowSlots(true)}>⋯</button><button type="button" className="btn btn-sub btn-fit desktop-only" onClick={() => setShowSlots(true)}>投稿スロット設定</button>
         <button
           type="button"
           className="btn btn-sub"
@@ -233,7 +231,11 @@ export default function Queue() {
         </button></div>
       </div>
 
-      <div className="chips" role="group" aria-label="表示する状態">
+      {approvals.length > 0 && <section className="queue-approval-card"><div><strong>このアカウントの承認待ち {approvals.length}件</strong><span className="num">{approvals[0]?.scheduledAt ? mdhm(approvals[0].scheduledAt, tz).split(" ").at(-1) : "次の枠"}まで</span></div><p>承認するまで投稿されません。</p><button className="btn" onClick={() => setApprovalId(approvals[0]!.id)}>1件目を確認する</button></section>}
+
+      {otherApprovals.length > 0 && <div className="queue-other-accounts" aria-label="他の投稿先の承認待ち">{otherApprovals.map(item => <button type="button" key={item.id} onClick={() => setAccountId(item.id)}><span className="account-avatar" style={{ background: item.color }}>{item.username.slice(0,1).toUpperCase()}</span><span><strong>@{item.username} に {item.pendingApprovalCount}件</strong><small>投稿先を切り替えて確認</small></span><b>切り替える →</b></button>)}</div>}
+
+      <div className="chips queue-tabs" role="group" aria-label="表示する状態">
         {QUEUE_TABS.map((t) => (
           <button
             key={t.key}
@@ -250,6 +252,8 @@ export default function Queue() {
           </button>
         ))}
       </div>
+
+      {approvalItem && <div className="approval-screen" role="dialog" aria-modal="true" aria-label="投稿を承認"><header><button className="icon-btn" aria-label="閉じる" onClick={() => setApprovalId(null)}>×</button><div><strong>承認 {approvals.findIndex(item=>item.id===approvalItem.id)+1} / {approvals.length}</strong><small className="num">@{account.username}</small></div><button className="icon-btn" aria-label="その他の操作" onClick={() => openSheet(approvalItem,"actions")}>⋯</button></header><div className="approval-body"><div className="approval-deadline"><strong>承認しないと投稿されません</strong><span className="num">{approvalItem.scheduledAt ? mdhm(approvalItem.scheduledAt,tz).split(" ").at(-1) : "次の枠"}まで</span></div><article className="approval-post"><p>{approvalItem.body}</p>{approvalItem.comments.length > 0 && <><hr/><small className="num">続きの投稿 {approvalItem.comments.length}件</small>{approvalItem.comments.map((comment,index)=><p className="approval-comment" key={index}>{comment}</p>)}</>}</article><details className="approval-context"><summary>使った資料・型を見る</summary><p className="muted">この投稿を作った参考投稿と資料は、下書きの記録に保存されています。</p></details></div><footer><button className="btn" disabled={approve.isPending || !canPublish} onClick={() => approve.mutate(approvalItem.id,{onSuccess:()=>{const next=approvals.find(item=>item.id!==approvalItem.id);setApprovalId(next?.id ?? null);toast.show("承認しました","ok");},onError:e=>fail(e,"承認できませんでした")})}>承認して{approvalItem.scheduledAt ? mdhm(approvalItem.scheduledAt,tz).split(" ").at(-1) : "次の枠"}に予約</button><div><button className="btn btn-sub" onClick={() => {setApprovalId(null);openSheet(approvalItem,"edit");}}>直す</button><button className="btn btn-sub" onClick={() => {setApprovalId(null);openSheet(approvalItem,"schedule");}}>日時を変える</button><button className="btn btn-danger" onClick={() => cancel.mutate(approvalItem.id,{onSuccess:()=>{setApprovalId(null);toast.show("見送りました","ok");},onError:e=>fail(e,"見送れませんでした")})}>見送る</button></div></footer></div>}
 
       {tab === "scheduled" && (
         <section className="queue-calendar section">
@@ -392,9 +396,6 @@ export default function Queue() {
               )}
               {selected.status === "done" && (
                 <>
-                  <button type="button" className="menu-item" onClick={() => toCreate(selected)}>
-                    リライト
-                  </button>
                   <button
                     type="button"
                     className="menu-item"

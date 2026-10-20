@@ -8,7 +8,6 @@ import type {
   DeleteUserRequest,
   DeleteUserResponse,
   DiagnoseResponse,
-  LicenseResponse,
   LinkSummary,
   RefreshTokenResponse,
   ConnectAccountRequest,
@@ -97,7 +96,7 @@ export function useUpdateLink(accountId: string) {
   });
 }
 
-/* ── M7: アカウント管理・診断・書き出し・ライセンス・退会 ─── */
+/* ── M7: アカウント管理・診断・書き出し・退会 ─── */
 
 /** 診断（SPEC §7.1 `GET /accounts/:id/diagnose`）。押したときだけ走らせる。 */
 export function useDiagnose(accountId: string | null) {
@@ -132,14 +131,6 @@ export function useDeleteAccount() {
       void qc.invalidateQueries({ queryKey: ["accounts", "list", null] });
       void qc.invalidateQueries({ queryKey: meKey });
     },
-  });
-}
-
-/** ライセンス（末尾4桁と状態。SPEC §1「設定 … ライセンス」）。 */
-export function useLicense() {
-  return useQuery({
-    queryKey: ["license", null] as const,
-    queryFn: async () => (await api.get<LicenseResponse>("/users/me/license")).license,
   });
 }
 

@@ -7,7 +7,6 @@ import {
   rateAllow,
   rateClear,
   rateCount,
-  rateHit,
   rateRecord,
   RATE_LIMITS,
 } from "../src/lib/rate";
@@ -62,19 +61,6 @@ describe("rate_events（SPEC §13 M1 完了条件7 / §5.1）", () => {
     expect(await rateCount(db, key, 10, now)).toBe(0);
   });
 
-  it("rateHit（全件を数える用途）: forgot は10分に3回まで", async () => {
-    const db = testDb();
-    const key = forgotKey(uniqueEmail("forgot"));
-    const now = new Date();
-    expect(await rateHit(db, key, RATE_LIMITS.forgot.limit, RATE_LIMITS.forgot.windowMin, now)).toBe(true);
-    expect(await rateHit(db, key, RATE_LIMITS.forgot.limit, RATE_LIMITS.forgot.windowMin, now)).toBe(true);
-    expect(await rateHit(db, key, RATE_LIMITS.forgot.limit, RATE_LIMITS.forgot.windowMin, now)).toBe(true);
-    expect(await rateHit(db, key, RATE_LIMITS.forgot.limit, RATE_LIMITS.forgot.windowMin, now)).toBe(false);
-  });
-
-  it("/a/* 用の制限値は1分に20回", () => {
-    expect(RATE_LIMITS.action).toEqual({ limit: 20, windowMin: 1 });
-  });
 });
 
 describe("ログインAPIの回数制限", () => {

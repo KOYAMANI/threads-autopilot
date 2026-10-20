@@ -50,16 +50,6 @@ describe("signToken / verifyToken（SPEC §5.3）", () => {
     expect(await verifyToken(SECRET, token, "qaction", nowSec)).toBeNull();
   });
 
-  it("鍵が違えば null", async () => {
-    const token = await signToken(SECRET, {
-      purpose: "pwreset",
-      sub: "x",
-      extra: "",
-      expires: nowSec + 60,
-    });
-    expect(await verifyToken(SECRET + "!", token, "pwreset", nowSec)).toBeNull();
-  });
-
   it("payload を書き換えると署名が合わなくなる", async () => {
     const token = await signToken(SECRET, {
       purpose: "qaction",

@@ -466,7 +466,7 @@ describe("ap_plan（SPEC §9.4）", () => {
       f.userId,
     );
     const res = await withAiMock(() => planAccount(makeJobContext(env, { now: NOW }), f.accountId));
-    expect(res.skipped).toContain("ライセンス");
+    expect(res.skipped).toContain("利用が停止");
     const ap = await testDb().first<{ enabled: number }>(
       "SELECT enabled FROM autopilot WHERE account_id=?",
       f.accountId,
@@ -476,7 +476,7 @@ describe("ap_plan（SPEC §9.4）", () => {
       "SELECT message FROM ap_log WHERE account_id=? AND kind='stopped'",
       f.accountId,
     );
-    expect(log!.message).toContain("ライセンス");
+    expect(log!.message).toContain("利用が停止");
   });
 
   it("3回続けて失敗すると enabled=0 になり、ap_stopped メールが出る（SPEC §9.4-4）", async () => {

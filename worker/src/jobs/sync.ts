@@ -43,6 +43,7 @@ const POST_COLUMNS = [
   "account_id",
   "id",
   "root_id",
+  "reply_to_id",
   "is_reply",
   "text",
   "permalink",
@@ -62,6 +63,7 @@ const POST_COLUMNS = [
  */
 const POST_UPDATES = [
   "root_id",
+  "reply_to_id",
   "is_reply",
   "text",
   "permalink",
@@ -91,6 +93,7 @@ export function mediaToRow(
     accountId,
     m.id,
     rootId,
+    m.replied_to?.id ?? null,
     isReply,
     text,
     m.permalink ?? null,

@@ -16,24 +16,24 @@
 
 :root {
   /* 面と文字 */
-  --bg: #f2f3f0;
+  --bg: #ffffff;
   --paper: #ffffff;
-  --paper2: #f7f8f6;
-  --ink: #16191d;
-  --ink2: #5b626a;
-  --ink3: #8b9199;
-  --line: #e2e4e0;
+  --paper2: #f8f5fd;
+  --ink: #16141f;
+  --ink2: #4a4757;
+  --ink3: #6f6b80;
+  --line: #ede6f9;
 
   /* アクセント（オートパイロット色） */
-  --ap: #2748e8;
-  --ap-soft: #e9edfd;
-  --ap-ink: #1b33b8;
+  --ap: #7b33e0;
+  --ap-soft: #f4ebfd;
+  --ap-ink: #6524bf;
 
   /* 状態色 */
   --amber: #d98e1f;
   --amber-soft: #fbf0da;
-  --bad: #cf4640;
-  --bad-soft: #fbe5e3;
+  --bad: #a3122c;
+  --bad-soft: #fdeaee;
   --ok: #1e8757;
   --ok-soft: #dff3e8;
 
@@ -55,13 +55,13 @@
   --scrim: rgba(16, 19, 23, 0.32);
 
   /* クロム（固定バー）の高さ。本文の余白計算に使う */
-  --topbar-h: 3.25rem;
-  --apbar-h: 2.5rem;
-  --tabs-h: 3.5rem;
+  --topbar-h: 4rem;
+  --apbar-h: 0rem;
+  --tabs-h: 5rem;
 
   --font:
     -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", sans-serif;
-  --font-num: ui-rounded, -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+  --font-num: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 * {

@@ -27,6 +27,10 @@ database_name = "threads-autopilot"
 database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "worker/migrations"
 
+[[r2_buckets]]
+binding = "MEDIA_BUCKET"
+bucket_name = "threads-autopilot-media"
+
 [triggers]
 crons = ["* * * * *", "0 * * * *", "0 18 * * *"]   # UTC。18:00 UTC = 03:00 JST
 

@@ -175,3 +175,10 @@ Replaced blocking clarification notices with an inline chat. Users may answer or
 User requested real testing. Owner staging login AI test succeeded HTTP200 via direct authenticated endpoint (~3.9s) and actual browser Settings button (~2.5s). Actual 3-candidate delegate generation failed with AI_BAD_OUTPUT (~54s). Direct calls using owner saved key (memory-only decryption; not printed/persisted) reproduced unsupported uppercase slot IDs and generated proposal anchors being mistaken for user-provided fixed facts; after corrections, a required slot was missing from Gemini output. Added required response JSON schema for all slots, isolated the single variant sent to each writer, complete-post character budgets, and specific repair diagnostics. Standard mode still may ask necessary short questions; answers and delegate action continue to generation without another question loop.
 
 Final live generation could NOT be verified: Google returned 429 with quotaId GenerateRequestsPerDayPerProjectPerModel-FreeTier, quotaValue 20 for gemini-2.5-flash. Real tests consumed part of this shared daily project quota. Do not report the final 3-candidate fix as fully live-tested. Do not retry daily quota repeatedly or silently enable billing. Re-test after Google quota reset: browser Settings test, delegate 3-candidate generation, and question -> answer/delegate -> completed drafts. No public posts were made. 61 focused regression tests + typecheck/build passed; staging deployed, production unchanged.
+
+
+## 2026-09-09: 最新チャットへの引き継ぎ
+
+最新の未完了作業・実API検証結果・再開手順は `/Users/yutaro/Projects/threads-autopilot/docs/handoff-20260909-ai.md` に整理した。最新キーで実ブラウザの「保存した設定で接続確認」はHTTP 200（gemini-2.5-flash、8711ms）。新キーでの3候補生成は未検証。エラーの原因別表示・保存済みキーの明示・利用上限の確認導線・Google OAuth未設定の整理は未実装で、次の担当者が継続する。
+
+この文書の旧本文にある課金Gemini必須・5プロフィール限定・通常オーナー投稿不可の記述は履歴。現在は同意付き無料Geminiを許可し、有効ライセンスの全ステージング利用者が自分のThreadsプロフィールへ手動公開・予約できる。Autopilot・メール・本番全体と同じ定期同期はステージングでは動かしていない。秘密情報の値はナレッジに含めない。

@@ -18,10 +18,12 @@ import { useMe } from "./api/auth";
  */
 const Connect = lazy(() => import("./screens/Connect"));
 const Home = lazy(() => import("./screens/Home"));
+const Analytics = lazy(() => import("./screens/Analytics"));
+const Tips = lazy(() => import("./screens/Tips"));
 const Create = lazy(() => import("./screens/Create"));
 const Queue = lazy(() => import("./screens/Queue"));
-const Autopilot = lazy(() => import("./screens/Autopilot"));
 const Settings = lazy(() => import("./screens/Settings"));
+const Onboarding = lazy(() => import("./screens/Onboarding"));
 
 function Loading() {
   return (
@@ -31,14 +33,26 @@ function Loading() {
   );
 }
 
+function AutopilotComingSoon() {
+  return <div className="screen-plain"><p className="eyebrow">AUTOPILOT</p><h1>オートパイロットは開発中です</h1><p className="muted section">現在、自動生成・自動予約は利用できません。手動の投稿作成と予約投稿をご利用ください。</p></div>;
+}
+
 /** 未認証は /login、アカウント0件は /connect（SPEC §12.1）。 */
+function AuthUnavailable({ retry }: { retry: () => void }) {
+  return <main className="screen-plain"><p role="alert">ログイン状態を確認できませんでした。通信を確認して再試行してください。</p><button className="btn" onClick={retry}>再試行</button></main>;
+}
+
 function RequireAuth({ children }: { children: ReactElement }) {
-  const { data, isPending, isError } = useMe();
+  const { data, isPending, isError, refetch } = useMe();
   const location = useLocation();
 
   if (isPending) return <Loading />;
-  if (isError || !data) {
+  if (isError && !data) return <AuthUnavailable retry={() => { void refetch(); }} />;
+  if (!data) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  }
+  if (!data.profile.onboardingCompleted && location.pathname !== "/app/settings") {
+    return <Navigate to="/onboarding" replace />;
   }
   if (data.accounts.length === 0 && !["/app/home", "/app/settings"].includes(location.pathname)) return <Navigate to="/connect" replace />;
   return children;
@@ -46,11 +60,12 @@ function RequireAuth({ children }: { children: ReactElement }) {
 
 /** /connect も認証は要る（アカウント0件でも通す）。 */
 function RequireLogin({ children }: { children: ReactElement }) {
-  const { data, isPending, isError } = useMe();
+  const { data, isPending, isError, refetch } = useMe();
   const location = useLocation();
 
   if (isPending) return <Loading />;
-  if (isError || !data) {
+  if (isError && !data) return <AuthUnavailable retry={() => { void refetch(); }} />;
+  if (!data) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
   return children;
@@ -64,6 +79,14 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         {/* メールのリンクは /login?reset=<token>。/reset でも同じ画面を出す */}
         <Route path="/reset" element={<Login />} />
+        <Route
+          path="/onboarding"
+          element={
+            <RequireLogin>
+              <Onboarding />
+            </RequireLogin>
+          }
+        />
 
         <Route
           path="/connect"
@@ -84,9 +107,11 @@ export default function App() {
         >
           <Route index element={<Navigate to="/app/home" replace />} />
           <Route path="home" element={<Home />} />
+          <Route path="analytics" element={<Analytics />} />
+          <Route path="tips" element={<Tips />} />
           <Route path="create" element={<Create />} />
           <Route path="queue" element={<Queue />} />
-          <Route path="autopilot" element={<Autopilot />} />
+          <Route path="autopilot" element={<AutopilotComingSoon />} />
           <Route path="settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/app/home" replace />} />
         </Route>

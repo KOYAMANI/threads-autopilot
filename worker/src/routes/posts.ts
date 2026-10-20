@@ -1,3 +1,4 @@
+import { resolveOwnTree } from "../lib/reference-thread";
 /**
  * 投稿（SPEC §7.3）。
  * - `GET /accounts/:id/posts?q=&sort=views|likes|clicks|new&limit=30&cursor=`
@@ -86,6 +87,11 @@ export function postRoutes() {
       args.push(`%${q}%`);
     }
 
+    const totalRow = await db.first<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM posts WHERE ${where.join(" AND ")}`,
+      ...args,
+    );
+
     const rows = await db.all<PostRow>(
       `SELECT ${POST_SELECT} FROM posts WHERE ${where.join(" AND ")} ORDER BY ${order} LIMIT ? OFFSET ?`,
       ...args,
@@ -104,7 +110,25 @@ export function postRoutes() {
     const posts: PostSummary[] = page.map((p) =>
       toPostSummary(p, children.get(p.id) ?? [], links),
     );
-    return c.json(ok({ posts, cursor: hasMore ? String(offset + limit) : null }));
+    return c.json(ok({
+      posts,
+      cursor: hasMore ? String(offset + limit) : null,
+      total: totalRow?.n ?? 0,
+    }));
+  });
+
+  // Analysis and AI references share the same verified direct-reply chain.
+  r.get("/:id/posts/:postId/:kind{tree|reference}", async c => {
+    const db=c.get("db"), account=await loadOwnedAccount(db,c.req.param("id"),c.get("userId")!);
+    if (!account) return fail("NOT_FOUND","見つかりませんでした",404);
+    const row=await db.first<PostRow>(`SELECT ${POST_SELECT} FROM posts WHERE account_id=? AND id=? AND is_reply=0 AND deleted=0`,account.id,c.req.param("postId"));
+    if (!row) return fail("NOT_FOUND","見つかりませんでした",404);
+    const tree=await resolveOwnTree(db,account,row,{budget:c.get("budget"),env:c.env});
+    row.own_thread_json=JSON.stringify(tree);
+    if (tree.complete && c.req.param("kind")==="reference" && tree.chain.length>3) return fail("REFERENCE_TOO_LONG","このツリーは4投稿を超えています。使いたい範囲を4投稿以内で貼り付けてください。",422);
+    const children=await childrenOf(db,account.id,[row.id]);
+    const replies=children.get(row.id)??[];
+    return c.json(ok({pending:!tree.complete,post:toPostSummary(row,replies,await linkMap(db,account.id)),excludedReplies:Math.max(0,replies.filter(reply=>!tree.chain.some(part=>part.id===reply.id)).length)}));
   });
 
   /* ── 詳細＋履歴（48h / 7d / 30d の3点） ──────────── */

@@ -82,3 +82,18 @@ export const DotsIcon = (p: Props) => (
     <circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none" />
   </Svg>
 );
+
+export const ImageIcon = (p: Props) => (
+  <Svg {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <circle cx="8.5" cy="9" r="1.5" />
+    <path d="m4.5 17 4.5-4 3.2 2.7 2.8-2.5 4.5 3.8" />
+  </Svg>
+);
+
+export const LightbulbIcon = (p: Props) => (
+  <Svg {...p}>
+    <path d="M9 18h6M10 21h4" />
+    <path d="M8.2 14.5A6 6 0 1 1 15.8 14.5c-.9.7-1.3 1.5-1.3 2.5h-5c0-1-.4-1.8-1.3-2.5Z" />
+  </Svg>
+);

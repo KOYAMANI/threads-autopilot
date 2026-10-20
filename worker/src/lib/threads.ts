@@ -180,6 +180,8 @@ export type ThreadsMedia = {
   permalink?: string;
   timestamp?: string;
   is_reply?: boolean;
+  username?: string;
+  is_reply_owned_by_me?: boolean;
   replied_to?: { id?: string } | null;
   root_post?: { id?: string } | null;
   has_replies?: boolean;
@@ -471,6 +473,37 @@ export async function createImageContainer(
   options: CallOptions,
 ): Promise<{ id: string }> {
   const params: ThreadsParams = { media_type: "IMAGE", image_url: imageUrl, text };
+  if (create.replyToId) params.reply_to_id = create.replyToId;
+  if (create.replyControl) params.reply_control = create.replyControl;
+  return (await call(token, "POST", "/me/threads", params, options)) as { id: string };
+}
+
+/** カルーセル用の子画像コンテナ。子には本文を持たせず、親にだけ本文を設定する。 */
+export async function createCarouselImageItem(
+  token: string,
+  imageUrl: string,
+  options: CallOptions,
+): Promise<{ id: string }> {
+  return (await call(token, "POST", "/me/threads", {
+    media_type: "IMAGE",
+    image_url: imageUrl,
+    is_carousel_item: true,
+  }, options)) as { id: string };
+}
+
+/** 作成済みの子コンテナを束ねたカルーセル親コンテナを作る。 */
+export async function createCarouselContainer(
+  token: string,
+  childIds: string[],
+  text: string,
+  create: Omit<CreateTextOptions, "autoPublish">,
+  options: CallOptions,
+): Promise<{ id: string }> {
+  const params: ThreadsParams = {
+    media_type: "CAROUSEL",
+    children: childIds.join(","),
+    text,
+  };
   if (create.replyToId) params.reply_to_id = create.replyToId;
   if (create.replyControl) params.reply_control = create.replyControl;
   return (await call(token, "POST", "/me/threads", params, options)) as { id: string };

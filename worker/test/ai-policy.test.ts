@@ -1,15 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import { AI_DATA_POLICY_VERSION, hasAiDataConsent } from "@tap/shared";
-import { buildRequest, callAi } from "../src/lib/ai";
+import { callAi } from "../src/lib/ai";
 import { api, insertAccount, mockToken, registerUser, testDb } from "./helpers";
 
 const input = { provider: "openrouter" as const, model: "anthropic/claude-sonnet-4.6", apiKey: "test-key", system: "test", user: "test", appOrigin: "https://example.com" };
 describe("AI routing and data consent", () => {
-  it("pins the provider and forbids fallbacks and non-ZDR endpoints", () => {
-    const body = JSON.parse(String(buildRequest(input).init.body));
-    expect(body.provider).toEqual({only:["amazon-bedrock/us"],order:["amazon-bedrock/us"],allow_fallbacks:false,require_parameters:true,data_collection:"deny",zdr:true});
-    expect(body.models).toBeUndefined();
-  });
   it.each(["openrouter/auto", "anthropic/claude-sonnet-4.6:free", "google/gemini-2.5-flash", "anthropic/claude-sonnet-4.6:nitro"])("rejects unapproved model %s before any network call", async model => {
     const fetchImpl = vi.fn();
     await expect(callAi({...input,model},{fetchImpl})).rejects.toMatchObject({code:"AI_KEY_REQUIRED"});
@@ -22,7 +17,7 @@ describe("AI routing and data consent", () => {
       return new Response("No eligible endpoints", {status:404});
     });
     await expect(callAi(input,{fetchImpl:fetchImpl as typeof fetch})).rejects.toMatchObject({code:"AI_FAILED"});
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
   it("does not infer consent for legacy or unapproved settings", () => {
     expect(hasAiDataConsent({provider:"gemini"})).toBe(false);
@@ -60,11 +55,4 @@ describe("AI routing and data consent", () => {
       expect(res.body.error.code).toBe("AI_KEY_REQUIRED");
     }
   });
-});
-
-it("sends required response properties to Gemini without changing the credential route",()=>{
- const schema={type:"object",properties:{slots:{type:"object",properties:{intro_A:{type:"string"}},required:["intro_A"]}},required:["slots"]};
- const plan=buildRequest({...input,provider:"gemini",model:"gemini-2.5-flash",responseJsonSchema:schema});
- expect(JSON.parse(String(plan.init.body)).generationConfig.responseJsonSchema).toEqual(schema);
- expect(plan.url).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent");
 });

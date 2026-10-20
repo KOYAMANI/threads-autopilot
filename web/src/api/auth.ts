@@ -1,6 +1,6 @@
 /** 認証まわりの React Query フック（SPEC §12.2）。 */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { MeResponse, RegisterRequest, LoginRequest } from "@tap/shared";
+import type { MeResponse, RegisterRequest, LoginRequest, PutUserProfileRequest, UserProfileResponse } from "@tap/shared";
 import { announceSessionChange, clearPrivateState } from "../lib/session-boundary";
 import { api, ApiError } from "./client";
 
@@ -35,7 +35,15 @@ export function useRegister() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: RegisterRequest) => api.post("/auth/register", body),
-    onSuccess: () => { clearPrivateState(); qc.clear(); announceSessionChange(); window.location.replace("/app/home"); },
+    onSuccess: () => { clearPrivateState(); qc.clear(); announceSessionChange(); window.location.replace("/onboarding"); },
+  });
+}
+
+export function useSaveProfile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: PutUserProfileRequest) => api.put<UserProfileResponse>("/users/me/profile", body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: meKey }),
   });
 }
 

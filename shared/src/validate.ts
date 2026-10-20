@@ -24,14 +24,16 @@ export type ValidateOptions = {
 export type ValidationIssue = { code: string; message: string; field: string };
 export type ValidationResult = { ok: boolean; issues: ValidationIssue[] };
 
-/**
- * 本文長。API 資料は「絵文字は UTF-8 バイト数で数える」としており、コードポイント数と
- * 食い違う。smoke.ts（SPEC §14-4）で実測して確定するまでは厳しい方を採用する。
+/** Text is counted in Unicode code points; only emoji use the API's UTF-8 weight.
+ * Never count ordinary Japanese text as bytes (500 Japanese characters are not 1,500 characters).
+ * https://developers.facebook.com/docs/threads/posts/
  */
 export function bodyLength(text: string): number {
-  const codePoints = [...(text ?? "")].length;
-  const utf8Bytes = new TextEncoder().encode(text ?? "").length;
-  return Math.max(codePoints, utf8Bytes);
+  const value=text ?? "";
+  const emoji=/(?:\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3|\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?)*)/gu;
+  let length=[...value].length;
+  for(const match of value.matchAll(emoji))length+=new TextEncoder().encode(match[0]).length-[...match[0]].length;
+  return length;
 }
 
 export function parseNgWords(ngWords: string | string[] | undefined): string[] {

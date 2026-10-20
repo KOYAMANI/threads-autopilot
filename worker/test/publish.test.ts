@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { enqueueJob, makeJobContext, runJobs, type JobContext } from "../src/lib/jobs";
-import { MAX_CONTAINER_POLLS, commentStep, publishJob } from "../src/jobs/publish";
+import { MAX_CONTAINER_POLLS, publishJob } from "../src/jobs/publish";
 import { resetMock } from "../src/mock/threads";
 import { insertAccount, mockToken, registerUser, testDb } from "./helpers";
 
@@ -27,6 +27,7 @@ type QueueOptions = {
   scheduledAt?: string | null;
   comments?: string[];
   imageUrl?: string | null;
+  mediaUrls?: string[];
   source?: string;
   step?: number;
   resultIds?: string[];
@@ -41,11 +42,11 @@ async function insertQueue(
   const id = crypto.randomUUID();
   const nowIso = NOW.toISOString();
   await db.run(
-    `INSERT INTO queue (id, account_id, status, scheduled_at, body, comments_json, image_url, reply_control,
+    `INSERT INTO queue (id, account_id, status, scheduled_at, body, comments_json, image_url, media_urls_json, reply_control,
         source, approval_mode, approve_deadline, notified_at, action_token_used_at, step, next_step_at,
         container_id, container_polls, result_ids_json, error, error_raw, attempts, tags_json,
         origin_post_id, source_ids_json, created_at, updated_at)
-      VALUES (?,?,?,?,?,?,?, 'everyone', ?, NULL, NULL, NULL, NULL, ?, NULL, NULL, 0, ?, NULL, NULL, 0, '{}', NULL, '[]', ?,?)`,
+      VALUES (?,?,?,?,?,?,?,?, 'everyone', ?, NULL, NULL, NULL, NULL, ?, NULL, NULL, 0, ?, NULL, NULL, 0, '{}', NULL, '[]', ?,?)`,
     id,
     accountId,
     options.status ?? "scheduled",
@@ -53,6 +54,7 @@ async function insertQueue(
     body,
     JSON.stringify(options.comments ?? []),
     options.imageUrl ?? null,
+    JSON.stringify(options.mediaUrls ?? []),
     options.source ?? "manual",
     options.step ?? 0,
     JSON.stringify(options.resultIds ?? []),
@@ -292,6 +294,32 @@ describe("publish（SPEC §8.3）", () => {
     expect(post?.media_url).toBe("https://example.com/pic.png");
   });
 
+  it("複数画像は選択順を保ったカルーセルとして公開する", async () => {
+    const { accountId, e } = await setup("pub-carousel");
+    const mediaUrls = [
+      "https://example.com/first.png",
+      "https://example.com/second.png",
+      "https://example.com/third.png",
+    ];
+    const qid = await insertQueue(accountId, "カルーセルの投稿です。", {
+      imageUrl: mediaUrls[0],
+      mediaUrls,
+    });
+
+    await drain(e, accountId, qid);
+
+    const row = (await readQueue(qid))!;
+    expect(row.status).toBe("done");
+    const ids = JSON.parse(row.result_ids_json) as string[];
+    const post = await testDb().first<{ media_type: string; media_url: string | null }>(
+      "SELECT media_type, media_url FROM posts WHERE account_id=? AND id=?",
+      accountId,
+      ids[0]!,
+    );
+    expect(post?.media_type).toBe("CAROUSEL");
+    expect(post?.media_url).toBe(mediaUrls[0]);
+  });
+
   it("コンテナが終わらないと container_polls が 10 で failed になる", async () => {
     const { accountId, e } = await setup("pub6");
     const qid = await insertQueue(accountId, "終わらない画像の投稿です。", {
@@ -432,7 +460,7 @@ describe("publish（SPEC §8.3）", () => {
       "SELECT message FROM ap_log WHERE account_id=?",
       accountId,
     );
-    expect(log?.message).toContain("ライセンス");
+    expect(log?.message).toContain("利用が停止");
   });
 
   it("5分ごとの cron が publish を積み、runJobs が最優先で処理する（SPEC §8.2）", async () => {
@@ -481,21 +509,5 @@ describe("publish（SPEC §8.3）", () => {
     const res = await runJobs(ctx);
     expect(res.failed).toBe(0);
     expect((await readQueue(qid))!.status).toBe("done");
-  });
-});
-
-describe("commentStep（SPEC §8.3 のステップ解釈）", () => {
-  it("1ステップ方式は step-2 がそのままコメントの添字", () => {
-    expect(commentStep(2, false)).toEqual({ index: 0, phase: 0 });
-    expect(commentStep(3, false)).toEqual({ index: 1, phase: 0 });
-    expect(commentStep(5, false)).toEqual({ index: 3, phase: 0 });
-  });
-
-  it("3ステップ方式は i=floor((step-2)/3), phase=(step-2)%3", () => {
-    expect(commentStep(2, true)).toEqual({ index: 0, phase: 0 });
-    expect(commentStep(3, true)).toEqual({ index: 0, phase: 1 });
-    expect(commentStep(4, true)).toEqual({ index: 0, phase: 2 });
-    expect(commentStep(5, true)).toEqual({ index: 1, phase: 0 });
-    expect(commentStep(7, true)).toEqual({ index: 1, phase: 2 });
   });
 });

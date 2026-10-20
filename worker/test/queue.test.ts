@@ -99,7 +99,7 @@ async function insertPost(
 }
 
 /** Asia/Tokyo で見たときの「時」と曜日を取る（SPEC §9.3 の既定枠の確認用）。 */
-function tokyoParts(iso: string): { hour: number; weekday: string } {
+function tokyoParts(iso: string): { hour: number; weekday: string; date: string } {
   const d = new Date(iso);
   const hour = Number(
     new Intl.DateTimeFormat("en-US", {
@@ -112,7 +112,13 @@ function tokyoParts(iso: string): { hour: number; weekday: string } {
     timeZone: "Asia/Tokyo",
     weekday: "short",
   }).format(d);
-  return { hour, weekday };
+  const date = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+  return { hour, weekday, date };
 }
 
 /** リンク6本の本文（SPEC §9.6 の上限は5本）。 */
@@ -124,6 +130,24 @@ const LINK_LIMIT_MESSAGE = "1投稿に入れられるリンクは5つまでで�
 /* ── 作成の3経路（SPEC §7.4 / §12.3） ───────────────── */
 
 describe("POST /api/accounts/:id/queue（SPEC §7.4）", () => {
+  it("最大5枚のカルーセルURLを選択順のまま保存する", async () => {
+    const { cookie, accountId } = await setup("qcarousel");
+    const mediaUrls = [1, 2, 3, 4, 5].map((n) => `https://media.example.com/${n}.jpg`);
+    const res = await api("POST", `/api/accounts/${accountId}/queue`, {
+      cookie,
+      body: { status: "draft", body: "画像で補足する投稿です。", mediaUrls },
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.data.item.mediaUrls).toEqual(mediaUrls);
+    expect(res.body.data.item.imageUrl).toBe(mediaUrls[0]);
+
+    const tooMany = await api("POST", `/api/accounts/${accountId}/queue`, {
+      cookie,
+      body: { status: "draft", body: "6枚は保存できません。", mediaUrls: [...mediaUrls, "https://media.example.com/6.jpg"] },
+    });
+    expect(tooMany.status).toBe(400);
+  });
+
   it("status:'now' は今の時刻で予約され、publish ジョブが積まれる（SPEC §7.4 / §12.3）", async () => {
     const { cookie, accountId } = await setup("qnow");
     const before = Date.now();
@@ -193,8 +217,10 @@ describe("GET /api/accounts/:id/queue/suggest-slot（SPEC §7.4 / §9.3）", () 
     expect(res.status).toBe(200);
 
     const slot = res.body.data;
-    expect(Object.keys(slot).sort()).toEqual(["at", "n", "reason"]);
+    expect(Object.keys(slot).sort()).toEqual(["at", "n", "nextDayAt", "reason"]);
     expect(Date.parse(slot.at as string)).toBeGreaterThan(Date.now());
+    expect(Date.parse(slot.nextDayAt as string)).toBeGreaterThan(Date.parse(slot.at as string));
+    expect(tokyoParts(slot.nextDayAt as string).date).not.toBe(tokyoParts(slot.at as string).date);
     expect(slot.reason).toBe("設定した投稿スロットの次の空き枠です");
     expect(slot.n).toBe(0);
   });
@@ -609,6 +635,13 @@ describe("POST /api/accounts/:id/posts/:postId/repost（SPEC §7.3）", () => {
 
 
 describe("Threads connection required for publishing", () => {
+  async function disconnect(accountId: string, reason: string): Promise<void> {
+    const db = testDb();
+    if (reason === "missing") await db.run("UPDATE accounts SET token_enc='' WHERE id=?", accountId);
+    else if (reason === "expired") await db.run("UPDATE accounts SET token_long_lived=1, token_obtained_at='2020-01-01T00:00:00Z' WHERE id=?", accountId);
+    else await db.run("UPDATE accounts SET status=? WHERE id=?", reason, accountId);
+  }
+
   it("exposes connected readiness consistently through session and account APIs", async () => {
     const { cookie } = await setup("ready");
     const me = await api("GET", "/api/auth/me", { cookie });
@@ -618,15 +651,19 @@ describe("Threads connection required for publishing", () => {
     expect(me.body.data.accounts[0]).not.toHaveProperty("token_enc");
   });
 
-  it.each(["needs_reauth", "disabled", "missing", "expired"])("blocks every scheduling path for %s but keeps drafts editable", async (reason) => {
+  it.each(["needs_reauth", "disabled", "missing", "expired"])("reports %s as unavailable without exposing its token", async (reason) => {
     const { cookie, accountId } = await setup("connection-" + reason);
-    const db = testDb();
-    if (reason === "missing") await db.run("UPDATE accounts SET token_enc='' WHERE id=?", accountId);
-    else if (reason === "expired") await db.run("UPDATE accounts SET token_long_lived=1, token_obtained_at='2020-01-01T00:00:00Z' WHERE id=?", accountId);
-    else await db.run("UPDATE accounts SET status=? WHERE id=?", reason, accountId);
+    await disconnect(accountId, reason);
     const me = await api("GET", "/api/auth/me", { cookie });
     expect(me.body.data.accounts[0].canPublish).toBe(false);
     expect(me.body.data.accounts[0]).not.toHaveProperty("token_enc");
+    const summary = await api("GET", "/api/accounts", { cookie });
+    expect(summary.body.data.accounts[0].canPublish).toBe(false);
+  });
+
+  it("blocks every scheduling path for a disconnected account but keeps drafts editable", async () => {
+    const { cookie, accountId } = await setup("connection-blocked");
+    await disconnect(accountId, "needs_reauth");
     const base = `/api/accounts/${accountId}/queue`;
     const scheduledAt = new Date(Date.now() + 3600000).toISOString();
     for (const status of ["scheduled", "now"]) {
@@ -643,7 +680,5 @@ describe("Threads connection required for publishing", () => {
     expect((await readQueue(pending))?.status).toBe("pending_approval");
     expect((await api("POST", `${base}/${pending}/cancel`, { cookie })).status).toBe(200);
     expect((await readQueue(id))?.status).toBe("draft");
-    const summary = await api("GET", "/api/accounts", { cookie });
-    expect(summary.body.data.accounts[0].canPublish).toBe(false);
   });
 });

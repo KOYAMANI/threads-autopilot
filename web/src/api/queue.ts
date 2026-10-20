@@ -19,6 +19,7 @@ import type {
 } from "@tap/shared";
 import { api } from "./client";
 import { accountKey } from "./accounts";
+import { meKey } from "./auth";
 
 /** 画面のタブ（SPEC §12.3「予約 / 下書き / 投稿済 / 失敗」）と `queue.status` の対応。 */
 export const QUEUE_TABS = [
@@ -67,6 +68,8 @@ function useInvalidate(accountId: string | null) {
   const qc = useQueryClient();
   return () => {
     if (accountId) void qc.invalidateQueries({ queryKey: [accountId] });
+    void qc.invalidateQueries({ queryKey: meKey });
+    void qc.invalidateQueries({ queryKey: ["accounts", "list", null] });
   };
 }
 

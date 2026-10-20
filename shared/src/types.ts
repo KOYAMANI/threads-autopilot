@@ -35,7 +35,7 @@ export type ErrorCode =
 
 /* ── 認証（SPEC §5.1 / §7） ──────────────────────────── */
 
-export type RegisterRequest = { email: string; password: string; license_key: string };
+export type RegisterRequest = { email: string; password: string; license_key?: string };
 export type LoginRequest = { email: string; password: string };
 export type ForgotRequest = { email: string };
 export type ResetRequest = { token: string; password: string };
@@ -46,6 +46,32 @@ export type UserSummary = {
   createdAt: string;
   lastLoginAt: string | null;
 };
+
+export type UserPlan = "free" | "academy" | "pro";
+export type UserGoal = "monetize" | "shop" | "awareness";
+
+export type UserEntitlement = {
+  plan: UserPlan;
+  accountLimit: number;
+  aiAdviceEnabled: boolean;
+  platformAiEnabled: boolean;
+};
+
+export type UserProfile = {
+  goal: UserGoal | null;
+  activity: string;
+  audience: string;
+  onboardingCompleted: boolean;
+};
+
+export type PutUserProfileRequest = {
+  goal: UserGoal;
+  activity: string;
+  audience: string;
+  onboardingCompleted: boolean;
+};
+
+export type UserProfileResponse = { profile: UserProfile };
 
 export type AccountStatus = "ok" | "needs_reauth" | "disabled";
 
@@ -63,6 +89,8 @@ export type AccountSummary = {
   longLived: boolean;
   lastFullSyncAt: string | null;
   autopilotEnabled: boolean;
+  /** この投稿先で、まだ承認していない自動生成投稿の件数。 */
+  pendingApprovalCount?: number;
 };
 
 export type AiSettingsSummary = {
@@ -84,6 +112,10 @@ export type MeResponse = {
   accounts: AccountSummary[];
   ai: AiSettingsSummary;
   notifications: NotificationSettings;
+  entitlement: UserEntitlement;
+  profile: UserProfile;
+  /** 運営用画面を表示してよいログインユーザーだけ true。 */
+  isAdmin?: boolean;
 };
 
 export type RegisterResponse = { user: UserSummary };
@@ -91,9 +123,31 @@ export type LoginResponse = { user: UserSummary };
 
 /* ── 管理API（SPEC §5.4） ────────────────────────────── */
 
-export type IssueLicensesRequest = { count: number; note?: string };
-export type IssueLicensesResponse = { keys: Array<{ id: string; key: string }> };
+export type IssueLicensesRequest =
+  | { count: number; note?: string }
+  | { recipients: string[] };
+export type IssueLicensesResponse = { keys: Array<{ id: string; key: string; note?: string }> };
+export type AdminLicenseRow = {
+  id: string;
+  key: string;
+  status: "unused" | "active" | "revoked";
+  note: string | null;
+  email: string | null;
+  issuedAt: string;
+  activatedAt: string | null;
+  revokedAt: string | null;
+};
+export type AdminLicensesResponse = { licenses: AdminLicenseRow[] };
 export type RevokeLicenseResponse = { id: string; status: "revoked"; revokedAt: string };
+export type SetUserPlanRequest = { email: string; plan: UserPlan };
+export type SetUserPlanResponse = {
+  userId: string;
+  email: string;
+  plan: UserPlan;
+  accountLimit: number;
+  aiAdviceEnabled: boolean;
+  platformAiEnabled: false;
+};
 
 /* ── その他（SPEC §7.8） ─────────────────────────────── */
 
@@ -128,8 +182,26 @@ export type PatchAccountRequest = {
 export type DiagnoseStep = { name: string; ok: boolean; detail: string };
 export type DiagnoseResponse = { steps: DiagnoseStep[] };
 
+export type ClickSyncStatus = {
+  /** ready のときだけ、0を「取得済みの0」として表示してよい。 */
+  state: "unavailable" | "syncing" | "ready" | "failed";
+  /** 取得済みデータを表示したまま、裏で再取得している。 */
+  refreshing: boolean;
+  lastSyncedAt: string | null;
+  message: string;
+};
+
 /** `GET /accounts/:id/sync`。progress / total はページ数（SPEC §7.1） */
-export type SyncStatus = { running: boolean; progress: number; total: number; status: "idle" | "syncing" | "done" | "failed"; posts: number; message: string | null; lastSyncedAt: string | null };
+export type SyncStatus = {
+  running: boolean;
+  progress: number;
+  total: number;
+  status: "idle" | "syncing" | "done" | "failed";
+  posts: number;
+  message: string | null;
+  lastSyncedAt: string | null;
+  clicks: ClickSyncStatus;
+};
 
 export type RefreshTokenResponse = {
   refreshed: boolean;
@@ -147,6 +219,7 @@ export type PostLink = { url: string; label: string; kind: string };
 export type PostChild = { id: string; text: string; views: number };
 
 export type PostSummary = {
+  treeStatus?: "ready" | "pending";
   id: string;
   text: string;
   permalink: string | null;
@@ -180,7 +253,7 @@ export type DashboardResponse = {
 
 /* ── 投稿（SPEC §7.3） ───────────────────────────────── */
 
-export type PostListResponse = { posts: PostSummary[]; cursor: string | null };
+export type PostListResponse = { posts: PostSummary[]; cursor: string | null; total: number };
 
 export type PostHistoryPoint = {
   checkpoint: "48h" | "7d" | "30d";
@@ -244,6 +317,8 @@ export type QueueItem = {
   body: string;
   comments: string[];
   imageUrl: string | null;
+  /** 画像・カルーセル。移行中は imageUrl も先頭画像として併用する。 */
+  mediaUrls?: string[];
   replyControl: ReplyControl;
   source: QueueSource;
   approvalMode: "manual" | "cancel" | "auto" | null;
@@ -278,6 +353,7 @@ export type CreateQueueRequest = {
   body: string;
   comments?: string[];
   imageUrl?: string | null;
+  mediaUrls?: string[];
   replyControl?: ReplyControl;
   originPostId?: string | null;
   sourceIds?: string[];
@@ -289,14 +365,47 @@ export type PatchQueueRequest = {
   comments?: string[];
   scheduledAt?: string | null;
   imageUrl?: string | null;
+  mediaUrls?: string[];
   replyControl?: ReplyControl;
   status?: "draft" | "scheduled" | "next_slot";
 };
 
 export type QueueItemResponse = { item: QueueItem };
 
+export type MediaUploadResponse = {
+  id: string;
+  url: string;
+  contentType: "image/jpeg" | "image/png";
+  byteSize: number;
+  expiresAt: string;
+};
+
+export type BuzzDiagnosisSection = {
+  key: "hook" | "body" | "cta";
+  label: string;
+  score: number;
+  maxScore: number;
+  feedback: string;
+};
+
+export type BuzzDiagnosisRequest = {
+  accountId: string;
+  body: string;
+  purpose: "awareness" | "trust" | "action";
+  hasMedia: boolean;
+  mediaCount: number;
+};
+
+export type BuzzDiagnosisResponse = {
+  score: number;
+  priority: "hook" | "body" | "cta";
+  sections: BuzzDiagnosisSection[];
+  hookSuggestions: string[];
+  mediaAnalyzed: false;
+};
+
 /** `GET /accounts/:id/queue/suggest-slot`（SPEC §7.4 / §9.3）。 */
-export type SuggestSlotResponse = { at: string; reason: string; n: number };
+export type SuggestSlotResponse = { at: string; nextDayAt: string | null; reason: string; n: number };
 
 export type PostingSchedule = { timezone: string; times: string[] };
 export type PutPostingScheduleRequest = { times: string[] };
@@ -347,12 +456,15 @@ export type PatchSourceRequest = {
 export type AiProvider = "gemini" | "openrouter";
 
 export const AI_DEFAULT_MODEL: Record<AiProvider, string> = {
-  gemini: "gemini-2.5-flash",
+  gemini: "gemini-3.5-flash-lite",
   openrouter: "anthropic/claude-sonnet-4.6",
 };
 
 /** `GET /ai/settings` / `PUT /ai/settings` の応答（SPEC §7.6）。 */
 export type AiSettingsResponse = {
+  savedAt?: string | null;
+  requestsLast24h?: number;
+  lastTest?: {at: string; success: boolean} | null;
   dataPolicyAccepted: boolean;
   provider: AiProvider | null;
   model: string | null;
@@ -386,17 +498,24 @@ export type AiCandidate = {
 };
 
 export type AiPickMode = "template" | "rewrite" | "information";
+export type PostPurpose = "awareness" | "trust" | "action";
 
 export type AiGenerateRequest = {
+  thinking?: string;
   clarificationMode?: "ask" | "delegate";
   conversation?: AiHistoryTurn[];
   accountId: string;
   picks?: string[];
+  referenceReplyIds?: string[];
   pickMode?: AiPickMode;
   /** 型として使う貼り付け投稿。本人の続きも含める。 */
   referenceText?: string;
   sourceIds?: string[];
   instruction?: string;
+  /** 投稿で読者に起こしたい変化。生成方針とバズ診断の両方に使う。 */
+  purpose?: PostPurpose;
+  /** 参考投稿の構成再現度。50=流れだけ、70=構成と順番、90=投稿数やリズムまで近づける。 */
+  fidelity?: number;
   n?: number;
   /** ブラウザ保存モードのときだけ付く。サーバーに保存しない */
   clientKey?: string;
@@ -415,7 +534,25 @@ export type AiHistoryTurn = { role: "user" | "assistant"; text: string };
 
 export type AiGenerationContext = Omit<AiGenerateRequest, "accountId" | "clientKey" | "n">;
 
+export type AiGenerationTaskStartResponse = {
+  taskId: string;
+  status: "pending";
+  startedAt: string;
+};
+
+export type AiGenerationTaskResponse = {
+  taskId: string;
+  accountId: string;
+  status: "pending" | "running" | "done" | "failed" | "cancelled";
+  startedAt: string;
+  finishedAt?: string;
+  context?: AiGenerationContext;
+  result?: AiGenerateResponse;
+  error?: { code: string; message: string; status: number; detail?: unknown };
+};
+
 export type AiReviseRequest = {
+  thinking?: string;
   context?: AiGenerationContext;
   accountId: string;
   candidate: AiCandidate;
@@ -424,7 +561,7 @@ export type AiReviseRequest = {
   clientKey?: string;
 };
 
-export type AiReviseResponse = { candidate: AiCandidate };
+export type AiReviseResponse = { candidate: AiCandidate; notes?: string[] };
 
 /* ── オートパイロット（SPEC §7.7 / §9） ─────────────── */
 

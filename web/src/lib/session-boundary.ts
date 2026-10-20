@@ -1,5 +1,10 @@
 let epoch = 0;
 const pending = new Set<AbortController>();
+const clearListeners = new Set<() => void>();
+export function onPrivateStateClear(listener: () => void) {
+  clearListeners.add(listener);
+  return () => { clearListeners.delete(listener); };
+}
 export function beginRequest() {
   const controller = new AbortController();
   pending.add(controller);
@@ -12,6 +17,7 @@ export function beginRequest() {
 }
 export function clearPrivateState() {
   epoch++;
+  for (const listener of clearListeners) listener();
   for (const controller of pending) controller.abort();
   pending.clear();
   // Best-effort removal of already displayed notifications; server session revocation is authoritative.
@@ -25,6 +31,8 @@ export function clearPrivateState() {
   try {
     localStorage.removeItem("aiKey");
     localStorage.removeItem("activeAccountId");
+    localStorage.removeItem("tap:ai-generation-task");
+    localStorage.removeItem("tap:push-offer-after-first-generation");
   } catch {
     /* unavailable */
   }

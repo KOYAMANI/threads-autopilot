@@ -66,9 +66,9 @@ it('checks the actual token owner and expected account immediately before every 
  expect(await call('placeholder','POST','/me/threads',{},options)).toEqual({id:'container'});
  expect(fetch).toHaveBeenCalledTimes(2);
  fetch.mockClear();
- await expect(call('placeholder','POST','/me/threads',{}, {...options,publishingUserId:other.userId})).rejects.toThrow('ステージング');
+ await expect(call('placeholder','POST','/me/threads',{}, {...options,publishingUserId:other.userId})).rejects.toMatchObject({code:403});
  expect(fetch).not.toHaveBeenCalled();
- await expect(call('placeholder','DELETE','/123',{},options)).rejects.toThrow('ステージング');
+ await expect(call('placeholder','DELETE','/123',{},options)).rejects.toMatchObject({code:403});
  expect(fetch).not.toHaveBeenCalled();
 });
 it('accepts a granted manual reservation and dispatches it, while rejecting other profiles and excluding Autopilot',async()=>{

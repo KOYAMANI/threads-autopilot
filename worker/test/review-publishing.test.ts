@@ -33,7 +33,7 @@ describe('Scoped reviewer publishing',()=>{
  });
  it.each([['DELETE','/me/threads'],['POST','/123/repost']] as const)('never grants %s %s',async(method,path)=>{
   const fetch=vi.spyOn(globalThis,'fetch');
-  await expect(call('placeholder',method,path,{}, {env:stage(),budget:createBudget(),now,publishingUserId:reviewer})).rejects.toThrow('ステージング');
+  await expect(call('placeholder',method,path,{}, {env:stage(),budget:createBudget(),now,publishingUserId:reviewer})).rejects.toMatchObject({code:403});
   expect(fetch).not.toHaveBeenCalled();
  });
  it('allows only the reviewer and verified profile to publish',async()=>{

@@ -15,28 +15,18 @@ beforeEach(() => {
 describe("チェックポイント判定（SPEC §8.4）", () => {
   const posted = Date.parse("2026-08-01T00:00:00.000Z");
 
-  it("48h 未満では何も入らない", () => {
-    expect(crossedCheckpoints(posted, posted + 47 * 3600_000, posted + 3600_000)).toEqual([]);
-  });
-
-  it("初めて 48h を超えた取得で 48h だけ入る", () => {
-    expect(crossedCheckpoints(posted, posted + 49 * 3600_000, posted + 3600_000)).toEqual(["48h"]);
-  });
-
-  it("同じ帯で2回目の取得では何も入らない（1回だけ）", () => {
-    expect(crossedCheckpoints(posted, posted + 60 * 3600_000, posted + 49 * 3600_000)).toEqual([]);
-  });
-
-  it("48h と 7d をまたいで一度に取得したら両方入る", () => {
-    expect(crossedCheckpoints(posted, posted + 8 * DAY, posted + 3600_000)).toEqual(["48h", "7d"]);
-  });
-
-  it("30日を超えてから初めて取得した投稿は 30d だけ（48h と 7d は後から作らない）", () => {
-    expect(crossedCheckpoints(posted, posted + 60 * DAY, null)).toEqual(["30d"]);
-  });
-
-  it("初回取得が 48h 直後なら 48h だけ", () => {
-    expect(crossedCheckpoints(posted, posted + 50 * 3600_000, null)).toEqual(["48h"]);
+  it("前回取得から新たに跨いだチェックポイントだけを返す", () => {
+    const cases: Array<[number, number | null, string[]]> = [
+      [posted + 47 * 3600_000, posted + 3600_000, []],
+      [posted + 49 * 3600_000, posted + 3600_000, ["48h"]],
+      [posted + 60 * 3600_000, posted + 49 * 3600_000, []],
+      [posted + 8 * DAY, posted + 3600_000, ["48h", "7d"]],
+      [posted + 60 * DAY, null, ["30d"]],
+      [posted + 50 * 3600_000, null, ["48h"]],
+    ];
+    for (const [now, previous, expected] of cases) {
+      expect(crossedCheckpoints(posted, now, previous)).toEqual(expected);
+    }
   });
 });
 

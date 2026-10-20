@@ -45,7 +45,11 @@ export default {
         const result = await runJobs(createJobContext(env), undefined, message.body.jobId);
         // Budget checkpoints are successful slices, not retries of failed work.
         // Send a fresh message so long imports do not hit the queue retry limit.
-        if (result.deferred && env.JOB_QUEUE) await env.JOB_QUEUE.send(message.body, {delaySeconds: 1});
+        if (env.JOB_QUEUE && result.retryDelaySeconds) {
+          await env.JOB_QUEUE.send(message.body, {delaySeconds: result.retryDelaySeconds});
+        } else if (result.deferred && env.JOB_QUEUE) {
+          await env.JOB_QUEUE.send(message.body, {delaySeconds: 1});
+        }
         message.ack();
       }
       catch { message.retry({delaySeconds:60}); }

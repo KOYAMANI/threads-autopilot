@@ -14,6 +14,7 @@ export type QueueRow = {
   body: string;
   comments_json: string;
   image_url: string | null;
+  media_urls_json: string;
   reply_control: string;
   source: string;
   approval_mode: string | null;
@@ -37,7 +38,7 @@ export type QueueRow = {
 };
 
 export const QUEUE_SELECT =
-  "id, account_id, status, scheduled_at, body, comments_json, image_url, reply_control, source, " +
+  "id, account_id, status, scheduled_at, body, comments_json, image_url, media_urls_json, reply_control, source, " +
   "approval_mode, approve_deadline, notified_at, action_token_used_at, step, next_step_at, container_id, " +
   "container_polls, result_ids_json, root_published_at, error, error_raw, attempts, tags_json, origin_post_id, source_ids_json, " +
   "created_at, updated_at";
@@ -71,6 +72,7 @@ export function toQueueItem(row: QueueRow, metrics: QueueMetrics | null = null):
     body: row.body,
     comments: parseJsonArray(row.comments_json),
     imageUrl: row.image_url,
+    mediaUrls: parseJsonArray(row.media_urls_json),
     replyControl: (row.reply_control as QueueItem["replyControl"]) ?? "everyone",
     source: (row.source as QueueItem["source"]) ?? "manual",
     approvalMode: (row.approval_mode as QueueItem["approvalMode"]) ?? null,

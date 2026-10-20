@@ -1,72 +1,162 @@
-import { describe, expect, it } from "vitest";
-import { compose, readCompositionPlan, candidateIssues, candidatesTooSimilar, renderBlueprint, type CompositionInput, type CompositionPlan } from "../src/lib/composition";
-import { pickedPosts } from "../src/routes/ai";
-import { insertAccount, registerUser, testDb, mockToken } from "./helpers";
-
-const input: CompositionInput = { clarificationMode:"ask", mode: "template", references: ["参考の本文\n【続き】\n参考の答え"], sources: [{ title: "自分のメモ", content: "りんご・みかん・ぶどうの比較" }], youtubeUrls: [], links: [], instruction: "果物について", n: 3, constraints: { emoji: "none", ngWords: "", linkPlacement: "comment" } };
-const plan: CompositionPlan = { status: "ok", summary: "投稿は型、メモは情報", structure: "導入と説明", style: "端的", partCount: 2, anchors: [], variants: [{ label: "原型", approach: "順に紹介" }, { label: "比較", approach: "判断を助ける" }, { label: "短く", approach: "簡潔にまとめる" }] };
-plan.variants = plan.variants.map(v => ({ ...v, blueprint: { posts: ["{{body}}", "{{comment}}"], slots: [{ id: "body", task: "本文", maxChars: 450 }, { id: "comment", task: "続き", maxChars: 450 }] } }));
-const samples = [
-  { key: "A", hook: "一覧型", body: "果物を選ぶなら、この3種類。", comments: ["りんご、みかん、ぶどう。それぞれ並べて選ぼう。"], basis: "メモ" },
-  { key: "B", hook: "比較型", body: "今日の気分はどれ？", comments: ["候補はりんご・みかん・ぶどう。食べたいものを比べて決める。"], basis: "メモ" },
-  { key: "C", hook: "簡潔型", body: "りんご / みかん / ぶどう", comments: ["選択肢はこの3つ。"], basis: "メモ" },
-];
-
-const output = (sample: typeof samples[number]) => ({ slots: { body: sample.body, comment: sample.comments[0] } });
-
-describe("役割を分けた投稿生成", () => {
-  it("型だけで新しい素材がなければAPIを呼ばず入力を求める", async () => {
-    const result = await compose({ ...input, sources: [], instruction: "" }, async () => { throw new Error("must not call"); });
-    expect(result.candidates).toEqual([]); expect(result.notes[0]).toContain("テーマ");
-  });
-  it("型の分析と情報を区別し、3つの方針を別リクエストへ渡す", async () => {
-    const requests: any[] = [];
-    const result = await compose(input, async (_system, user) => {
-      const q = JSON.parse(user); requests.push(q);
-      return JSON.stringify(q.task === "composition-plan" ? plan : output(samples[q.index]!));
-    });
-    expect(requests).toHaveLength(4);
-    expect(requests[0].references).toEqual(input.references);
-    expect(requests[0].sources).toEqual(input.sources);
-    expect(requests.slice(1).map(q => q.variant.label)).toEqual(["原型", "比較", "短く"]);
-    expect(result.candidates.map(c => c.key)).toEqual(["A", "B", "C"]);
-    expect(result.candidates.map(c => c.angle)).toEqual(["原型", "比較", "短く"]);
-  });
-  it("リライト元は事実の根拠になり、他の素材が空でも生成する", async () => {
-    const rewrite = { ...input, mode: "rewrite" as const, references: ["1,000万。原型を残す"], sources: [], instruction: "", n: 1 };
-    const result = await compose(rewrite, async (_system, user) => JSON.stringify(JSON.parse(user).task === "composition-plan" ? { ...plan, partCount: 1, anchors: ["1,000万"], variants: [{ ...plan.variants[0]!, blueprint: { posts: ["{{body}}"], slots: [{ id: "body", task: "本文", maxChars: 450 }] } }] } : { slots: { body: "原型を残して1,000万。" } }));
-    expect(result.candidates).toHaveLength(1);
-  });
-  it("素材にない分析上の固有名詞は生成へ進めない", () => {
-    expect(() => readCompositionPlan(JSON.stringify({ ...plan, anchors: ["捏造した実績"] }), input)).toThrow("素材にない");
-  });
-  it("項目の欠落・投稿数・文字数・設定違反を検出する", () => {
-    const issues = candidateIssues({ ...samples[0]!, body: "あ".repeat(501) + "https://example.com 😀禁止", comments: [] }, { ...plan, anchors: ["りんご"] }, { ...input, constraints: { ...input.constraints, ngWords: "禁止" } });
-    expect(issues.length).toBe(6);
-  });
-  it("冒頭だけを変えた候補を同じと判定する", () => {
-    expect(candidatesTooSimilar(samples[0]!, { ...samples[0]!, body: "別の冒頭。" }, [])).toBe(true);
-    expect(candidatesTooSimilar(samples[0]!, samples[1]!, [])).toBe(false);
-  });
-  it("重複候補は1回再生成し、既存案と理由を渡す", async () => {
-    let repairs = 0;
-    const result = await compose(input, async (_system, user) => {
-      const q = JSON.parse(user);
-      if (q.task === "composition-plan") return JSON.stringify(plan);
-      if (q.feedback) { repairs++; expect(q.feedback.avoid).toHaveLength(1); }
-      return JSON.stringify(output(q.index === 1 && !q.feedback ? samples[0]! : samples[q.index]!));
-    });
-    expect(repairs).toBe(1); expect(result.candidates).toHaveLength(3);
-  });
-  it("再生成しても同じ候補なら成功として返さない", async () => {
-    await expect(compose(input, async (_system, user) => JSON.stringify(JSON.parse(user).task === "composition-plan" ? plan : output(samples[0]!)))).rejects.toThrow("候補B");
-  });
-  it("不足情報は生成案の代わりに質問として返す", async () => {
-    const result = await compose(input, async () => JSON.stringify({ status: "needs_input", question: "新しい比較対象は？" }));
-    expect(result.notes).toEqual(["新しい比較対象は？"]); expect(result.candidates).toHaveLength(0);
-  });
+import {describe,it,expect,vi} from "vitest";
+import {compose as runCompose,splitOverflow,referencePosts,abstractTemplate,candidateIssues,normalizePastedThread,referenceShape,withoutEmoji,type CompositionInput} from "../src/lib/composition";
+import {validatePost} from "@tap/shared";
+import {pickedPosts} from "../src/routes/ai";
+import {AiError} from "../src/lib/ai";
+import {registerUser,insertAccount,mockToken,testDb} from "./helpers";
+// Most tests isolate validation; independent editor behavior is exercised below.
+const compose:typeof runCompose=(input,call)=>runCompose(input,async(s,u,v,schema)=>{
+ const q=JSON.parse(u);
+ if(q.task==="post-edit")return JSON.stringify({candidates:q.drafts,notes:[]});
+ return call(s,u,v,schema);
 });
-
+const input:CompositionInput={mode:"template",references:["導入\n・一つ\n・二つ\n【投稿2】\n・答え"],sources:[],youtubeUrls:[],links:[],instruction:"果物の選び方",n:3,constraints:{emoji:"none",ngWords:"",linkPlacement:"none"}};
+const outputs=[["果物なら\n・りんご\n・みかん","・ぶどう"],["選ぶなら\n・りんご\n・みかん","・ぶどうが好き"],["果物の選択\n・りんご\n・みかん","・好みはぶどう"]];
+const response=(posts:string[][])=>JSON.stringify({candidates:posts.map(posts=>({posts})),notes:[]});
+it("gives the writer full reference, content mapping and explicit layout",async()=>{
+ const abstractReference=await abstractTemplate(input.references[0]!,async(s,u)=>{expect(s).toContain("再現度50");expect(JSON.parse(u).posts).toHaveLength(2);expect(JSON.parse(u).fidelity).toBe(50);return JSON.stringify({structure:"導入と並列2項目、続きで1項目の答え",tone:"率直な口語"});},[],"",[],50);
+ await compose({...input,abstractReference},async(_s,u)=>{const q=JSON.parse(u);expect(q.reference.posts).toHaveLength(2);expect(q.reference.layout[0].listItems).toBe(2);expect(q.reference.structure).toContain("並列2項目");expect(q.supplementaryReferences).toEqual([]);expect(q.resolvedRules.listItems).toEqual([2,1]);return response(outputs);});
+});
+it("loosens post count and layout at fidelity 50",async()=>{
+ const r=await compose({...input,fidelity:50,n:1},async(_s,u)=>{const q=JSON.parse(u);expect(q.reproduction.fidelity).toBe(50);expect(q.reproduction.guidance).toContain("大まかな展開");expect(q.resolvedRules.postCount).toBeUndefined();return response([["自由な流れで作った本文"]]);});
+ expect(r.candidates[0]!.comments).toEqual([]);
+});
+it("passes the selected post purpose to the writer",async()=>{
+ await compose({...input,purpose:"action",n:1},async(_s,u)=>{
+  const q=JSON.parse(u);expect(q.postPurpose.id).toBe("action");expect(q.postPurpose.guidance).toContain("行動を一つに絞り");
+  return response([outputs[0]!]);
+ });
+});
+it("writes coherent full posts without required line slots or added blank lines",async()=>{
+ const r=await runCompose({...input,n:1},async(_s,u,_v,schema)=>{
+  const q=JSON.parse(u);expect(q.requiredBlocks).toBeUndefined();
+  expect((schema as any).properties.candidates.properties.A.properties.posts).toBeDefined();
+  return response([outputs[0]!]);
+ });expect(r.candidates[0]!.body).toBe(outputs[0]![0]);
+});
+it("edits a coherent draft with full sources and its plan",async()=>{
+ const tasks:string[]=[];
+ const r=await runCompose({...input,mode:"rewrite",n:1,sources:[{title:"素材",content:"本文末の根拠"}]},async(system,u)=>{
+  const q=JSON.parse(u);tasks.push(q.task);
+  if(q.task==="post-compose")return JSON.stringify({preparation:"主張と素材の対応",candidates:{A:{posts:outputs[0]}},notes:[]});
+  expect(system).toContain("独立した添削工程");expect(q.preparation).toBe("主張と素材の対応");expect(q.sources[0].content).toBe("本文末の根拠");expect(q.drafts.A.posts).toEqual(outputs[0]);
+  return response([outputs[1]!]);
+ });expect(tasks).toEqual(["post-compose","post-edit"]);expect(r.candidates[0]!.body).toBe(outputs[1]![0]);
+});
+it("retains generated text when the separate editor is unavailable",async()=>{
+ const r=await runCompose({...input,n:1},async(_s,u)=>{if(JSON.parse(u).task==="post-edit")throw new AiError("AI_FAILED","timeout");return response([outputs[0]!]);});
+ expect(r.candidates[0]!.body).toBe(outputs[0]![0]);expect(r.notes.join()).toContain("添削を完了できなかった");
+});
+it("splits overflow into self replies without dropping text or adding blank lines",async()=>{
+ const long=Array.from({length:34},(_,i)=>`${i}行目は具体的な説明を自然につないで書く。`).join("\n");
+ const r=await compose({...input,mode:"information",references:[],n:1},async()=>response([[long]]));
+ const parts=[r.candidates[0]!.body,...r.candidates[0]!.comments];
+ expect(parts.length).toBeGreaterThan(1);expect(parts.every(p=>[...p].length<=500)).toBe(true);
+ expect(validatePost(parts[0]!,{comments:parts.slice(1)}).ok).toBe(true);
+ expect(parts.join("\n")).toBe(long);expect(parts.join("\n")).not.toContain("\n\n");
+ expect(splitOverflow(["𠮷".repeat(501)])).toEqual(["𠮷".repeat(500),"𠮷"]);
+});
+it("repairs excess total length instead of emitting more than three comments",async()=>{
+ let calls=0;const r=await compose({...input,mode:"information",references:[],n:1},async(_s,u)=>{
+  if(++calls===1)return response([["文".repeat(2100)]]);
+  expect(JSON.parse(u).feedback.join()).toContain("合計1800文字以内");return response([["内容を保った本文"]]);
+ });expect(r.candidates[0]!.comments).toEqual([]);expect(calls).toBe(2);
+});
+it("recognizes standalone continuation labels without changing body line spacing",()=>{
+ expect(referencePosts("導入\n・例\n\n続き\n\n答え\n理由")).toEqual(["導入\n・例","答え\n理由"]);
+ expect(referencePosts("続きが気になる\n続きを読む")).toEqual(["続きが気になる\n続きを読む"]);
+});
+it("uses shared knowledge across representative origin, mode and source combinations",async()=>{
+ for(const {origin,mode,hasSources} of [
+  {origin:"own" as const,mode:"template" as const,hasSources:false},
+  {origin:"paste" as const,mode:"rewrite" as const,hasSources:true},
+ ]) {
+  const result=await compose({...input,mode,referenceOrigin:origin,sources:hasSources?[{title:"教材",content:"最後の重要な情報"}]:[]},async(system,user)=>{
+   const q=JSON.parse(user);expect(q.reference.origin).toBe(origin);expect(q.mode).toBe(mode);
+   expect(q.writingKnowledge).toContain("同じ説明の反復");expect(system).toContain("伝聞");
+   expect(q.sources).toHaveLength(hasSources?1:0);if(hasSources)expect(q.sources[0].content).toContain("最後の重要な情報");
+   expect(q.resolvedRules.postCount).toBe(2);return response(outputs);
+  });expect(result.candidates).toHaveLength(3);
+ }
+});
+it("keeps valid candidates and repairs only the missing one",async()=>{
+ let calls=0;
+ const r=await compose(input,async(_s,u)=>{
+  const q=JSON.parse(u);calls++;
+  if(calls===1)return response([outputs[0]!,["### 見出し"],outputs[2]!]);
+  expect(q.n).toBe(1);expect(q.accepted).toHaveLength(2);expect(q.feedback.join()).toContain("Markdown");
+  return response([outputs[1]!]);
+ });expect(calls).toBe(2);expect(r.candidates.map(c=>c.key)).toEqual(["A","B","C"]);
+ expect(r.candidates[0]!.body).toBe(outputs[0]![0]);
+});
+it("returns partial success on repair provider failure",async()=>{
+ let calls=0;const r=await compose(input,async()=>{if(++calls===1)return response([outputs[0]!]);throw new AiError("AI_FAILED","timeout");});
+ expect(r.candidates).toHaveLength(1);expect(r.notes.join()).toContain("3案中1案");
+});
+it("exact duplicates become partial success, but similar rewrites are allowed",async()=>{
+ const r=await compose(input,async()=>response([outputs[0]!,outputs[0]!,outputs[0]!]));
+ expect(r.candidates).toHaveLength(1);
+ const reference="ワイの会社の社長、元外コンで年3～4,000万とか貰ってたらしい。負けたくないな。";
+ const r2=await compose({...input,mode:"rewrite",references:[reference],instruction:"内容同じで"},async()=>response([[reference],[reference.replace("ワイの会社の社長","ワイの会社の社長って")],[reference.replace("負けたくないな","負けたくないわ")]]));
+ expect(r2.candidates).toHaveLength(3);expect(r2.candidates.every(c=>c.comments.length===0)).toBe(true);
+});
+it("repairs numbers and hearsay without inventing expanded numbers",async()=>{
+ const reference="年3～4,000万とか貰ってたらしい。";let calls=0;
+ await compose({...input,mode:"rewrite",references:[reference],instruction:"内容同じで",n:1},async(_s,u)=>{
+  calls++;if(calls===1)return response([["年3,000～4,000万円貰っていた。"]]);
+  expect(JSON.parse(u).feedback.join()).toContain("伝聞");return response([[reference]]);
+ });expect(calls).toBe(2);
+});
+it("does not fail normal length/line-break changes and does reject headings/unwanted continuation",()=>{
+ const request={...input,references:["Obsidian何がいいの？使い道ある？"]};
+ expect(candidateIssues({key:"A",body:"マンジャロってどうなの？\n何から調べたらいい？",comments:[],hook:"",basis:""},request)).toEqual([]);
+ const issues=candidateIssues({key:"A",body:"### ポイント1",comments:["続き"],hook:"",basis:""},request);
+ expect(issues.join()).toContain("同じ1投稿");expect(issues.join()).toContain("Markdown");
+});
+it("keeps a short question short while allowing an explicit request for detail",()=>{
+ const request={...input,references:["道具って何がいいの？使い道ある？"]};
+ const candidate={key:"A",hook:"",basis:"",body:"質問に長い説明を足す。".repeat(20),comments:[]};
+ expect(candidateIssues(candidate,request).join()).toContain("100文字以内");
+ expect(candidateIssues(candidate,{...request,instruction:"詳しく解説して"})).toEqual([]);
+});
+it("repair attempts are bounded and return actionable validation errors",async()=>{
+ const call=vi.fn(async()=>"invalid JSON");
+ await expect(compose(input,call)).rejects.toMatchObject({category:"content_validation",retryable:true});expect(call).toHaveBeenCalledTimes(2);
+});
+it("information mode does not inherit a template and receives all sources",async()=>{
+ const r=await compose({...input,mode:"information",references:[],sources:[{title:"資料",content:"a".repeat(8000)+"末尾の事実"}],n:1},async(_s,u)=>{
+  const q=JSON.parse(u);expect(q.resolvedRules.postCount).toBeUndefined();expect(q.sources[0].content).toContain("末尾の事実");return response([["資料からの本文"]]);
+ });expect(r.candidates).toHaveLength(1);
+});
+it("latest edited draft is the revision source, with the latest instruction taking priority",async()=>{
+ const currentDraft={key:"B",body:"編集した本文",comments:[],hook:"",basis:""};
+ const r=await compose({...input,currentDraft,instruction:"1投稿にまとめて",n:1},async(_s,u)=>{
+  const q=JSON.parse(u);expect(q.operation).toBe("revise");expect(q.currentDraft.body).toBe("編集した本文");expect(q.reference.posts).toEqual([]);expect(q.resolvedRules.postCount).toBe(1);return response([["修正した本文"]]);
+ });expect(r.candidates[0]!.comments).toEqual([]);
+});
+it("does not disable fact checks when the instruction says not to add facts",()=>{
+ const issues=candidateIssues({key:"A",hook:"",basis:"",body:"年3000〜4000万円もらっていた。",comments:[]},{...input,mode:"rewrite",references:["年3～4,000万とか貰ってたらしい。"],instruction:"資料に事実があっても追加せず語順を自然にする"});
+ expect(issues.join()).toContain("数値");expect(issues.join()).toContain("伝聞");
+});
+it("rewrites ending text as ordinary text, with no CTA-specific policy",async()=>{
+ const r=await compose({...input,references:["導入【投稿2】説明。使い分け知りたい人は固定ポストから"],n:1},async(system,u)=>{
+  expect(system).not.toContain("CTA");expect(JSON.parse(u).reference.posts[1]).toContain("固定ポスト");return response([["果物の選び方","詳しくはプロフィールへ"]]);
+ });expect(r.candidates[0]!.comments).toEqual(["詳しくはプロフィールへ"]);
+});
+it("uniformly removes emojis, preserving rank meaning",()=>{
+ expect(withoutEmoji("🥉ゴミ\n🥈便利\n🥇最強 👨‍👩‍👧‍👦🇯🇵👍🏽❤️")).toBe("3位 ゴミ\n2位 便利\n1位 最強");
+});
+it("preserves usable drafts when list-length repair fails, and explains the difference",async()=>{
+ let calls=0;const r=await compose({...input,fidelity:90,n:1},async()=>{calls++;return response([["果物なら\n・りんご","・ぶどう"]]);});
+ expect(calls).toBe(2);expect(r.candidates).toHaveLength(1);expect(r.candidates[0]!.body).toContain("りんご");expect(r.notes.join()).toContain("項目数が異なる");
+});
+it("also preserves usable drafts if their editorial repair hits a provider error",async()=>{
+ let calls=0;const r=await compose({...input,fidelity:90,n:1},async()=>{if(++calls===1)return response([["果物なら\n・りんご","・ぶどう"]]);throw new AiError("AI_FAILED","timeout");});
+ expect(r.candidates).toHaveLength(1);expect(r.notes.join()).toContain("項目数が異なる");
+});
+it("asks only when neither a new theme nor sources are supplied",async()=>{
+ const call=vi.fn();const r=await compose({...input,instruction:""},call);expect(r.clarification).toBeDefined();expect(call).not.toHaveBeenCalled();
+});
 describe("参考のツリー全文とアカウント分離", () => {
   it("本人の続きだけを順に取得し、削除済みと別アカウントを除く", async () => {
     const { userId } = await registerUser();
@@ -76,94 +166,45 @@ describe("参考のツリー全文とアカウント分離", () => {
     for (const [account, id, reply, text, date, deleted] of [[a, "root", 0, "順位の導入", "01", 0], [a, "later", 1, "最後の誘導", "03", 0], [a, "answer", 1, "最強の答え", "02", 0], [a, "deleted", 1, "削除済み", "04", 1], [b, "root", 0, "別アカウントの親", "01", 0], [b, "secret", 1, "別アカウントの続き", "02", 0]] as const) {
       await db.run("INSERT INTO posts (account_id,id,root_id,is_reply,text,posted_at,tags_json,source,deleted) VALUES (?,?,'root',?,?,?,'{}','external',?)", account, id, reply, text, `2026-09-07T00:00:${date}Z`, deleted);
     }
-    const got = await pickedPosts(db, a, ["root"]);
+    await expect(pickedPosts(db, a, ["root"])).rejects.toThrow("本人のツリー");
+    await db.run("UPDATE posts SET own_thread_json=? WHERE account_id=? AND id='root'",JSON.stringify({chain:[{id:"answer",text:"最強の答え"},{id:"later",text:"最後の誘導"}],parent:"later",complete:true,checkedAt:Date.now()}),a);
+    const got = await pickedPosts(db, a, ["root"], ["answer", "later"]);
     expect(got).toEqual(["【投稿1】\n順位の導入\n\n【投稿2】\n最強の答え\n\n【投稿3】\n最後の誘導"]);
+    expect(await pickedPosts(db, a, ["root"], [])).toEqual(got);
+    expect(await pickedPosts(db, a, ["root"])).toEqual(got);
+    await expect(pickedPosts(db, a, ["root"], ["secret"])).rejects.toThrow("本人のツリー以外");
     expect(await pickedPosts(db, a, ["secret"])).toEqual([]);
   });
 });
 
 
-describe("固定する骨組みと可変部分", () => {
-  const bp = { posts: ["第3位 ゴミ\n・Manus\n{{intro}}", "第1位 最強\n・Codex\n{{reason}}"], slots: [{ id: "intro", task: "導入", maxChars: 30 }, { id: "reason", task: "理由", maxChars: 40 }] };
-  it("AIが項目を書かなくても骨組みの項目と順番は残る", () => {
-    expect(renderBlueprint(bp, JSON.stringify({ slots: { intro: "続きへ", reason: "共有しながら壁打ち。" } }))).toEqual(["第3位 ゴミ\n・Manus\n続きへ", "第1位 最強\n・Codex\n共有しながら壁打ち。"]);
-  });
-  it("未定義・空・長すぎるスロットは返さない", () => {
-    for (const slots of [{ intro: "導入" }, { intro: "", reason: "説明" }, { intro: "あ".repeat(31), reason: "説明" }]) expect(() => renderBlueprint(bp, JSON.stringify({ slots }))).toThrow();
-  });
-  it("骨組みに固定項目がない場合は生成を止める", () => {
-    expect(() => readCompositionPlan(JSON.stringify({ ...plan, anchors: ["りんご"] }), input)).toThrow("骨組みに項目が足りません");
-  });
+it("recognizes blank lines and escaped usernames in a copied Threads tree",()=>{
+ const first="導入\n\n🥉ゴミ\n\n"+Array.from({length:4},(_,i)=>`・項目${i}`).join("\n\n")+"\n\n🥈便利\n\n"+Array.from({length:4},(_,i)=>`・別項目${i}`).join("\n\n")+"\n\n🥇最強↓";
+ const second="・続き1\n\n・続き2\n\n・続き3\n\n説明";
+ const pasted=first+"&#x20;\r\n\r\n1\r\n\r\n/\r\n\r\n2\r\n\r\nyama\\_threads\r\n\r\n2日\r\n\r\n"+second;
+ const normalized=normalizePastedThread(pasted);
+ const parts=normalized.split("【投稿2】").map(p=>p.trim());
+ expect(parts).toEqual([first,second]);
+ expect(referenceShape({...input,references:[pasted]})!.partCount).toBe(2);
+ expect(parts.map(p=>(p.match(/^・/gm)??[]).length)).toEqual([8,3]);
+ expect(normalizePastedThread(normalized)).toBe(normalized);
+ expect(normalizePastedThread("本文\n1\n/\n2\n続きの本文\n2日")).toBe("本文\n1\n/\n2\n続きの本文\n2日");
 });
 
-
-describe("生成前の会話とおまかせ", () => {
-  it("質問を構造化して返す", async () => {
-    const result=await compose(input,async()=>JSON.stringify({status:"needs_input",question:"誰に向けて書きますか？"}));
-    expect(result.clarification?.question).toBe("誰に向けて書きますか？");
-  });
-  it("ユーザーの回答を事実の根拠にし、AIの質問は根拠にしない", async () => {
-    const seen:any[]=[];
-    await compose({...input,conversation:[{role:"assistant",text:"医師の実績は？"},{role:"user",text:"会社員向けです"}]},async(_system,user)=>{
-      const q=JSON.parse(user);seen.push(q);
-      return JSON.stringify(q.task==="composition-plan"?plan:output(samples[q.index]!));
-    });
-    expect(seen[0].instruction).toContain("会社員向けです");
-    expect(seen[0].instruction).not.toContain("医師の実績");
-  });
-  it("おまかせでは再質問を一度だけやり直して生成へ進む", async () => {
-    let plans=0;
-    const result=await compose({...input,sources:[],instruction:"果物について。全部任せる"},async(system,user)=>{
-      const q=JSON.parse(user);
-      expect(q.clarificationMode).toBe("delegate");
-      if(q.task==="composition-plan") {
-        expect(system).toContain("追加質問は禁止");
-        if(++plans===1)return JSON.stringify({status:"needs_input",question:"何を選ぶ？"});
-        return JSON.stringify(plan);
-      }
-      return JSON.stringify(output(samples[q.index]!));
-    });
-    expect(result.candidates).toHaveLength(3);expect(result.clarification).toBeUndefined();expect(plans).toBe(2);
-  });
-  it("おまかせ時の質問ループを制限する",async()=>{
-    let calls=0;
-    await expect(compose({...input,clarificationMode:"delegate"},async()=>{calls++;return JSON.stringify({status:"needs_input",question:"情報は？"});})).rejects.toThrow("おまかせ");
-    expect(calls).toBe(2);
-  });
+it("removes invented empty lines only when the reference has none, with an explicit layout override",async()=>{
+ const draft="導入\n\n・一つ\n\n・二つ";
+ const generated=async()=>response([[draft,"・答え"]]);
+ const layoutInput={...input,fidelity:90,references:["元の導入\n・元A\n・元B\n【投稿2】\n・元の答え"]};
+ const normal=await compose({...layoutInput,n:1},generated);expect(normal.candidates[0]!.body).toBe("導入\n・一つ\n・二つ");
+ const spaced=await compose({...layoutInput,n:1,instruction:"空行を入れて"},generated);expect(spaced.candidates[0]!.body).toBe(draft);
+ const originalSpace=await compose({...layoutInput,n:1,references:["元の導入\n\n・元A\n\n・元B【投稿2】・元の答え"]},generated);expect(originalSpace.candidates[0]!.body).toBe(draft);
 });
 
-
-describe("実Gemini返答で見つかった構成の互換性",()=>{
- it("大文字を含むスロット名を骨組みと照合して差し込める",()=>{
-  const bp={posts:["{{intro_A}}"],slots:[{id:"intro_A",task:"導入",maxChars:40}]};
-  const p={...plan,partCount:1,variants:[{...plan.variants[0]!,blueprint:bp}]};
-  expect(readCompositionPlan(JSON.stringify(p),{...input,n:1}).variants).toHaveLength(1);
-  expect(renderBlueprint(bp,JSON.stringify({slots:{intro_A:"朝食を選ぼう"}}))).toEqual(["朝食を選ぼう"]);
- });
- it("おまかせの新提案を提供資料の固定事実として検証しない",()=>{
-  const p={...plan,anchors:["ユーザーが提供していない提案"]};
-  expect(readCompositionPlan(JSON.stringify(p),{...input,clarificationMode:"delegate"}).anchors).toEqual([]);
-  expect(()=>readCompositionPlan(JSON.stringify(p),input)).toThrow("素材にない");
- });
- it("十分な素材があれば標準モードでも確認なしに生成",async()=>{
-  const result=await compose({...input,clarificationMode:undefined},async(_system,user)=>{
-   const q=JSON.parse(user);expect(q.clarificationMode).toBe("ask");
-   return JSON.stringify(q.task==="composition-plan"?plan:output(samples[q.index]!));
-  });
-  expect(result.candidates).toHaveLength(3);
- });
-});
-
-it("各案の必要項目をAPIスキーマに指定し、他の案の情報を混ぜない",async()=>{
- let calls=0;
- await compose(input,async(_system,user,_urls,schema)=>{
-  const q=JSON.parse(user);
-  if(q.task==="composition-plan")return JSON.stringify(plan);
-  calls++;
-  expect(q.plan.variants).toBeUndefined();
-  expect((schema as any).properties.slots.required).toEqual(q.requiredSlots.map((s:any)=>s.id));
-  expect((schema as any).properties.slots.additionalProperties).toBe(false);
-  return JSON.stringify(output(samples[q.index]!));
- });
- expect(calls).toBe(3);
+it("repairs missing ranking headings without turning every line into a slot",async()=>{
+ let calls=0;const ranks="3位 未整理\n・一つ\n2位 工夫\n・二つ\n1位 実用\n・三つ", corrected="3位 手軽\n・りんご\n2位 工夫\n・みかん\n1位 定番\n・ぶどう";
+ const r=await compose({...input,fidelity:90,references:[ranks],n:1},async(_s,u)=>{
+  const q=JSON.parse(u);expect(q.reference.layout[0].rankOrder).toEqual(["3位","2位","1位"]);
+  if(++calls===1)return response([["・りんご\n・みかん\n・ぶどう"]]);
+  expect(q.feedback.join()).toContain("順位の見出し");return response([[corrected]]);
+ });expect(calls).toBe(2);expect(r.candidates[0]!.body).toBe(corrected);
 });

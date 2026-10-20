@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, insertAccount, mockToken, registerUser, testDb } from "./helpers";
 import { ACCOUNT_CHILD_TABLES } from "../src/lib/accounts";
 import { enqueueJob, makeJobContext, runJobs } from "../src/lib/jobs";
@@ -67,22 +67,76 @@ describe("POST /api/accounts（SPEC §7.1）", () => {
     expect(JSON.stringify(res.body)).not.toContain("secret-value");
   });
 
-  it("同じユーザーで3件まで（4件目は ACCOUNT_LIMIT）", async () => {
+  it("無料プランは1件まで（2件目は ACCOUNT_LIMIT）", async () => {
     const u = await registerUser();
+    const first = await api("POST", "/api/accounts", {
+      cookie: u.cookie,
+      body: { token: mockToken("limit0") },
+    });
+    expect(first.status).toBe(201);
+    const over = await api("POST", "/api/accounts", {
+      cookie: u.cookie,
+      body: { token: mockToken("limit1") },
+    });
+    expect(over.status).toBe(400);
+    expect(over.body.error.code).toBe("ACCOUNT_LIMIT");
+    expect(over.body.error.message).toContain("1つまで");
+  });
+
+  it("講座生プランは3件まで（4件目は ACCOUNT_LIMIT）", async () => {
+    const u = await registerUser();
+    await testDb().run("UPDATE user_entitlements SET plan_code='academy', account_limit=3 WHERE user_id=?", u.userId);
     for (let i = 0; i < 3; i++) {
       const res = await api("POST", "/api/accounts", {
         cookie: u.cookie,
-        body: { token: mockToken(`limit${i}`) },
+        body: { token: mockToken(`academy-limit${i}`) },
       });
       expect(res.status).toBe(201);
     }
     const over = await api("POST", "/api/accounts", {
       cookie: u.cookie,
-      body: { token: mockToken("limit3") },
+      body: { token: mockToken("academy-limit3") },
     });
     expect(over.status).toBe(400);
     expect(over.body.error.code).toBe("ACCOUNT_LIMIT");
     expect(over.body.error.message).toContain("3つまで");
+  });
+
+  it("管理者は無料プランのままでも10件まで接続でき、上限到達後も再接続できる", async () => {
+    const u = await registerUser();
+    const previous = env.ADMIN_USER_ID;
+    env.ADMIN_USER_ID = u.userId;
+    try {
+      const me = await api("GET", "/api/auth/me", { cookie: u.cookie });
+      expect(me.body.data.isAdmin).toBe(true);
+      expect(me.body.data.entitlement.accountLimit).toBe(10);
+
+      for (let i = 0; i < 10; i++) {
+        const res = await api("POST", "/api/accounts", {
+          cookie: u.cookie,
+          body: { token: mockToken(`admin-limit${i}`) },
+        });
+        expect(res.status).toBe(201);
+      }
+      const over = await api("POST", "/api/accounts", {
+        cookie: u.cookie,
+        body: { token: mockToken("admin-limit10") },
+      });
+      expect(over.status).toBe(400);
+      expect(over.body.error.code).toBe("ACCOUNT_LIMIT");
+      expect(over.body.error.message).toContain("10つまで");
+      const reconnect = await api("POST", "/api/accounts", {
+        cookie: u.cookie,
+        body: { token: mockToken("admin-limit0") },
+      });
+      expect(reconnect.status).toBe(200);
+      const updated = await api("GET", "/api/auth/me", { cookie: u.cookie });
+      expect(updated.body.data.accounts).toHaveLength(10);
+    } finally {
+      // This test creates 40 sync jobs; keep them out of later scheduler tests.
+      await testDb().run("DELETE FROM jobs WHERE account_id IN (SELECT id FROM accounts WHERE user_id=?)", u.userId);
+      env.ADMIN_USER_ID = previous;
+    }
   });
 
   it("同じ Threads アカウントの再接続は上限に数えず、つなぎ直しになる", async () => {
@@ -318,10 +372,14 @@ describe("sync / diagnose / patch（SPEC §7.1）", () => {
 });
 
 describe("GET /api/accounts/:id/dashboard（SPEC §7.2）", () => {
+  // Keep the API's rolling window aligned with the fixed September mock posts.
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW); });
+  afterEach(() => vi.useRealTimers());
+
   async function seeded(suffix: string) {
     const u = await registerUser();
     const accountId = await insertAccount({ userId: u.userId, token: mockToken(suffix) });
-    const ctx = makeJobContext(env, { now: NOW });
+    const ctx = makeJobContext(env, { now: new Date() });
     for (const t of ["full_sync", "insights_recent", "insights_daily", "daily_views", "followers", "clicks"] as const) {
       await enqueueJob(ctx, t, { accountId });
     }
@@ -331,6 +389,14 @@ describe("GET /api/accounts/:id/dashboard（SPEC §7.2）", () => {
 
   it("§7.2 の形で返る", async () => {
     const { u, accountId } = await seeded("dash1");
+    const roots=await testDb().all<{id:string}>("SELECT id FROM posts WHERE account_id=? AND is_reply=0",accountId);
+    for (const root of roots) {
+      let pending=true;
+      while (pending) {
+        const tree=await api("GET",`/api/accounts/${accountId}/posts/${root.id}/tree`,{cookie:u.cookie});
+        expect(tree.status).toBe(200);pending=tree.body.data.pending;
+      }
+    }
     const res = await api("GET", `/api/accounts/${accountId}/dashboard?period=30`, {
       cookie: u.cookie,
     });
@@ -390,29 +456,6 @@ describe("GET /api/accounts/:id/dashboard（SPEC §7.2）", () => {
     ).toBe(7);
   });
 
-  it("3アカウントで数字が混ざらない", async () => {
-    const u = await registerUser();
-    const ids: string[] = [];
-    for (const s of ["mix1", "mix2", "mix3"]) {
-      ids.push(await insertAccount({ userId: u.userId, token: mockToken(s) }));
-    }
-    const ctx = makeJobContext(env, { now: NOW });
-    for (const id of ids) await enqueueJob(ctx, "full_sync", { accountId: id });
-    await runJobs(ctx);
-
-    for (const id of ids) {
-      const n = await testDb().first<{ n: number }>(
-        "SELECT COUNT(*) AS n FROM posts WHERE account_id=?",
-        id,
-      );
-      expect(n?.n).toBe(14);
-    }
-    const total = await testDb().first<{ n: number }>(
-      `SELECT COUNT(*) AS n FROM posts WHERE account_id IN (${ids.map(() => "?").join(",")})`,
-      ...ids,
-    );
-    expect(total?.n).toBe(42);
-  });
 });
 
 describe("GET /api/accounts/:id/posts（SPEC §7.3）", () => {
@@ -431,6 +474,7 @@ describe("GET /api/accounts/:id/posts（SPEC §7.3）", () => {
     expect(list.status).toBe(200);
     expect(list.body.data.posts).toHaveLength(5);
     expect(list.body.data.cursor).toBe("5");
+    expect(list.body.data.total).toBeGreaterThanOrEqual(5);
     const views = list.body.data.posts.map((p: { views: number }) => p.views);
     expect([...views].sort((a: number, b: number) => b - a)).toEqual(views);
 

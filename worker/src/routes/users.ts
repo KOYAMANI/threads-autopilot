@@ -12,13 +12,14 @@
  */
 import { Hono } from "hono";
 import { z } from "zod";
-import { ok, type LicenseSummary } from "@tap/shared";
+import { ok, type LicenseSummary, type UserProfile } from "@tap/shared";
 import { fail, type AppEnv } from "../app";
 import { ACCOUNT_CHILD_TABLES } from "../lib/accounts";
 import { sha256Hex, verifyPassword } from "../lib/crypto";
 import type { Db } from "../lib/db";
 import { sendEmail } from "../lib/email";
 import { forgotKey, loginKey } from "../lib/rate";
+import { mediaObjectKey } from "../lib/media";
 
 /** `user_id` を持つテーブル（SPEC §7.8 の表）。`users` は最後に消すのでここには入れない。 */
 export const USER_TABLES = [
@@ -33,6 +34,12 @@ export const USER_TABLES = [
 ] as const;
 
 const deleteSchema = z.object({ password: z.string().min(1).max(200) });
+const profileSchema = z.object({
+  goal: z.enum(["monetize", "shop", "awareness"]),
+  activity: z.string().trim().max(200),
+  audience: z.string().trim().max(300),
+  onboardingCompleted: z.boolean(),
+});
 
 /** ライセンスは末尾4桁と状態だけ返す（キー全体は画面に出さない）。 */
 export async function loadLicense(db: Db, userId: string): Promise<LicenseSummary | null> {
@@ -57,6 +64,29 @@ export async function loadLicense(db: Db, userId: string): Promise<LicenseSummar
 
 export function userRoutes() {
   const r = new Hono<AppEnv>();
+
+  r.put("/me/profile", async (c) => {
+    let raw: unknown = null;
+    try { raw = await c.req.json(); } catch { raw = null; }
+    const parsed = profileSchema.safeParse(raw);
+    if (!parsed.success) return fail("BAD_REQUEST", "発信の目標とプロフィールを確認してください", 400);
+    const nowIso = new Date().toISOString();
+    await c.get("db").run(
+      `INSERT INTO user_profiles (user_id, goal, activity, audience, onboarding_completed, updated_at)
+       VALUES (?,?,?,?,?,?)
+       ON CONFLICT(user_id) DO UPDATE SET goal=excluded.goal, activity=excluded.activity,
+         audience=excluded.audience, onboarding_completed=excluded.onboarding_completed, updated_at=excluded.updated_at`,
+      c.get("userId")!, parsed.data.goal, parsed.data.activity, parsed.data.audience,
+      parsed.data.onboardingCompleted ? 1 : 0, nowIso,
+    );
+    const profile: UserProfile = {
+      goal: parsed.data.goal,
+      activity: parsed.data.activity,
+      audience: parsed.data.audience,
+      onboardingCompleted: parsed.data.onboardingCompleted,
+    };
+    return c.json(ok({ profile }));
+  });
 
   /* ── ライセンス（設定画面に出す） ─────────────── */
   r.get("/me/license", async (c) => {
@@ -96,10 +126,14 @@ export function userRoutes() {
     }, c.env.PASSWORD_PEPPER);
     if (!good) return fail("LOGIN_FAILED", "パスワードが違います", 401);
 
-    const accounts = await db.all<{ id: string }>(
-      "SELECT id FROM accounts WHERE user_id=?",
+    const related = await db.first<{ account_count: number; media_ids_json: string }>(
+      `SELECT
+         (SELECT COUNT(*) FROM accounts WHERE user_id=?) AS account_count,
+         COALESCE((SELECT json_group_array(id) FROM media_objects WHERE user_id=?),'[]') AS media_ids_json`,
+      userId,
       userId,
     );
+    const mediaIds = JSON.parse(related?.media_ids_json ?? "[]") as string[];
     const nowIso = new Date().toISOString();
     const email = user.email;
 
@@ -114,8 +148,16 @@ export function userRoutes() {
       { sql: "UPDATE licenses SET status='revoked', revoked_at=?, user_id=NULL WHERE id=?", params: [nowIso, user.license_id] },
       { sql: "DELETE FROM users WHERE id=?", params: [userId] },
       { sql: "INSERT INTO audit_log(id,user_id,at,action,detail) VALUES (?,NULL,?,'user_delete',?)",
-        params: [crypto.randomUUID(), nowIso, JSON.stringify({emailHash, accounts: accounts.length, licenseId: user.license_id})] },
+        params: [crypto.randomUUID(), nowIso, JSON.stringify({emailHash, accounts: related?.account_count ?? 0, licenseId: user.license_id})] },
     ]);
+
+    if (mediaIds.length > 0) {
+      try {
+        await c.env.MEDIA_BUCKET.delete(mediaIds.map(mediaObjectKey));
+      } catch (error) {
+        console.error(`[media] user cleanup failed: ${String(error)}`);
+      }
+    }
 
     // 8. 完了の通知（`notifications` はもう消えているので直接送る）
     await sendEmail(c.env, email, "account_deleted", { appOrigin: c.env.APP_ORIGIN });

@@ -99,14 +99,16 @@ describe("ジョブ基盤（SPEC §8.1）", () => {
     let now = NOW;
     for (let i = 1; i <= 5; i++) {
       const ctx = makeJobContext(env, { now });
-      await runJobs(ctx, { clicks: boom });
+      const run = await runJobs(ctx, { clicks: boom });
       const row = await jobRow(id);
       if (i < 5) {
         expect(row?.status).toBe("pending");
         expect(row?.attempts).toBe(i);
+        expect(run.retryDelaySeconds).toBe([60, 120, 240, 480][i - 1]);
         now = new Date(Date.parse(row!.next_run_at));
       } else {
         expect(row?.status).toBe("failed");
+        expect(run.retryDelaySeconds).toBeUndefined();
         expect(row?.last_error).toContain("boom");
       }
     }
@@ -138,14 +140,6 @@ describe("ジョブ基盤（SPEC §8.1）", () => {
     expect((await jobRow(id))?.status).toBe("done");
   });
 
-  it("未実装のジョブ（publish は M4）はキューを詰まらせない", async () => {
-    const u = await registerUser();
-    const accountId = await insertAccount({ userId: u.userId });
-    const ctx = makeJobContext(env, { now: NOW });
-    const id = (await enqueueJob(ctx, "publish", { accountId }))!;
-    await runJobs(ctx, {});
-    expect((await jobRow(id))?.status).toBe("done");
-  });
 });
 
 /* ── 台帳（jobs テーブル）側の予算切れ（M6 で踏んだ回帰） ── */
@@ -204,15 +198,6 @@ describe("台帳の予算が尽きたとき（SPEC §8.1）", () => {
 });
 
 describe("cron の投入（SPEC §8.2）", () => {
-  it("5分の cron は何も投入しない", async () => {
-    const u = await registerUser();
-    await insertAccount({ userId: u.userId });
-    const ctx = makeJobContext(env, { now: NOW });
-    const before = await countJobs();
-    await enqueueForCron(ctx, "*/5 * * * *");
-    expect(await countJobs()).toBe(before);
-  });
-
   it("毎時は insights_recent と ap_plan / ap_notify（SPEC §8.2）", async () => {
     const u = await registerUser();
     const accountId = await insertAccount({ userId: u.userId });

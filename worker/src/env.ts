@@ -15,6 +15,7 @@ export type Env = {
   /** Free pilot: bounded work per invocation. Does not change Cloudflare billing. */
   WORKERS_PLAN?: "free" | "paid";
   DB: D1Database;
+  MEDIA_BUCKET: R2Bucket;
   JOB_QUEUE?: Queue<{ jobId: string }>;
   THREADS_APP_ID?: string;
   THREADS_APP_SECRET?: string;
@@ -39,6 +40,8 @@ export type Env = {
   /** Dedicated post-hash password pepper; preserve alongside external secret backups. */
   PASSWORD_PEPPER: string;
   ADMIN_SECRET?: string;
+  /** ログイン後の運営画面を使えるユーザーID。ADMIN_SECRET はCLI互換用に残す。 */
+  ADMIN_USER_ID?: string;
   RESEND_API_KEY?: string;
   /** [vars]。差出人アドレス。空文字なら未設定として扱い `noreply@example.com` にする */
   MAIL_FROM?: string;

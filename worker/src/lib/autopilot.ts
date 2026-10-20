@@ -1,4 +1,4 @@
-import { hasAiDataConsent } from "@tap/shared";
+import { AI_DEFAULT_MODEL, hasAiDataConsent, isAllowedAiModel } from "@tap/shared";
 /**
  * オートパイロットの共通処理（SPEC §7.7 / §9）。
  * ルート（`routes/autopilot.ts`）とジョブ（`jobs/plan.ts` / `notify.ts` / `score.ts`）で共用する。
@@ -92,7 +92,7 @@ export const BLOCKER_MESSAGE: Record<AutopilotBlocker, string> = {
     "設定でAIキーと送信先・利用条件を確認して保存してください",
   no_source: "参考情報が1件もありません。「作る」から参考情報を追加してください",
   needs_reauth: "このアカウントは再接続が必要です。設定からつなぎ直してください",
-  license: "ライセンスが無効になっています",
+  license: "このアカウントの利用が停止されています",
 };
 
 /**
@@ -109,7 +109,8 @@ export async function autopilotBlockers(
     "SELECT key_enc, store_on_server, provider, model, data_policy_version FROM ai_settings WHERE user_id=?",
     options.userId,
   );
-  if (!ai || !ai.store_on_server || !ai.key_enc || !hasAiDataConsent(ai)) out.push("no_key");
+  const aiModel = ai && isAllowedAiModel(ai.provider, ai.model) ? ai.model : ai ? AI_DEFAULT_MODEL[ai.provider as keyof typeof AI_DEFAULT_MODEL] : null;
+  if (!ai || !ai.store_on_server || !ai.key_enc || !hasAiDataConsent({...ai, model:aiModel})) out.push("no_key");
 
   const src = await db.first<{ n: number }>(
     "SELECT COUNT(*) AS n FROM sources WHERE user_id=? AND enabled_for_ap=1",
@@ -189,7 +190,7 @@ export async function licenseActiveOrStop(
       db,
       accountId,
       "stopped",
-      "ライセンスが無効になったため、オートパイロットを止めました",
+      "アカウントの利用が停止されたため、オートパイロットを止めました",
       null,
       now,
     );

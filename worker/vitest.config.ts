@@ -18,6 +18,7 @@ export default defineConfig(async () => {
           compatibilityDate: "2026-08-01",
           compatibilityFlags: ["nodejs_compat"],
           d1Databases: { DB: "test-db", DB_PRODUCTION: "test-meta-prod", DB_STAGING: "test-meta-stage" },
+          r2Buckets: { MEDIA_BUCKET: "test-media" },
           bindings: {
             TEST_MIGRATIONS: migrations,
             TEST_META_CALLBACK_MIGRATIONS: callbackMigrations,
