@@ -57,7 +57,7 @@ const isMode = (v: string | null): v is Mode => v === "template" || v === "rewri
 
 // 入口は2つ（DECISIONS 2026-10-20）。リライトはホーム・キューの「リライト」から preset で入る
 const START_CHOICES: Array<{ mode: Mode; title: string; note: string }> = [
-  { mode: "template", title: "型を選んで作る", note: "見本を1〜3本選ぶと、同じ書き方で AI が3案" },
+  { mode: "template", title: "型を選んで作る", note: "見本を1本選ぶと、同じ書き方で AI が3投稿" },
   { mode: "write", title: "自分で書く", note: "白紙から。あとで AI に直させることもできます" },
 ];
 
@@ -307,7 +307,7 @@ export default function Create() {
               return;
             }
             // 0件のときだけ、サーバーの理由をトーストで出す（画面には常駐させない）
-            toast.show(r.notes?.length ? r.notes.join(" ") : "案を作れませんでした。指示を変えて、もう一度試してください", "bad");
+            toast.show(r.notes?.length ? r.notes.join(" ") : "投稿を作れませんでした。指示を変えて、もう一度試してください", "bad");
             return;
           }
           setGenerationContext(context);
@@ -336,7 +336,7 @@ export default function Create() {
     setDraft(draftOf(c));
     appliedBody.current = c.body;
     setReviseText("");
-    toast.show(`案${c.key}を入れました`, "ok");
+    toast.show(`投稿${c.key}を入れました`, "ok");
     go("edit");
   }
 
@@ -430,6 +430,27 @@ export default function Create() {
         onError: (e) => fail(e, "保存できませんでした"),
       },
     );
+  }
+
+  /** できた投稿を全部そのまま下書きに。1つでも本文検証に通らなければ、何も保存しない（2026-10-21） */
+  async function saveAllCandidates() {
+    const problems = candidates.map((c) => ({ key: c.key, issue: draftIssue(draftOf(c)) })).filter((x) => x.issue);
+    if (problems.length) {
+      toast.show(`投稿${problems[0]!.key}: ${problems[0]!.issue}`, "bad");
+      return;
+    }
+    try {
+      for (const c of candidates) {
+        await create.mutateAsync({ status: "draft", body: c.body, comments: trimComments(draftOf(c).comments), ...provenance() });
+      }
+    } catch (e) {
+      fail(e, "保存できませんでした");
+      return;
+    }
+    if (!mounted.current) return;
+    toast.show(`${candidates.length}投稿を下書きに保存しました`, "ok");
+    clearCreateSession();
+    navigate("/app/queue");
   }
 
   function openPublish() {
@@ -576,7 +597,7 @@ export default function Create() {
             className="input wizard-textarea"
             rows={5}
             value={instruction}
-            placeholder={rewrite ? "例: 評価や数字はそのままに、説明を読みやすく。" : "例: 初めて講座を作る人向け。準備の順番を伝えたい。"}
+            placeholder={rewrite ? "ここに指示を書く（どう変えたいか）" : "ここに指示を書く（誰に向けて、何を伝えたいか）"}
             onChange={(e) => setInstruction(e.target.value)}
           />
         </label>
@@ -590,7 +611,7 @@ export default function Create() {
     footer = (
       <>
         <button aria-busy={generate.isPending} type="button" className="btn" disabled={busy || briefEmpty} onClick={startGenerate}>
-          {generate.isPending ? "3つの切り口で書いています…" : `AIで${N_CANDIDATES}案つくる`}
+          {generate.isPending ? "3つの切り口で書いています…" : `AIで${N_CANDIDATES}投稿つくる`}
         </button>
         {briefEmpty && <p className="btn-hint">伝えたいことを書くか、記事やメモを足すと押せます。</p>}
         {/* 「Claude で作る」ボタンを後から置く場所（DECISIONS 2026-10-19）。AIキーの有無に関係なく
@@ -601,18 +622,23 @@ export default function Create() {
   }
 
   if (step === "candidates") {
-    title = `${candidates.length}案`;
+    title = `${candidates.length}投稿`;
     body = (
       <>
-        <h1 className="wizard-title">{candidates.length}案できました</h1>
+        <h1 className="wizard-title">{candidates.length}投稿できました</h1>
         <p className="wizard-sub">左右にスライドして、1つ選びます。</p>
         <CandidateCarousel candidates={candidates} account={account} index={shown} onIndex={setShown} />
       </>
     );
     footer = (
-      <button type="button" className="btn" disabled={busy} onClick={() => applyCandidate(shown)}>
-        この案で進む
-      </button>
+      <>
+        <button type="button" className="btn btn-sub" disabled={busy} onClick={() => void saveAllCandidates()}>
+          {candidates.length}投稿をまとめて下書きに保存
+        </button>
+        <button type="button" className="btn" disabled={busy} onClick={() => applyCandidate(shown)}>
+          この投稿で進む
+        </button>
+      </>
     );
   }
 
@@ -637,7 +663,7 @@ export default function Create() {
       <>
         {mode === "template" && candidates.length === 0 && (
           <button type="button" className="btn btn-sub" disabled={busy} onClick={() => go("brief")}>
-            AIで3案つくる
+            AIで{N_CANDIDATES}投稿つくる
           </button>
         )}
         <button type="button" className="btn btn-sub" disabled={busy} onClick={openRevise}>
@@ -709,7 +735,7 @@ export default function Create() {
       )}
 
       <Sheet open={sheet === "aikey"} onClose={() => setSheet(null)} title="AIキーが必要です">
-        <p className="muted sheet-text">AI で案を作ったり直したりするには、設定で AI キーを登録します。自分で書くだけなら、このままできます。</p>
+        <p className="muted sheet-text">AI で投稿を作ったり直したりするには、設定で AI キーを登録します。自分で書くだけなら、このままできます。</p>
         <div className="sheet-row">
           <button type="button" className="btn btn-sub" onClick={() => setSheet(null)}>あとで</button>
           <button type="button" className="btn" onClick={() => { setSheet(null); navigate("/app/settings"); }}>
@@ -729,7 +755,7 @@ export default function Create() {
             rows={4}
             value={answer}
             autoFocus
-            placeholder="例: 初めて講座を作る人向け。準備の順番を3つに分けて伝えたい。"
+            placeholder="ここに答えを書く"
             onChange={(e) => setAnswer(e.target.value)}
           />
         </label>

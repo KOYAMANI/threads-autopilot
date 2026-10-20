@@ -74,7 +74,7 @@ export default function CandidateCarousel({
     <div className="carousel-wrap">
       <div className="carousel-arrows">
         <button type="button" className="btn btn-sub btn-fit" disabled={index === 0} onClick={() => jump(index - 1)}>
-          ← 前の案
+          ← 前の投稿
         </button>
         <button
           type="button"
@@ -82,7 +82,7 @@ export default function CandidateCarousel({
           disabled={index >= candidates.length - 1}
           onClick={() => jump(index + 1)}
         >
-          次の案 →
+          次の投稿 →
         </button>
       </div>
       <div
@@ -90,17 +90,17 @@ export default function CandidateCarousel({
         className="carousel"
         role="group"
         aria-roledescription="カルーセル"
-        aria-label="できた案"
+        aria-label="できた投稿"
       >
         {candidates.map((c, i) => (
           <article
             key={c.key}
             className="carousel-card"
             aria-roledescription="スライド"
-            aria-label={`案${c.key}（${i + 1}/${candidates.length}）`}
+            aria-label={`投稿${c.key}（${i + 1}/${candidates.length}）`}
           >
             <div className="carousel-card-head">
-              <strong>案{c.key}</strong>
+              <strong>投稿{c.key}</strong>
               {(c.angle ?? c.hook) && <span>{c.angle ?? c.hook}</span>}
             </div>
             <ol className="viewer-thread carousel-thread">
@@ -122,13 +122,13 @@ export default function CandidateCarousel({
           </article>
         ))}
       </div>
-      <div className="carousel-dots" role="group" aria-label="案を選ぶ">
+      <div className="carousel-dots" role="group" aria-label="投稿を選ぶ">
         {candidates.map((c, i) => (
           <button
             key={c.key}
             type="button"
             aria-pressed={i === index}
-            aria-label={`案${c.key}`}
+            aria-label={`投稿${c.key}`}
             onClick={() => jump(i)}
           >
             {c.key}
