@@ -886,10 +886,11 @@ MCP ツール（既存 lib の薄いラッパー）:
 | `get_create_session(sessionId?)` | 省略時は本人の最新。`pickMode`・モードの使い方・参考投稿（§10.2 と同じ `pickedPosts`）・参考情報（`clipSources` で各3,000字・合計9,000字）・本文の無い動画・リンク・指示・制約・保存済みの案 |
 | `get_writing_guide(sessionId?)` | §10.3 の System プロンプト（`systemPrompt(constraints)`）と出力形式 `{hook, body, comments, basis}`、型の候補 |
 | `save_candidates(sessionId, candidates[])` | 1〜5案。`validatePost()`（§6.3）＋絵文字方針＋リンク不使用を全案に通し、1案でも NG なら何も保存せず理由を返す。全案に既存の `key` があればその案だけ差し替え、それ以外は全部置き換え。キューには入れない |
+| `get_buzz_guide(sessionId?)` | バズ診断の基準（`/ai/buzz-diagnose` と同じ `BUZZ_DIAGNOSIS_SYSTEM`：1行目50・本文35・締め15）、目的3つ、結果の形、セッションに保存済みの案。採点は Claude が会話の中でし、何も保存しない |
 
 `create_sessions(id, user_id, account_id, payload, candidates, status, created_at)`: `payload` は画面の材料（ID と指示）だけで本文は持たず、読むたびに引き直す。`status` は `waiting|ready`。外部キーの CASCADE で退会・アカウント削除と一緒に消え、`cleanup`（§8.7）が7日で消す。ツールの呼び出しと許可・解除は `audit_log` に `claude_mcp`（`detail.tool` / `detail.event`）で残す。`OAUTH_KV` が無い環境では `/mcp` と `/oauth/*` は 503、Claude 連携の画面は「管理者による設定待ち」を出す。
 
-画面（`/app/claude`、メニューの「設定」の下。`screens/Claude.tsx`）:
+画面（`/app/claude`、PC はサイドバーの「設定」の下、スマホは設定の「連携・データ」から。`screens/Claude.tsx`）:
 
 - つながっていないとき: 「連携するとできること」（3案づくり・claude.ai での直し・AI キー不要。Claude からは投稿・予約・削除はできない）→「連携をはじめる」→ 手順3つ。
   1. claude.ai の「カスタムコネクタを追加」画面を `https://claude.ai/customize/connectors?modal=add-custom-connector` で開く（画面の絵を添える）

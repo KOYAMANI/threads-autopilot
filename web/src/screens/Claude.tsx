@@ -41,6 +41,10 @@ function CanDo() {
           <span>claude.ai で「案Bを短く」のように頼むと、直した案がこの画面で差し替わります。</span>
         </li>
         <li>
+          <strong>Claude がバズ診断する</strong>
+          <span>claude.ai で「バズ診断して」と頼むと、1行目・本文・締めを100点で採点し、1行目の言い換えを3つ出します。基準はこのアプリの「バズ診断」と同じです。</span>
+        </li>
+        <li>
           <strong>AI キーが要らない</strong>
           <span>ご自身の claude.ai のプラン（Free・Pro・Max など）で動きます。</span>
         </li>

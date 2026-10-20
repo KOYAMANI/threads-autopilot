@@ -13,7 +13,7 @@ import { readOwnTree } from "../lib/reference-thread";
  */
 import { Hono } from "hono";
 import { classifyHook, ok, AI_DATA_POLICY_VERSION, hasAiDataConsent, isAllowedAiModel } from "@tap/shared";
-import type { AiCandidate, AiGenerateResponse, AiHistoryTurn, AiProvider, BuzzDiagnosisResponse } from "@tap/shared";
+import type { AiCandidate, AiGenerateResponse, AiHistoryTurn, AiPickMode, AiProvider, BuzzDiagnosisResponse } from "@tap/shared";
 import { z } from "zod";
 import { fail, type AppEnv } from "../app";
 import { loadOwnedAccount, type AccountRow } from "../lib/accounts";
@@ -109,6 +109,10 @@ const reviseSchema = z.object({
     .optional(),
   clientKey: z.never().optional(),
 });
+
+/** バズ診断の採点基準。Gemini の `/ai/buzz-diagnose` と MCP の `get_buzz_guide` で同じものを使う */
+export const BUZZ_DIAGNOSIS_SYSTEM =
+  "あなたはThreads投稿の編集者です。バズを保証せず、投稿目的に照らして1行目50点・本文35点・締め15点で診断します。priorityは得点率（score/maxScore）が最も低い項目にします。認知目的などでCTAが不要なら、CTAがないこと自体を減点しません。hookSuggestionsは1行目だけの置換候補を3つ、各80文字以内・改行なしで返し、本文や締めを含めません。画像は受け取っていないので内容を推測しません。具体的で短い日本語を使い、JSONだけを返してください。";
 
 const buzzDiagnosisInputSchema = z.object({
   accountId: z.string().min(1),
@@ -687,7 +691,7 @@ export function aiRoutes() {
       ...key,
       appOrigin: c.env.APP_ORIGIN,
       responseJsonSchema,
-      system: "あなたはThreads投稿の編集者です。バズを保証せず、投稿目的に照らして1行目50点・本文35点・締め15点で診断します。priorityは得点率（score/maxScore）が最も低い項目にします。認知目的などでCTAが不要なら、CTAがないこと自体を減点しません。hookSuggestionsは1行目だけの置換候補を3つ、各80文字以内・改行なしで返し、本文や締めを含めません。画像は受け取っていないので内容を推測しません。具体的で短い日本語を使い、JSONだけを返してください。",
+      system: BUZZ_DIAGNOSIS_SYSTEM,
       user: JSON.stringify({ task: "buzz-diagnosis", body: parsed.data.body, purpose: parsed.data.purpose, hasMedia: parsed.data.hasMedia, mediaCount: parsed.data.mediaCount }),
     }, { budget: c.get("budget"), retries: 1, signal: c.req.raw.signal });
     let json: unknown;

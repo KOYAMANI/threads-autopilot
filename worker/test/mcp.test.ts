@@ -244,7 +244,7 @@ describe("Claude 連携: OAuth", () => {
 });
 
 describe("Claude 連携: MCP ツール", () => {
-  it("initialize と tools/list が通り、3つのツールが見える", async () => {
+  it("initialize と tools/list が通り、4つのツールが見える", async () => {
     const u = await registerUser();
     const token = await connect(u.cookie);
     const init = await initialize(token);
@@ -254,6 +254,7 @@ describe("Claude 連携: MCP ツール", () => {
     const list = await rpc(token, "tools/list");
     expect(list.status).toBe(200);
     expect(list.body.result.tools.map((t: { name: string }) => t.name).sort()).toEqual([
+      "get_buzz_guide",
       "get_create_session",
       "get_writing_guide",
       "save_candidates",
@@ -302,12 +303,19 @@ describe("Claude 連携: MCP ツール", () => {
     const after = await api("GET", `/api/claude/sessions/${sessionId}`, { cookie: u.cookie });
     expect(after.body.data.candidates.map((c: { body: string }) => c.body)).toEqual([GOOD[0]!.body, "講座は悩み3つから。", GOOD[2]!.body]);
 
+    // バズ診断: アプリと同じ基準と、保存済みの案を返す（何も保存しない）
+    const buzz = await tool(token, "get_buzz_guide");
+    expect(buzz.isError).toBe(false);
+    const buzzBody = JSON.parse(buzz.text);
+    expect(buzzBody.system).toContain("1行目50点・本文35点・締め15点");
+    expect(buzzBody.candidates.map((c: { key: string }) => c.key)).toEqual(["A", "B", "C"]);
+
     const tools = await testDb().all<{ detail: string }>(
       "SELECT detail FROM audit_log WHERE user_id=? AND action='claude_mcp' ORDER BY at",
       u.userId,
     );
     expect(tools.map(r => JSON.parse(r.detail).tool ?? JSON.parse(r.detail).event)).toEqual(
-      expect.arrayContaining(["authorize", "get_create_session", "get_writing_guide", "save_candidates"]),
+      expect.arrayContaining(["authorize", "get_create_session", "get_writing_guide", "save_candidates", "get_buzz_guide"]),
     );
   });
 

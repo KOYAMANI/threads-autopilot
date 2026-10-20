@@ -4,6 +4,7 @@
  * - get_create_session … 画面で選んだ材料（参考投稿・参考情報・指示・制約）を返す
  * - get_writing_guide  … `lib/ai.ts` と同じ system プロンプトと出力形式
  * - save_candidates    … 案を書き戻す。本文検証を通らなければ理由を返して保存しない。キューには入れない
+ * - get_buzz_guide     … バズ診断の採点基準（`/ai/buzz-diagnose` と同じ）。採点は Claude が会話の中でする。何も保存しない
  *
  * 1リクエスト＝1サーバー（stateless）。`userId` は OAuth の props から来たものだけを使う。
  */
@@ -14,7 +15,7 @@ import { loadOwnedAccount } from "../lib/accounts";
 import { HOOK_TYPES, systemPrompt, type PromptConstraints } from "../lib/ai";
 import { audit } from "../lib/audit";
 import type { Db } from "../lib/db";
-import { constraintsFor } from "../routes/ai";
+import { BUZZ_DIAGNOSIS_SYSTEM, constraintsFor } from "../routes/ai";
 import {
   candidateInputSchema,
   LIMIT_NOTE,
@@ -22,6 +23,7 @@ import {
   MAX_CANDIDATES,
   N_CANDIDATES,
   saveCandidates,
+  sessionCandidates,
   sessionMaterial,
 } from "./sessions";
 
@@ -49,7 +51,7 @@ export function buildMcpServer(ctx: McpToolContext): McpServer {
     { name: "threads-autopilot", version: APP_VERSION },
     {
       instructions:
-        "Threads オートパイロットの「作る」画面と連携します。利用者が「作って」と言ったら、get_create_session で材料を読み、get_writing_guide の規則で案を書き、save_candidates で保存してください。保存した案はアプリの画面に届きます（投稿・予約はされません）。「Bを短く」のような直しは、直した案だけ key を付けて save_candidates に送ります。",
+        "Threads オートパイロットの「作る」画面と連携します。利用者が「作って」と言ったら、get_create_session で材料を読み、get_writing_guide の規則で案を書き、save_candidates で保存してください。保存した案はアプリの画面に届きます（投稿・予約はされません）。「Bを短く」のような直しは、直した案だけ key を付けて save_candidates に送ります。「バズ診断して」と言われたら get_buzz_guide の基準で採点し、会話の中で結果を返してください。",
     },
   );
 
@@ -142,6 +144,42 @@ export function buildMcpServer(ctx: McpToolContext): McpServer {
         );
       }
       return text(`案${result.updated.join("・")}を保存しました。アプリの「作る」画面に数秒で届きます。キューには入っていません。`);
+    },
+  );
+
+  server.registerTool(
+    "get_buzz_guide",
+    {
+      title: "バズ診断の基準を読む",
+      description:
+        "アプリの「バズ診断」と同じ採点基準（1行目50点・本文35点・締め15点）と結果の形を返します。採点はあなたが会話の中で行い、結果は利用者に直接伝えてください（アプリには保存されません）。sessionId を渡すか省くと、最新の作成セッションに保存済みの案も返すので、本文を貼ってもらわなくても診断できます。",
+      inputSchema: z.object({ sessionId: sessionIdSchema.optional().describe("省略時は最新のセッション") }),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ sessionId }) => {
+      const row = await loadCreateSession(db, userId, sessionId);
+      await audit(db, userId, "claude_mcp", { tool: "get_buzz_guide", sessionId: row?.id ?? null });
+      const candidates = row ? sessionCandidates(row) : [];
+      return text({
+        system: BUZZ_DIAGNOSIS_SYSTEM,
+        purposes: {
+          awareness: "知ってもらう: 初見でも伝わる1行目と、覚えてほしい要点",
+          trust: "信頼を育てる: 経験・理由・具体例で納得できる本文",
+          action: "行動につなぐ: 読んだあとにしてほしいことが1つに絞れているか",
+        },
+        rules: [
+          "目的が分からなければ、先に利用者に1つ選んでもらう（awareness / trust / action）",
+          "結果は score（0〜100）、sections（hook 50・body 35・cta 15 の点数とひとこと）、priority（得点率が最も低い項目）、hookSuggestions（1行目の置き換え候補3つ）の順に、短い日本語で伝える",
+          "1行目の候補を採用したいと言われたら、その案を直して save_candidates で送ると作る画面に届く",
+        ],
+        outputFormat: {
+          score: 72,
+          priority: "hook",
+          sections: [{ key: "hook", label: "1行目", score: 30, maxScore: 50, feedback: "ひとこと" }],
+          hookSuggestions: ["1行目の候補"],
+        },
+        candidates: candidates.map((c) => ({ key: c.key, body: c.body, comments: c.comments })),
+      });
     },
   );
 
