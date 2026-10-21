@@ -693,6 +693,15 @@ export async function publishJob(ctx: JobContext, job: RunningJob): Promise<void
   // Follow elapsed API/I/O time while preserving the injected logical clock in tests.
   const clock = () => new Date(ctx.now.getTime() + Math.max(0, Date.now() - startedAt));
   if (!job.accountId) return;
+  // 同じアカウントの publish は常に1本だけ走らせる（2本が並走すると `publishing` の行を両方が拾って
+  // コメントを二重投稿しうる）。続きの予約（`scheduleContinuation`）が前の実行と重なったら、
+  // こちらは何もしない。続きは `next_step_at` を過ぎた時点で毎分の cron が積み直す
+  const running = await ctx.sys.first<{ n: number }>(
+    "SELECT COUNT(*) AS n FROM jobs WHERE type='publish' AND account_id=? AND status='running' AND id<>?",
+    job.accountId,
+    job.id,
+  );
+  if ((running?.n ?? 0) > 0) return;
   const account = await loadAccount(ctx.db, job.accountId);
   if (!account) return;
 
@@ -769,7 +778,57 @@ export async function publishJob(ctx: JobContext, job: RunningJob): Promise<void
     if (outcome === "stop") break;
   }
 
-  // 続きは次の5分の cron が拾う（`enqueueForCron` が publish を積み直す）。
-  // ここで積み直さないのは、同じアカウントの publish を常に1本に保つため
-  // （2本が並走すると、`publishing` の行を両方が拾ってコメントを二重投稿しうる）。
+  // 途中で止めた行（次のコメント待ち・コンテナ待ち・レート制限の後ろ倒し）があれば、
+  // その時刻に続きを出すジョブをいま予約する（DECISIONS 2026-10-21）。
+  // 毎分の cron の拾い直しだけに頼ると 0〜60 秒のぶれが乗り、30 秒の間隔が 30〜90 秒になる。
+  const next = await ctx.db.first<{ at: string | null }>(
+    "SELECT MIN(next_step_at) AS at FROM queue WHERE account_id=? AND status='publishing' AND next_step_at>?",
+    account.id,
+    nowIso,
+  );
+  if (next?.at) await scheduleContinuation(ctx, account.id, new Date(next.at), job.id);
+}
+
+/** 続きの publish ジョブの配送 lease。届かなかったときは、この時間のあとに毎分の cron が送り直す。 */
+export const CONTINUATION_LEASE_SEC = 90;
+
+/**
+ * `at` に続きを出す publish ジョブを予約する。
+ * - pending があればその時刻を `at` へ（早いほうに）寄せる。無ければ新しく積む。いま走っている
+ *   自分（`running`）が `enqueueJob` の重複判定に引っかかるので `force` で入れる
+ * - Queue があれば `delaySeconds` で時刻どおりに起こす。毎分の `dispatchJobs` が同じジョブを
+ *   送らないよう lease を置き、送信に失敗したら lease を外して毎分の cron に任せる
+ * - 並走の防止は `publishJob` 冒頭の「同じアカウントの publish が走っていたら何もしない」で行う
+ */
+async function scheduleContinuation(ctx: JobContext, accountId: string, at: Date, currentJobId: string): Promise<void> {
+  const atIso = at.toISOString();
+  const nowIso = ctx.now.toISOString();
+  const pending = await ctx.sys.first<{ id: string }>(
+    "SELECT id FROM jobs WHERE type='publish' AND account_id=? AND status='pending' ORDER BY next_run_at LIMIT 1",
+    accountId,
+  );
+  let jobId = pending?.id ?? null;
+  if (jobId) {
+    await ctx.sys.run(
+      "UPDATE jobs SET next_run_at=?, updated_at=? WHERE id=? AND status='pending' AND next_run_at>?",
+      atIso, nowIso, jobId, atIso,
+    );
+  } else {
+    jobId = await enqueueJob(ctx, "publish", { accountId, nextRunAt: at, force: true });
+  }
+  if (!jobId || !ctx.env.JOB_QUEUE || jobId === currentJobId) return;
+
+  const lease = new Date(at.getTime() + CONTINUATION_LEASE_SEC * 1000).toISOString();
+  const leased = await ctx.sys.run(
+    "UPDATE jobs SET dispatched_until=? WHERE id=? AND status='pending' AND (dispatched_until IS NULL OR dispatched_until<=?)",
+    lease, jobId, nowIso,
+  );
+  if (!leased.changes) return;
+  // +1 秒は早着よけ。早く届くと `runJobs` が `next_run_at<=now` で空振りし、lease 切れまで待つことになる
+  const delaySeconds = Math.max(1, Math.ceil((at.getTime() - ctx.now.getTime()) / 1000) + 1);
+  try {
+    await ctx.env.JOB_QUEUE.send({ jobId }, { delaySeconds });
+  } catch {
+    await ctx.sys.run("UPDATE jobs SET dispatched_until=NULL WHERE id=? AND dispatched_until=?", jobId, lease);
+  }
 }

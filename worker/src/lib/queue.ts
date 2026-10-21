@@ -147,7 +147,7 @@ export async function attachMetrics(
 /** SPEC §8.3 の既定値。`accounts.settings_json` で上書きできる。 */
 export const DEFAULT_DAILY_POST_LIMIT = 20;
 export const DEFAULT_MIN_GAP_MIN = 30;
-export const DEFAULT_COMMENT_DELAY_SEC = 120;
+export const DEFAULT_COMMENT_DELAY_SEC = 30;
 /** 重複と見なす 3-gram Jaccard のしきい値（SPEC §8.3）。 */
 export const DUPLICATE_THRESHOLD = 0.8;
 /** 重複を見に行く期間（SPEC §8.3「直近30日」）。 */

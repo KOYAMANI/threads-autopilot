@@ -626,7 +626,7 @@ step 2..: コメントを reply_to_id=result_ids[last] で投稿する（下の2
 - 切替の判断: `scripts/smoke.ts`（§14）で実トークンを使い、1ステップ方式でツリー2投稿目が作れるかを確認する。作れなければ `REPLY_TWO_STEP=1` にする。両方式のステップマシンをM4で実装し、テストも両方に対して書く
 - ジョブ実行中に方式が変わっても壊れないよう、`step` の意味は「そのジョブ開始時の方式」で解釈せず、毎回 env を読んで解釈する。方式を切り替えるときは `publishing` のキューが無いことを確認してからにする
 
-- `delay` はアカウント設定 `commentDelaySec`（既定 120。cronが5分刻みなので実際は次の実行時）
+- `delay` はアカウント設定 `commentDelaySec`（既定 30。続きは publish ジョブが自分で予約し、Queue があれば `delaySeconds` で時刻どおりに、無ければ毎分の cron が拾う（最大 +1 分）。2026-10-21 に 120 → 30）
 - `done` 時: `posts` に root と comments を `source=manual|autopilot` で挿入（数字は次の `insights_recent` で入る）、`queue.tags_json` を root の `tags_json` にコピー
 - 失敗: `error`（日本語）と `error_raw` を保存。レート制限は `next_step_at` を後ろにずらして再試行。二重投稿防止のため、成功した `result_ids` は必ず保存してから次へ進む
 - 直前チェック: 1日の投稿上限（アカウント設定 `dailyPostLimit` 既定20）、投稿間隔（`minGapMin` 既定30）、重複チェック（下）

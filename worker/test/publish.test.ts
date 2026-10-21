@@ -499,3 +499,68 @@ describe("commentStep（SPEC §8.3 のステップ解釈）", () => {
     expect(commentStep(7, true)).toEqual({ index: 1, phase: 2 });
   });
 });
+
+describe("続きの予約（DECISIONS 2026-10-21: コメント間隔 30 秒を時刻どおりに）", () => {
+  it("本文を出したら next_step_at は +30 秒。続きの publish ジョブをその時刻に積み、Queue に delaySeconds で送る", async () => {
+    const { vi } = await import("vitest");
+    const { accountId, e: base } = await setup("cont1");
+    const send = vi.fn().mockResolvedValue(undefined);
+    const e = { ...base, JOB_QUEUE: { send } } as unknown as typeof env;
+    const qid = await insertQueue(accountId, "本文です。ここから始めます。", { comments: ["続き1", "続き2"] });
+
+    const ctx = makeJobContext(e, { now: NOW });
+    await publishJob(ctx, { id: "job-a", type: "publish", accountId, attempts: 0, state: {} });
+
+    const row = (await readQueue(qid))!;
+    expect(row.status).toBe("publishing");
+    expect(Date.parse(row.next_step_at!)).toBe(NOW.getTime() + 30_000);
+
+    const jobs = await testDb().all<{ id: string; status: string; next_run_at: string; dispatched_until: string | null }>(
+      "SELECT id, status, next_run_at, dispatched_until FROM jobs WHERE type='publish' AND account_id=?",
+      accountId,
+    );
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]!.status).toBe("pending");
+    expect(jobs[0]!.next_run_at).toBe(row.next_step_at);
+    expect(jobs[0]!.dispatched_until).toBe(new Date(NOW.getTime() + 30_000 + 90_000).toISOString());
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0]![0]).toEqual({ jobId: jobs[0]!.id });
+    expect(send.mock.calls[0]![1]).toEqual({ delaySeconds: 31 });
+
+    // 毎分の cron が同じ行を見ても、publish ジョブは増えない
+    const { enqueuePendingPublishes } = await import("../src/lib/jobs");
+    await enqueuePendingPublishes(makeJobContext(e, { now: new Date(NOW.getTime() + 30_000) }));
+    expect(await testDb().first("SELECT COUNT(*) n FROM jobs WHERE type='publish' AND account_id=?", accountId)).toEqual({ n: 1 });
+
+    // 時刻が来たら続きが出て、2本目の続きも同じく予約される
+    await runJobs(makeJobContext(e, { now: new Date(NOW.getTime() + 31_000) }), undefined, jobs[0]!.id);
+    const after = (await readQueue(qid))!;
+    expect(JSON.parse(after.result_ids_json)).toHaveLength(2);
+    expect(Date.parse(after.next_step_at!)).toBe(NOW.getTime() + 61_000);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("Queue への送信に失敗したら lease を外し、毎分の cron に任せる", async () => {
+    const { vi } = await import("vitest");
+    const { accountId, e: base } = await setup("cont2");
+    const send = vi.fn().mockRejectedValue(new Error("queue down"));
+    const e = { ...base, JOB_QUEUE: { send } } as unknown as typeof env;
+    const qid = await insertQueue(accountId, "本文です。", { comments: ["続き"] });
+    await publishJob(makeJobContext(e, { now: NOW }), { id: "job-b", type: "publish", accountId, attempts: 0, state: {} });
+    expect((await readQueue(qid))!.status).toBe("publishing");
+    const job = await testDb().first<{ dispatched_until: string | null; next_run_at: string }>(
+      "SELECT dispatched_until, next_run_at FROM jobs WHERE type='publish' AND account_id=? AND status='pending'", accountId);
+    expect(job?.dispatched_until).toBeNull();
+    expect(Date.parse(job!.next_run_at)).toBe(NOW.getTime() + 30_000);
+  });
+
+  it("同じアカウントの publish が走っていたら、続きのジョブは何もしない", async () => {
+    const { accountId, e } = await setup("cont3");
+    const qid = await insertQueue(accountId, "本文です。");
+    await testDb().run(
+      "INSERT INTO jobs (id,type,account_id,state_json,status,priority,next_run_at,attempts,last_error,created_at,updated_at) VALUES ('other','publish',?,'{}','running',1,?,0,NULL,?,?)",
+      accountId, NOW.toISOString(), NOW.toISOString(), NOW.toISOString());
+    await publishJob(makeJobContext(e, { now: NOW }), { id: "job-c", type: "publish", accountId, attempts: 0, state: {} });
+    expect((await readQueue(qid))!.status).toBe("scheduled");
+  });
+});
