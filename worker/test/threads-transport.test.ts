@@ -33,3 +33,30 @@ describe("Threads credential transport", () => {
     expect(new Headers(options?.headers).has("Authorization")).toBe(false);
   });
 });
+
+describe("時間予算と timeout（2026-10-21）", () => {
+  it("予算の残りが 3 秒未満なら呼ばずに BudgetExceeded（失敗回数を増やさない）", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response('{"id":"test"}'));
+    let t = 0;
+    const budget = createBudget({ timeMs: 20000, now: () => t });
+    t = 18000; // 残り 2 秒
+    await expect(
+      call("test-private-token", "GET", "/me", { fields: "id" }, { env, budget }),
+    ).rejects.toMatchObject({ name: "BudgetExceeded", kind: "timeMs" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("予算の残りで短く切った timeout は BudgetExceeded、API 側の 15 秒 timeout はそのまま投げる", async () => {
+    const timeout = Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(timeout);
+    let t = 0;
+    const short = createBudget({ timeMs: 20000, now: () => t });
+    t = 12000; // 残り 8 秒 → 8 秒で切った timeout
+    await expect(
+      call("test-private-token", "GET", "/me", { fields: "id" }, { env, budget: short }),
+    ).rejects.toMatchObject({ name: "BudgetExceeded" });
+    const full = createBudget({ timeMs: 60000, now: () => 0 });
+    await expect(
+      call("test-private-token", "GET", "/me", { fields: "id" }, { env, budget: full }),
+    ).rejects.toMatchObject({ name: "TimeoutError" });
+  });
+});

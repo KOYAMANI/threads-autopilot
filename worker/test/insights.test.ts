@@ -165,3 +165,37 @@ describe("insights ジョブ（SPEC §8.4）", () => {
     ).toBe("done");
   });
 });
+
+describe("Threads 側で消えた投稿（2026-10-21）", () => {
+  it("#100 Object does not exist の投稿は deleted=1 にして飛ばし、ジョブは done になる", async () => {
+    const u = await registerUser();
+    const accountId = await insertAccount({ userId: u.userId, token: mockToken("gone1") });
+    const ctx0 = makeJobContext(env, { now: NOW });
+    await enqueueJob(ctx0, "full_sync", { accountId });
+    await runJobs(ctx0);
+    const db = testDb();
+    const postedAt = new Date(NOW.getTime() - 10 * DAY).toISOString();
+    await db.run("UPDATE posts SET posted_at=?, metrics_fetched_at=NULL WHERE account_id=?", postedAt, accountId);
+    // モックに存在しない ID を1本混ぜる（Threads 側で削除された投稿のつもり）
+    await db.run(
+      `INSERT INTO posts (account_id, id, root_id, is_reply, text, permalink, media_type, media_url,
+          link_attachment_url, posted_at, views, likes, replies, reposts, quotes, shares, clicks,
+          metrics_fetched_at, tags_json, source, queue_id, deleted)
+        VALUES (?,?,?,0,?,NULL,'TEXT_POST',NULL,NULL,?,0,0,0,0,0,0,0,NULL,'{}','external',NULL,0)`,
+      accountId, "gone-000", "gone-000", "消えた投稿", postedAt,
+    );
+    const before = await db.first<{ n: number }>("SELECT COUNT(*) n FROM posts WHERE account_id=? AND deleted=0", accountId);
+
+    const ctx = makeJobContext(env, { now: NOW });
+    const jobId = await enqueueJob(ctx, "insights_daily", { accountId, force: true });
+    await runJobs(ctx);
+
+    const job = await db.first<{ status: string; last_error: string | null }>("SELECT status, last_error FROM jobs WHERE id=?", jobId!);
+    expect(job?.status).toBe("done");
+    const gone = await db.first<{ deleted: number }>("SELECT deleted FROM posts WHERE account_id=? AND id='gone-000'", accountId);
+    expect(gone?.deleted).toBe(1);
+    const stillFetched = await db.first<{ n: number }>(
+      "SELECT COUNT(*) n FROM posts WHERE account_id=? AND deleted=0 AND metrics_fetched_at IS NOT NULL", accountId);
+    expect(stillFetched?.n).toBe((before?.n ?? 0) - 1);
+  });
+});

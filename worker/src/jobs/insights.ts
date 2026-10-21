@@ -14,7 +14,7 @@ import { accountToken, type AccountRow } from "../lib/accounts";
 import { ACCOUNT_COLUMNS } from "../lib/accounts";
 import { BudgetExceeded } from "../lib/budget";
 import type { JobContext, RunningJob } from "../lib/jobs";
-import { getPostInsights, type CallOptions } from "../lib/threads";
+import { getPostInsights, ThreadsApiError, type CallOptions, type PostMetrics } from "../lib/threads";
 import { DAY_MS } from "../lib/time";
 
 export type InsightsWindow = "recent" | "daily" | "old";
@@ -113,7 +113,24 @@ export function insightsJob(window: InsightsWindow) {
       const entry = state.pending[0]!;
       const [postId, postedAt, prevFetched] = entry;
 
-      const m = await getPostInsights(token, postId, options);
+      let m: Partial<PostMetrics>;
+      try {
+        m = await getPostInsights(token, postId, options);
+      } catch (e) {
+        // Threads 側で消えた投稿（#100 Object does not exist）は、このジョブ全体を失敗にせず
+        // `deleted=1` にして飛ばす（2026-10-21。1本のためにアカウントの数字取りが止まっていた）
+        if (e instanceof ThreadsApiError && e.code === 100) {
+          await ctx.db.run(
+            "UPDATE posts SET deleted=1, metrics_fetched_at=? WHERE account_id=? AND id=?",
+            nowIso,
+            job.accountId,
+            postId,
+          );
+          state.pending.shift();
+          continue;
+        }
+        throw e;
+      }
 
       // 取れなかったメトリクスは前回値を残す（COALESCE で 0 上書きを防ぐ）
       await ctx.db.run(

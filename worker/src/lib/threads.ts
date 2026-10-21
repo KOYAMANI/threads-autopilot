@@ -5,7 +5,7 @@
  * ステップの組み立ては `jobs/publish.ts`（SPEC §8.3）。
  */
 import { DEV, type Env } from "../env";
-import type { Budget } from "./budget";
+import { BudgetExceeded, type Budget } from "./budget";
 import { redact } from "./redact";
 import {
   isRateLimit,
@@ -29,6 +29,10 @@ export {
 } from "./threads-error";
 
 const RETRY_DELAYS_MS = [1500, 3000, 6000];
+/** 1回の API 呼び出しに許す最長時間。 */
+export const REQUEST_TIMEOUT_MS = 15000;
+/** 時間予算の残りがこれより短ければ、呼ばずに予算切れにする（次回に持ち越す）。 */
+export const MIN_REQUEST_MS = 3000;
 
 export type ThreadsParams = Record<string, string | number | boolean | undefined | null>;
 
@@ -111,12 +115,25 @@ export async function call(
     const query = toQuery(tokenEndpoint ? { ...cleanParams, access_token: token } : cleanParams);
     const url = `${BASE}${p}?${query.toString()}`;
     const headers: HeadersInit = tokenEndpoint ? {} : { Authorization: `Bearer ${token}` };
-    const remainingMs = Math.max(1, Math.min(15000, budget.timeMs.limit - budget.timeMs.elapsed));
     budget.timeMs.check();
+    // 時間予算の残りが短いときは呼ばずに予算切れにする（続きは次回）。残り 1〜2 秒で呼ぶと
+    // 必ず timeout で落ち、ジョブの失敗回数だけが増えていた（2026-10-21）
+    const remainingBudgetMs = budget.timeMs.limit - budget.timeMs.elapsed;
+    if (remainingBudgetMs < MIN_REQUEST_MS) throw new BudgetExceeded("timeMs", budget.timeMs.elapsed, budget.timeMs.limit);
+    const remainingMs = Math.min(REQUEST_TIMEOUT_MS, remainingBudgetMs);
     // Never follow a redirect: it would carry the bearer token to another host.
     // Workers rejects redirect:"error" ("follow" | "manual" only), so take the
     // 3xx back with "manual" and fail it here instead.
-    const res = await fetch(url, { method, headers, redirect: "manual", signal: AbortSignal.timeout(remainingMs) });
+    let res: Response;
+    try {
+      res = await fetch(url, { method, headers, redirect: "manual", signal: AbortSignal.timeout(remainingMs) });
+    } catch (e) {
+      // 予算のほうが先に尽きた timeout は失敗ではなく予算切れ。API 側の遅さ（15 秒）はそのまま投げて再試行に回す
+      if (remainingMs < REQUEST_TIMEOUT_MS && e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")) {
+        throw new BudgetExceeded("timeMs", budget.timeMs.elapsed, budget.timeMs.limit);
+      }
+      throw e;
+    }
     if (res.status >= 300 && res.status < 400) {
       throw new ThreadsApiError({ code: res.status, message: "Threads API がリダイレクトを返しました", raw: "" });
     }
