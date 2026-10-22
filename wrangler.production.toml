@@ -22,10 +22,11 @@ run_worker_first = ["/api/*", "/a/*", "/__scheduled"]
 
 [[d1_databases]]
 binding = "DB"
-database_name = "threads-autopilot"
-# `wrangler d1 create threads-autopilot` で取得した ID に差し替える。
-# ローカル（--local / wrangler dev）は Miniflare のファイルを使うので、この値は参照されない。
-database_id = "89935cef-db44-49c9-b0aa-50cc8105a786"
+# 2026-10-22 にステージングを本番に昇格した（DECISIONS）。利用者のデータはステージングの D1 に
+# 入っていたので、本番はその D1 をそのまま使う。名前に staging が残るのはそのため。
+# 旧本番の D1 `threads-autopilot`（89935cef-…）は使っていない（バックアップを残して保管）。
+database_name = "threads-autopilot-staging"
+database_id = "dcce5294-b2de-4c72-9a81-5dc6f6d2e00a"
 migrations_dir = "worker/migrations"
 
 [triggers]
@@ -36,9 +37,10 @@ APP_ENV = "production"
 MAINTENANCE_MODE = "0" # set to 1 and deploy before database recovery
 APP_ORIGIN = "https://threads-autopilot.yama-threads-apps.workers.dev"
 DEFAULT_TZ = "Asia/Tokyo"
-WORKERS_PLAN = "free"
-MAX_SUBREQUESTS = "20"
-MAX_DB_QUERIES = "32"
+# Workers Paid（2026-10-21〜）。
+WORKERS_PLAN = "paid"
+MAX_SUBREQUESTS = "300"
+MAX_DB_QUERIES = "800"
 JOB_TIME_BUDGET_MS = "20000"
 THREADS_MOCK = "0"
 AI_MOCK = "0"

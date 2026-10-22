@@ -135,8 +135,8 @@ Free プランは直近 **7日**、Paid プランは直近 **30日** の時点�
 壊したときの手順を先に用意しておく。
 
 ```bash
-npx wrangler d1 time-travel info threads-autopilot                      # 戻せる範囲を見る
-npx wrangler d1 time-travel restore threads-autopilot --timestamp <ISO>  # その時点へ戻す
+npx wrangler d1 time-travel info threads-autopilot-staging              # 戻せる範囲を見る（本番の D1。名前は昇格前のまま）
+npx wrangler d1 time-travel restore threads-autopilot-staging --timestamp <ISO>  # その時点へ戻す
 ```
 
 戻すと**その時点以降の全買い手の変更が消える**。特定の1人だけを戻すことはできないので、

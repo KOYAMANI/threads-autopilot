@@ -15,7 +15,10 @@ backup_dir="$(mktemp -d "$backup_root/d1-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")"
 cd "$project_dir"
 config="wrangler.toml"
 if [ "$1" = "--remote" ]; then config="wrangler.production.toml"; fi
-npx --no-install wrangler d1 export threads-autopilot "$1" --config "$config" --output "$backup_dir/database.sql"
+db="threads-autopilot"
+# Production uses the promoted staging D1 since 2026-10-22 (DECISIONS).
+if [ "$1" = "--remote" ]; then db="threads-autopilot-staging"; fi
+npx --no-install wrangler d1 export "$db" "$1" --config "$config" --output "$backup_dir/database.sql"
 test -s "$backup_dir/database.sql"
 chmod 600 "$backup_dir/database.sql"
 shasum -a 256 "$backup_dir/database.sql" > "$backup_dir/SHA256SUMS"

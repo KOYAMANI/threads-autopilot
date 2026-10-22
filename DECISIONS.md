@@ -570,3 +570,10 @@ SPEC §5.4・§7.1・§7.8・§8.7・§12.3 Settings・§13 M7・§15 に対し�
 - 以前の統合ブランチ（取り下げたもの）でも同じ方針で入れていたが、ステージングに出ている `main` には入っていなかった
 - AI は **Gemini だけ**にし、OpenRouter を廃止（ユーザー決定）。設定画面のプロバイダ選択を外して「Gemini APIキー」にし、サーバーは `provider` が `gemini` 以外の保存を `BAD_REQUEST`。staging に OpenRouter の行は無かった
 - Gemini のモデルは**ドロップダウンの2択**に戻す（`AI_MODELS`: `gemini-3.5-flash-lite` = 既定 / `gemini-3.8-flash`）。きっかけ: 統合ブランチのロールバックでモデル欄が自由入力・既定 `gemini-2.5-flash` に戻り、そのまま保存した人が Google 側に無いモデル名で 404（「AIの呼び出しに失敗しました（404）」）になっていた。一覧外のモデル名は保存時・読み出し時・呼び出し時に既定へ読み替え（`normalizeAiModel`）、DB の `gemini-2.5-flash` の行も既定に更新
+
+## 2026-10-22 ステージングを本番に昇格して公開
+
+- ステージングを使っている人のデータ（15 ユーザー・17 アカウント）をそのまま本番に引き継ぐ（ユーザー決定）。DB はコピーせず、本番 Worker `threads-autopilot` の D1 をステージングの D1 に付け替えた。暗号化キーとペッパーはステージングの値（手元の控えで復号・照合して一致を確認）を本番 Worker に入れた。これで Threads 連携・AI キー・パスワード・ログイン中のセッションがそのまま使える
+- 本番 URL は `https://threads-autopilot.yama-threads-apps.workers.dev`。旧ステージング URL は 301 で本番へ転送する Worker に置き換え、ステージングの cron・Queue consumer は止めた。ステージングの予約済み投稿は時刻どおり実投稿する（ユーザー決定）
+- `wrangler.staging.toml` は転送用 Worker の設定に変えた。アプリ本体のステージングは当面持たない（`deploy:staging` / `db:migrate:staging` / `check-staging.py` / staging の CI を削除）。次に検証環境が要るときは、別の D1 で作り直す
+- 旧本番の D1 `threads-autopilot`（本人 1 ユーザー）は使わない。バックアップを残して保管

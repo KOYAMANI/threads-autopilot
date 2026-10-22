@@ -124,3 +124,10 @@ D1を正本として先に公開する方針。Sheetsは任意の一方向同期
 - 未確認: 実メール配送、実APIキーの本番連携、実投稿・実ジョブ、複数人同時利用のCPU/無料枠使用量。今回の登録・ログイン成功だけで10人運用の性能を保証しない。
 - 初回Secret照会が一時失敗したが、個別照会成功後の事前チェック付き再実行でデプロイ成功。
 - Python標準HTTPクライアントの照会はCloudflareエラー1010。ブラウザ、curl、Node fetchでは正常応答を確認。
+
+## 2026-10-22 ステージングを本番に昇格
+
+- 本番 Worker `threads-autopilot` は、ステージングの D1 `threads-autopilot-staging`（`dcce5294-…`）を使う。利用者のデータがそこにあったため
+- 本番 Worker の `ENC_KEY` / `SESSION_SECRET` / `ADMIN_SECRET` / `PASSWORD_PEPPER` はステージングの値に入れ替えた（控えは `/Users/yutaro/.config/threads-autopilot/staging-*.json`）。`RESEND_API_KEY` と `THREADS_APP_*` は本番のまま
+- 旧本番の D1 `threads-autopilot`（`89935cef-…`）は使っていない。昇格前のバックアップは `~/threads-autopilot-backups/2026-10-22/`
+- 旧ステージング URL は `redirect/staging-redirect.ts` が本番 URL へ 301 で転送する（`npm run deploy:staging-redirect`）
