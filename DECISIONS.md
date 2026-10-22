@@ -562,3 +562,9 @@ SPEC §5.4・§7.1・§7.8・§8.7・§12.3 Settings・§13 M7・§15 に対し�
 - 画面の文言は、利用者が一覧（画面の文言一覧）で直した案をそのまま反映する。短く、機能の説明は1文で。例: 本文の placeholder は「ここに本文を書く」「ここにコメントを書く」、退会は「このアプリ内の情報を全て削除します。この操作は取り消せません。」
 - ツリーのコメント間隔の既定を **120 秒 → 30 秒**（ユーザー決定。`DEFAULT_COMMENT_DELAY_SEC`）。合わせて、続きは publish ジョブが自分で予約する（`scheduleContinuation`: pending の publish を `next_step_at` へ寄せる、無ければ `force` で積む。Queue があれば `delaySeconds` で時刻どおりに起こし、lease 90 秒で毎分の `dispatchJobs` との二重送信を防ぐ）。毎分の拾い直しだけだと +0〜60 秒のぶれが乗るため。並走の防止は `publishJob` 冒頭の「同じアカウントの publish が走っていたら何もしない」。Queue の無い環境は毎分の cron が拾う（最大 +1 分）
 - 同期の失敗2件を直す。(1) Threads 側で消えた投稿の数字取り（`#100 Object does not exist`）で `insights_*` ジョブ全体が失敗していた → その投稿を `deleted=1` にして飛ばし、ジョブは続ける。(2) 時間予算の残りが 1〜2 秒の状態で API を呼ぶと必ず timeout になり、失敗回数だけ増えて `failed` になっていた → 残り 3 秒未満なら呼ばずに `BudgetExceeded`（次回に持ち越し、失敗に数えない）。予算のほうが先に尽きた timeout も同じ扱い。API 側の 15 秒 timeout は従来どおり失敗として再試行
+
+## 2026-10-22 登録のライセンスキーをやめる
+
+- 登録画面からライセンスキーの入力欄と説明（3ステップの案内）を消し、`POST /api/auth/register` の `license_key` を任意にする。無ければサーバーが `licenses` に1本発行（`generateLicenseKey()`、`note='self-register'`）して `active` にし、そのユーザーに結びつける。キーは応答にも設定画面にも出さない（設定 > セキュリティの「ライセンス」カードを削除。`GET /users/me/license` は残す）
+- `licenses` の行と `users.license_id` はそのまま使う。退会時の `revoked` と管理者の `POST /admin/licenses/:id/revoke`、ログイン時の `LICENSE_REVOKED` 判定は今までどおり効く。管理者が発行したキーを `license_key` で渡す経路も API としては残す（画面からは送らない）
+- 以前の統合ブランチ（取り下げたもの）でも同じ方針で入れていたが、ステージングに出ている `main` には入っていなかった

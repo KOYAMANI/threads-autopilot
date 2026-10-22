@@ -10,14 +10,14 @@ import { useForgot, useLogin, useRegister, useReset } from "../api/auth";
 
 type Mode = "login" | "register" | "forgot";
 
-type Field = "email" | "password" | "license";
+type Field = "email" | "password";
 
 /** API のエラーを、直すべき欄に結びつける。どの欄でもないものは null（フォームの下に出す）。 */
-function errorField(e: unknown, mode: Mode): Field | null {
+function errorField(e: unknown): Field | null {
   if (!(e instanceof ApiError)) return null;
   if (e.code === "EMAIL_TAKEN") return "email";
   if (e.code === "WEAK_PASSWORD") return "password";
-  if (e.code === "LICENSE_INVALID" || e.code === "LICENSE_REVOKED") return mode === "register" ? "license" : null;
+  // LICENSE_REVOKED など欄に結びつかないものはフォームの下に出す
   return null;
 }
 
@@ -62,7 +62,6 @@ function AuthForm() {
   const [mode, setMode] = useState<Mode>(params.get("mode") === "register" ? "register" : "login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [licenseKey, setLicenseKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [field, setField] = useState<Field | null>(null);
   // ログインの失敗はメールとパスワードのどちらが違うか言えない（言わない）ので、両方に印をつける
@@ -97,33 +96,32 @@ function AuthForm() {
         return;
       }
       if (mode === "register") {
-        await register.mutateAsync({ email, password, license_key: licenseKey });
+        await register.mutateAsync({ email, password });
       } else {
         await login.mutateAsync({ email, password });
       }
       // The auth hook replaces the document after clearing the previous user state.
     } catch (err) {
       setError(errorMessage(err));
-      setField(errorField(err, mode));
+      setField(errorField(err));
       setLoginFailed(err instanceof ApiError && err.code === "LOGIN_FAILED");
     }
   }
 
-  const invalid = (f: Field) => field === f || (loginFailed && f !== "license");
+  const invalid = (f: Field) => field === f || loginFailed;
   const fieldError = (f: Field) =>
     field === f && error ? <span className="field-error" role="alert">{error}</span> : null;
 
   const title = mode === "register" ? "はじめる" : mode === "forgot" ? "パスワードの再設定" : "ログイン";
   const lead =
     mode === "register"
-      ? "管理者から届いたライセンスキーで登録します"
+      ? "メールアドレスとパスワードで登録します"
       : mode === "forgot"
         ? "登録したメールアドレスに再設定リンクを送ります"
         : "Threads オートパイロット";
 
   return (
     <Shell title={title} lead={lead}>
-      {mode === "register" && <div className="registration-guide"><strong>初回登録は、この3ステップ</strong><ol><li>管理者からライセンスキーを受け取る</li><li>メールアドレスとパスワードを登録する</li><li>自分のThreadsとAIを連携する</li></ol><p>キーは1人につき1つ。お持ちでない場合は管理者にお問い合わせください。</p></div>}
       <form onSubmit={onSubmit}>
         <label className="field">
           <span>メールアドレス</span>
@@ -155,25 +153,6 @@ function AuthForm() {
               onChange={(e) => setPassword(e.target.value)}
             />
             {fieldError("password")}
-          </label>
-        )}
-
-        {mode === "register" && (
-          <label className="field">
-            <span>ライセンスキー</span>
-            <input
-              className="input"
-              type="text"
-              name="license_key"
-              placeholder="TAP-XXXX-XXXX-XXXX"
-              autoComplete="off"
-              spellCheck={false}
-              required
-              aria-invalid={invalid("license")}
-              value={licenseKey}
-              onChange={(e) => setLicenseKey(e.target.value.toUpperCase())}
-            />
-            {fieldError("license")}
           </label>
         )}
 

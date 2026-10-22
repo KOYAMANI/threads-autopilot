@@ -31,6 +31,34 @@ describe("register → login → me（SPEC §13 M1 完了条件1）", () => {
     expect(me2.body.data.user.id).toBe(reg.body.data.user.id);
   });
 
+  it("ライセンスキー無しで登録でき、サーバーが1本発行して結びつける（DECISIONS 2026-10-22）", async () => {
+    const email = uniqueEmail();
+    const reg = await api("POST", "/api/auth/register", { body: { email, password: "password1234" } });
+    expect(reg.status).toBe(201);
+    expect(reg.cookie).toMatch(/^sid=/);
+    const db = testDb();
+    const user = await db.first<{ license_id: string }>("SELECT license_id FROM users WHERE id=?", reg.body.data.user.id);
+    const license = await db.first<{ key: string; status: string; note: string | null; user_id: string | null }>(
+      "SELECT key, status, note, user_id FROM licenses WHERE id=?",
+      user!.license_id,
+    );
+    expect(license).toMatchObject({ status: "active", note: "self-register", user_id: reg.body.data.user.id });
+    expect(license!.key).toMatch(/^TAP-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+    // 発行したキーは応答に出さない（設定画面にも出さない）
+    expect(JSON.stringify(reg.body)).not.toContain(license!.key);
+    const login = await api("POST", "/api/auth/login", { body: { email, password: "password1234" } });
+    expect(login.status).toBe(200);
+  });
+
+  it("キー無し登録でメールが重複したら、発行しかけたライセンスを残さない", async () => {
+    const u = await registerUser();
+    const before = await testDb().first<{ n: number }>("SELECT COUNT(*) n FROM licenses");
+    const res = await api("POST", "/api/auth/register", { body: { email: u.email, password: "password1234" } });
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe("EMAIL_TAKEN");
+    expect(await testDb().first("SELECT COUNT(*) n FROM licenses")).toEqual(before);
+  });
+
   it("Cookie 無しの me は 401", async () => {
     const res = await api("GET", "/api/auth/me");
     expect(res.status).toBe(401);

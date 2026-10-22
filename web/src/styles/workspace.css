@@ -99,10 +99,6 @@ button,input,select,textarea { font-family:inherit; }
 .auth-form .field { margin-top:1.3rem; }
 .auth-form .input { min-height:48px; }
 .auth-form .btn-quiet { width:auto; padding:.5rem 0; font-size:.75rem; }
-.registration-guide { background:#f6f6f8; padding:1rem; border:1px solid var(--line); border-radius:8px; font-size:.75rem; color:var(--ink2); }
-.registration-guide strong { font-weight:600; color:var(--ink); }
-.registration-guide ol { padding-left:1.25rem; margin:.6rem 0; line-height:1.9; }
-.registration-guide p { font-size:.6875rem; }
 @media (min-width:760px) {
   .dashboard-charts { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .kpis { grid-template-columns:repeat(4,minmax(0,1fr)); }

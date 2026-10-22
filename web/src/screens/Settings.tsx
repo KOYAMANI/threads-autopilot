@@ -19,7 +19,6 @@ import {
   useDeleteAccount,
   useDeleteUser,
   useDiagnose,
-  useLicense,
   useLinks,
   useRefreshToken,
 } from "../api/accounts";
@@ -65,7 +64,7 @@ export default function Settings() {
       {tab === "connections" && <><AccountsCard /><AiKeyCard /><ExportCard /></>}
       {tab === "links" && <LinksCard />}
       {tab === "notifications" && <NotificationCard />}
-      {tab === "security" && <><PasswordCard /><LicenseCard /><DangerCard /></>}
+      {tab === "security" && <><PasswordCard /><DangerCard /></>}
     </div>
   </>;
 }
@@ -681,51 +680,6 @@ function LinksCard() {
       {account && paging.items.map(l => <EditableLink key={account.id + l.id} accountId={account.id} link={l} />)}
       {search && !filtered.length && <p className="muted">一致するリンクがありません。</p>}
       <Pagination label="リンク設定" paging={paging} />
-    </section>
-  );
-}
-
-/* ── ライセンス（SPEC §1 / §5.4） ────────────────────── */
-
-const LICENSE_LABEL: Record<string, string> = {
-  active: "有効",
-  unused: "未使用",
-  revoked: "無効（返金・退会などで停止）",
-};
-
-function LicenseCard() {
-  const license = useLicense();
-  const l = license.data;
-
-  return (
-    <section className="card section">
-      <div className="section-head">
-        <h2>ライセンス</h2>
-      </div>
-      {license.isPending && <p className="muted">読み込んでいます…</p>}
-      {l && (
-        <>
-          <div className="switch-row" aria-hidden="false">
-            <span className="body">
-              <span className="t">キー</span>
-              <span className="n">
-                セキュリティのため末尾4桁のみ表示
-              </span>
-            </span>
-            <span className="state num">TAP-••••-••••-{l.keyTail}</span>
-          </div>
-          <div className="switch-row" aria-checked={l.status === "active"}>
-            <span className="body">
-              <span className="t">状態</span>
-              <span className="n">
-                発行 {l.issuedAt.slice(0, 10)}
-                {l.activatedAt ? ` / 登録 ${l.activatedAt.slice(0, 10)}` : ""}
-              </span>
-            </span>
-            <span className="state">{LICENSE_LABEL[l.status] ?? l.status}</span>
-          </div>
-        </>
-      )}
     </section>
   );
 }

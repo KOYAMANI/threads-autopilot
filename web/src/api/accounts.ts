@@ -8,7 +8,6 @@ import type {
   DeleteUserRequest,
   DeleteUserResponse,
   DiagnoseResponse,
-  LicenseResponse,
   LinkSummary,
   RefreshTokenResponse,
   ConnectAccountRequest,
@@ -165,14 +164,6 @@ export function useDeleteAccount() {
       void qc.invalidateQueries({ queryKey: ["accounts", "list", null] });
       void qc.invalidateQueries({ queryKey: meKey });
     },
-  });
-}
-
-/** ライセンス（末尾4桁と状態。SPEC §1「設定 … ライセンス」）。 */
-export function useLicense() {
-  return useQuery({
-    queryKey: ["license", null] as const,
-    queryFn: async () => (await api.get<LicenseResponse>("/users/me/license")).license,
   });
 }
 

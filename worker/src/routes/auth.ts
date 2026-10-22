@@ -15,7 +15,7 @@ import { fail, type AppEnv } from "../app";
 import { ACCOUNT_COLUMNS, ACCOUNT_ORDER_BY, toAccountSummary, type AccountRow } from "../lib/accounts";
 import { audit } from "../lib/audit";
 import type { Db } from "../lib/db";
-import { hashPassword, passwordHashNeedsUpgrade, sha256Hex, upgradeLegacyPasswordHash, verifyPassword } from "../lib/crypto";
+import { generateLicenseKey, hashPassword, passwordHashNeedsUpgrade, sha256Hex, upgradeLegacyPasswordHash, verifyPassword } from "../lib/crypto";
 import { sendEmail } from "../lib/email";
 import {
   clearSessionCookie,
@@ -53,10 +53,12 @@ const DUMMY_PASSWORD = {
 const emailSchema = z.string().trim().toLowerCase().email().max(254);
 const passwordSchema = z.string().min(PASSWORD_MIN).max(200);
 
+// `license_key` は任意（DECISIONS 2026-10-22）。無ければサーバーが1本発行して結びつける。
+// 管理者が発行したキーを渡す経路は API としては残す（画面からは送らない）。
 const registerSchema = z.object({
   email: emailSchema,
   password: passwordSchema,
-  license_key: z.string().trim().min(1).max(64),
+  license_key: z.string().trim().min(1).max(64).optional(),
 });
 const loginSchema = z.object({ email: emailSchema, password: z.string().min(1).max(200) });
 const forgotSchema = z.object({ email: emailSchema });
@@ -171,22 +173,26 @@ export function authRoutes() {
         isPassword ? "WEAK_PASSWORD" : "BAD_REQUEST",
         isPassword
           ? `パスワードは${PASSWORD_MIN}文字以上にしてください`
-          : "入力に誤りがあります。メールアドレスとライセンスキーをご確認ください",
+          : "入力に誤りがあります。メールアドレスをご確認ください",
         400,
       );
     }
     const { email, password } = parsed.data;
-    const licenseKey = parsed.data.license_key.toUpperCase();
+    const suppliedKey = parsed.data.license_key?.toUpperCase();
     const db = c.get("db");
     const now = new Date();
+    const nowIso = now.toISOString();
 
-    const license = await db.first<LicenseRow>(
-      "SELECT id, key, status, user_id FROM licenses WHERE key=?",
-      licenseKey,
-    );
-    // 存在しない・使用済み・revoked は同じ扱い（どれかを漏らさない）
-    if (!license || license.status !== "unused") {
-      return fail("LICENSE_INVALID", "このライセンスキーは使えません", 400);
+    let license: LicenseRow | null = null;
+    if (suppliedKey) {
+      license = await db.first<LicenseRow>(
+        "SELECT id, key, status, user_id FROM licenses WHERE key=?",
+        suppliedKey,
+      );
+      // 存在しない・使用済み・revoked は同じ扱い（どれかを漏らさない）
+      if (!license || license.status !== "unused") {
+        return fail("LICENSE_INVALID", "このライセンスキーは使えません", 400);
+      }
     }
 
     const existing = await db.first<{ id: string }>("SELECT id FROM users WHERE email=?", email);
@@ -194,9 +200,21 @@ export function authRoutes() {
       return fail("EMAIL_TAKEN", "このメールアドレスは登録済みです", 409);
     }
 
+    // キーが無い登録: その場で1本発行する（形式は管理者発行と同じ、note='self-register'）。
+    // 退会時の revoked や管理者の失効はこの行に対して今までどおり効く。
+    const selfIssued = !license;
+    if (!license) {
+      license = { id: crypto.randomUUID(), key: generateLicenseKey(), status: "unused", user_id: null };
+      await db.run(
+        "INSERT INTO licenses (id, key, status, note, issued_at, activated_at, user_id, revoked_at) VALUES (?,?,'unused','self-register',?,NULL,NULL,NULL)",
+        license.id,
+        license.key,
+        nowIso,
+      );
+    }
+
     const { hash, salt } = await hashPassword(password, c.env.PASSWORD_PEPPER);
     const userId = crypto.randomUUID();
-    const nowIso = now.toISOString();
 
     try {
       await db.run(
@@ -212,6 +230,7 @@ export function authRoutes() {
     } catch (e) {
       // 上の SELECT と INSERT の間に同じメールで登録が入った場合（users.email の UNIQUE）
       if (/UNIQUE/i.test(String(e))) {
+        if (selfIssued) await db.run("DELETE FROM licenses WHERE id=? AND status='unused'", license.id);
         return fail("EMAIL_TAKEN", "このメールアドレスは登録済みです", 409);
       }
       throw e;

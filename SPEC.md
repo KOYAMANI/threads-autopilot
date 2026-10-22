@@ -337,8 +337,9 @@ CREATE TABLE audit_log (id TEXT PRIMARY KEY, user_id TEXT, at TEXT NOT NULL, act
 ## 5. 認証・ライセンス・暗号
 
 ### 5.1 登録・ログイン・パスワード再設定
-- `POST /api/auth/register` `{email, password, license_key}`
-  - `licenses.key` が `unused` なら `active` にして `users` を作る。使用済み・存在しない・`revoked` → `LICENSE_INVALID`
+- `POST /api/auth/register` `{email, password, license_key?}`
+  - `license_key` は任意（2026-10-22）。無ければサーバーが `licenses` に1本発行（`note='self-register'`）して `active` にし、`users` を作る。画面にはキーの入力欄を出さない
+  - `license_key` を渡した場合: `licenses.key` が `unused` なら `active` にして `users` を作る。使用済み・存在しない・`revoked` → `LICENSE_INVALID`
   - パスワード: 8文字以上。PBKDF2-SHA256, 100,000回, salt 16バイト（WebCrypto）
 - `POST /api/auth/login` `{email, password}` → セッション作成。失敗は同一メールで10分に10回まで
 - 回数制限は `rate_events` テーブルで数える（`lib/session.ts` の `rateLimit(key, limit, windowMin)`）。数える対象が起きるたびに1行追記し、窓（`at > now - windowMin`）の件数が上限以上なら弾く。窓の外の行は `cleanup` が消す（§8.7）。キーの形:

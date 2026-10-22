@@ -35,7 +35,8 @@ export type ErrorCode =
 
 /* ── 認証（SPEC §5.1 / §7） ──────────────────────────── */
 
-export type RegisterRequest = { email: string; password: string; license_key: string };
+/** `license_key` は管理者発行のキーを使う場合だけ（画面からは送らない。無ければサーバーが発行）。 */
+export type RegisterRequest = { email: string; password: string; license_key?: string };
 export type LoginRequest = { email: string; password: string };
 export type ForgotRequest = { email: string };
 export type ResetRequest = { token: string; password: string };
