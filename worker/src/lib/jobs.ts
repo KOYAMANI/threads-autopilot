@@ -247,6 +247,12 @@ async function enqueueForCronInner(ctx: JobContext, cron: string): Promise<void>
 /** Atomic insertion avoids concurrent cron invocations creating duplicate active publish jobs. */
 export async function enqueuePendingPublishes(ctx: JobContext): Promise<void> {
   const now = ctx.now.toISOString();
+  // 先の予約用に待機している publish があると、下の INSERT は積まない。そのまま待つと
+  // 期限の来た投稿が先の予約の時刻まで止まるので、前倒しする（2026-10-22 の不具合）
+  await ctx.sys.run(`UPDATE jobs SET next_run_at=?, updated_at=? WHERE type='publish' AND status='pending' AND next_run_at>?
+    AND EXISTS (SELECT 1 FROM queue q JOIN accounts a ON a.id=q.account_id WHERE q.account_id=jobs.account_id AND a.status='ok'
+      AND q.status IN ('scheduled','publishing') AND q.scheduled_at<=? AND (q.next_step_at IS NULL OR q.next_step_at<=?))`,
+    now, now, now, now, now);
   await ctx.sys.run(`INSERT INTO jobs(id,type,account_id,state_json,status,priority,next_run_at,attempts,created_at,updated_at)
     SELECT lower(hex(randomblob(16))), 'publish', a.id, '{}','pending',1,?,0,?,? FROM accounts a
     WHERE a.status='ok' AND EXISTS (SELECT 1 FROM queue q WHERE q.account_id=a.id

@@ -667,16 +667,9 @@ export async function enqueuePublish(
   accountId: string,
   at: Date,
 ): Promise<void> {
-  const id = await enqueueJob(ctx, "publish", { accountId, nextRunAt: at });
-  if (id) return;
-  // 同じアカウントの pending が既にある。予定が早まったなら前倒しする
-  await ctx.sys.run(
-    "UPDATE jobs SET next_run_at=?, updated_at=? WHERE type='publish' AND account_id=? AND status='pending' AND next_run_at>?",
-    at.toISOString(),
-    ctx.now.toISOString(),
-    accountId,
-    at.toISOString(),
-  );
+  // 待機中の publish があれば前倒しし、無ければ積む。15分以内なら Queue でその場で起こす
+  // （「今すぐ投稿」を毎分の cron 待ちにしない。2026-10-22）
+  await scheduleContinuation(ctx, accountId, at, "");
 }
 
 /** ライセンスが `revoked` なら自動投稿を止める（SPEC §5.4）。 */
@@ -790,7 +783,9 @@ export async function publishJob(ctx: JobContext, job: RunningJob): Promise<void
 }
 
 /** 続きの publish ジョブの配送 lease。届かなかったときは、この時間のあとに毎分の cron が送り直す。 */
-export const CONTINUATION_LEASE_SEC = 90;
+export /** これより先の予定は Queue で起こさず、毎分の cron に任せる。 */
+const WAKE_WINDOW_MS = 15 * 60_000;
+const CONTINUATION_LEASE_SEC = 90;
 
 /**
  * `at` に続きを出す publish ジョブを予約する。
@@ -817,6 +812,8 @@ async function scheduleContinuation(ctx: JobContext, accountId: string, at: Date
     jobId = await enqueueJob(ctx, "publish", { accountId, nextRunAt: at, force: true });
   }
   if (!jobId || !ctx.env.JOB_QUEUE || jobId === currentJobId) return;
+  // 先の予約は Queue に載せない（遅延の上限があるため）。時刻が来たら毎分の cron が前倒しして送る
+  if (at.getTime() - ctx.now.getTime() > WAKE_WINDOW_MS) return;
 
   const lease = new Date(at.getTime() + CONTINUATION_LEASE_SEC * 1000).toISOString();
   const leased = await ctx.sys.run(

@@ -564,3 +564,47 @@ describe("続きの予約（DECISIONS 2026-10-21: コメント間隔 30 秒を�
     expect((await readQueue(qid))!.status).toBe("scheduled");
   });
 });
+
+describe("予約が止まる不具合（2026-10-22）", () => {
+  it("先の予約用に publish が待機していても、期限の来た投稿があれば毎分の cron が前倒しして出す", async () => {
+    const { accountId, e } = await setup("stuck1");
+    const later = new Date(NOW.getTime() + 5 * 86400_000);
+    await insertQueue(accountId, "5日後の投稿です。", { scheduledAt: later.toISOString() });
+    const due = await insertQueue(accountId, "いま出す投稿です。", { scheduledAt: new Date(NOW.getTime() - 60_000).toISOString() });
+    // 先の予約のために積まれた publish（これが今日の分を止めていた）
+    await enqueueJob(makeJobContext(e, { now: NOW }), "publish", { accountId, nextRunAt: later });
+
+    const { enqueuePendingPublishes } = await import("../src/lib/jobs");
+    const ctx = makeJobContext(e, { now: NOW });
+    await enqueuePendingPublishes(ctx);
+    const jobs = await testDb().all<{ next_run_at: string }>(
+      "SELECT next_run_at FROM jobs WHERE type='publish' AND account_id=? AND status='pending'", accountId);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]!.next_run_at).toBe(NOW.toISOString());
+
+    await runJobs(ctx);
+    expect((await readQueue(due))!.status).toBe("done");
+  });
+
+  it("「今すぐ投稿」はその場で Queue に送る（毎分の cron を待たない）", async () => {
+    const { vi } = await import("vitest");
+    const { enqueuePublish } = await import("../src/jobs/publish");
+    const { accountId, e: base } = await setup("now1");
+    const send = vi.fn().mockResolvedValue(undefined);
+    const e = { ...base, JOB_QUEUE: { send } } as unknown as typeof env;
+    await enqueuePublish(makeJobContext(e, { now: NOW }), accountId, NOW);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0]![1]).toEqual({ delaySeconds: 1 });
+  });
+
+  it("先の予約は Queue に載せない（時刻が来たら cron が出す）", async () => {
+    const { vi } = await import("vitest");
+    const { enqueuePublish } = await import("../src/jobs/publish");
+    const { accountId, e: base } = await setup("later1");
+    const send = vi.fn().mockResolvedValue(undefined);
+    const e = { ...base, JOB_QUEUE: { send } } as unknown as typeof env;
+    await enqueuePublish(makeJobContext(e, { now: NOW }), accountId, new Date(NOW.getTime() + 86400_000));
+    expect(send).not.toHaveBeenCalled();
+    expect(await testDb().first("SELECT COUNT(*) n FROM jobs WHERE type='publish' AND account_id=? AND status='pending'", accountId)).toEqual({ n: 1 });
+  });
+});
