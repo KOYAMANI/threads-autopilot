@@ -38,6 +38,7 @@ export const JOB_TYPES = [
   "ap_score",
   "daily_digest",
   "sheets_sync",
+  "note_write",
 ] as const;
 
 export type JobType = (typeof JOB_TYPES)[number];
@@ -62,6 +63,8 @@ export const JOB_PRIORITY: Record<JobType, number> = {
   daily_digest: 8,
   cleanup: 9,
   sheets_sync: 8,
+  // note の章を書く。利用者が画面で待っているので同期系と同じ早さ
+  note_write: 4,
 };
 
 /* ── 実行文脈 ──────────────────────────────────────── */

@@ -74,6 +74,37 @@ const MOCK_COMMENTS = [
   ["補足はこちらです。"],
 ];
 
+function mockNoteOutline(volumeChars: unknown): unknown {
+  const total = typeof volumeChars === "number" && volumeChars > 0 ? volumeChars : 25_000;
+  const mid = Math.max(600, Math.round((total - 3_000) / 3));
+  return {
+    status: "ok",
+    titles: ["「高いフード＝安心」は間違い。失敗しないごはん選びの教科書", "愛犬の寿命はごはんで変わる。値段に振り回されない基準の作り方", "子犬からシニアまで。ごはん選びで最初に決める3つのこと"],
+    chapters: [
+      { heading: "はじめに：毎日のごはんが、愛犬の一生を左右する", targetChars: 2_400, sections: [] },
+      { heading: "第1章 なぜ「ごはん」にこだわるべきなのか", targetChars: mid, sections: [{ title: "1-1 毎日食べるものが、病気のリスクを左右する" }, { title: "1-2 激安フードが安い理由", caution: "根拠を示しにくい断定は表示の見方として書きます" }] },
+      { heading: "第2章 自分だけの基準をつくる", targetChars: mid, sections: [{ title: "2-1 最低ラインの決め方" }, { title: "2-2 原材料表示の見方" }] },
+      { heading: "第3章 ライフステージ別の選び方", targetChars: mid, sections: [{ title: "3-1 子犬期" }, { title: "3-2 シニア期" }] },
+      { heading: "まとめ：今日からできる3ステップ", targetChars: 600, sections: [] },
+    ],
+    paywallAfter: 1,
+    refProfile: null,
+    notes: [],
+  };
+}
+
+function mockNoteChapter(chapter: { heading?: string; targetChars?: number; sections?: Array<{ title: string }> }, feedback: string | null): unknown {
+  const target = typeof chapter?.targetChars === "number" ? chapter.targetChars : 1_000;
+  const sections = Array.isArray(chapter?.sections) && chapter.sections.length ? chapter.sections : [{ title: "" }];
+  const per = Math.max(120, Math.round(target / sections.length));
+  const filler = "毎日のごはんは、人の食事と同じで積み重ねです。1回で体が変わることはありませんが、続いたときの差は小さくありません。あなたの犬に合うかどうかは、原材料と量を自分の目で確かめるところから始まります。";
+  const paragraphs = (n: number) => { let out = ""; while (out.length < n) out += (out ? "\n\n" : "") + filler; return out; };
+  const body = sections
+    .map((s, i) => `${s.title ? `## ${s.title}\n\n` : ""}${paragraphs(per)}${i === 0 ? "\n\n【商品名】を入れると具体的になります。" : ""}`)
+    .join("\n\n");
+  return { body: feedback ? `（${feedback}）\n\n${body}` : body, summary: `${chapter?.heading ?? "章"}の要約です。`, placeholders: ["商品名"] };
+}
+
 export type MockAiInput = { system: string; user: string; provider: string };
 
 /** 生成の生応答（JSON 文字列）を返す。`lib/ai.ts` の `generateRaw` から呼ばれる。 */
@@ -85,6 +116,16 @@ export default function aiMockCall(input: MockAiInput): string {
     if (request.task === "composition-plan" && typeof request.instruction === "string" && request.instruction.includes("質問テスト") && !request.instruction.includes("補足: 答え") && !request.assume) return JSON.stringify({ status: "needs_input", question: "誰に向けた投稿ですか？ 伝えたい要点を1つ教えてください。" });
     if (request.task === "composition-plan") return JSON.stringify({ status: "ok", summary: "投稿を型、参考情報を内容として使用", structure: "導入と続き", style: "短い断定", partCount: 2, anchors: [], variants: Array.from({ length: request.n }, (_, i) => ({ label: `切り口${i + 1}`, approach: `焦点${i + 1}`, blueprint: { posts: ["{{body}}", "{{comment}}"], slots: [{ id: "body", task: "本文", maxChars: 450 }, { id: "comment", task: "続き", maxChars: 450 }] } })) });
     if (request.task === "composition-slots") return JSON.stringify({ slots: { body: MOCK_BODIES[request.index % MOCK_BODIES.length], comment: MOCK_COMMENTS[request.index % MOCK_COMMENTS.length]![0] } });
+    // note（長文）。章は targetChars に近い長さで、節の見出しを sections の数だけ付ける
+    if (request.task === "note-outline") {
+      const asksQuestion = typeof request.memo === "string" && request.memo.includes("質問テスト") && !request.assume;
+      const answered = Array.isArray(request.qa) ? request.qa.filter((q: { answer: unknown }) => typeof q.answer === "string" && q.answer !== "").length : 0;
+      if (asksQuestion && answered < 3) return JSON.stringify({ status: "needs_input", question: `確認${answered + 1}: 読者は誰ですか？` });
+      return JSON.stringify(mockNoteOutline(request.volumeChars));
+    }
+    if (request.task === "note-write") return JSON.stringify(mockNoteChapter(request.chapter, typeof request.feedback === "string" ? request.feedback : null));
+    if (request.task === "note-digest") return JSON.stringify({ digest: `- 「${String(request.title ?? "")}」の要点（モック）\n- 原材料の先頭を見る` });
+    if (request.task === "note-revise") return JSON.stringify({ body: `${request.body}\n\n（${request.instruction}を反映しました）`, summary: "直した章の要約" });
     if (request.task === "composition-write") {
       const i = request.index % MOCK_BODIES.length;
       return JSON.stringify({ candidates: [{ hook: MOCK_HOOKS[i], body: MOCK_BODIES[i], comments: [MOCK_COMMENTS[i]![0]], basis: `「${request.sources[0]?.title ?? "指示"}」の内容を使いました` }] });

@@ -555,3 +555,88 @@ export type LicenseResponse = { license: LicenseSummary };
 /** `DELETE /api/users/me`。パスワードをもう一度確かめる（SPEC §7.8）。 */
 export type DeleteUserRequest = { password: string };
 export type DeleteUserResponse = { deleted: true };
+
+/* ── note 記事（SPEC §7.10） ───────────────────────── */
+
+export type NoteStyle = "story" | "general";
+export type NoteVolume = "short" | "standard" | "same";
+export type NoteStatus = "draft" | "outlined" | "writing" | "done";
+export type NoteSectionStatus = "todo" | "writing" | "done" | "failed";
+
+export type NoteOutlineSection = { title: string; caution?: string };
+export type NoteOutlineChapter = { heading: string; targetChars: number; sections: NoteOutlineSection[] };
+export type NoteOutline = { chapters: NoteOutlineChapter[] };
+
+/** 目次を作るときに参考 note から読み取った文体のメモ。 */
+export type NoteRefProfile = { tone: string; avgCharsPerHeading: number; devices: string[] };
+
+export type NoteQa = { question: string; answer: string | null };
+
+export type NoteSection = {
+  id: string;
+  ord: number;
+  heading: string;
+  targetChars: number;
+  body: string;
+  summary: string;
+  charCount: number;
+  status: NoteSectionStatus;
+  error: string | null;
+  updatedAt: string;
+};
+
+export type NoteSummary = {
+  id: string;
+  accountId: string;
+  title: string;
+  status: NoteStatus;
+  chars: number;
+  chaptersDone: number;
+  chaptersTotal: number;
+  updatedAt: string;
+};
+
+export type NoteDetail = {
+  id: string;
+  accountId: string;
+  title: string;
+  titleOptions: string[];
+  memo: string;
+  style: NoteStyle;
+  volume: NoteVolume;
+  refNote: string;
+  refProfile: NoteRefProfile | null;
+  sourceIds: string[];
+  outline: NoteOutline | null;
+  paywallAfter: number | null;
+  qa: NoteQa[];
+  status: NoteStatus;
+  engine: "gemini";
+  sections: NoteSection[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NoteListResponse = { notes: NoteSummary[] };
+export type NoteItemResponse = { note: NoteDetail };
+export type CreateNoteRequest = { accountId: string; title?: string; memo: string };
+export type PatchNoteRequest = {
+  title?: string;
+  memo?: string;
+  style?: NoteStyle;
+  volume?: NoteVolume;
+  refNote?: string;
+  sourceIds?: string[];
+  outline?: NoteOutline;
+  paywallAfter?: number | null;
+};
+export type NoteOutlineRequest = { answer?: string; assume?: boolean };
+export type NoteOutlineResponse =
+  | { status: "question"; question: string; round: number }
+  | { status: "ok"; note: NoteDetail; notes?: string[] };
+export type NoteReviseRequest = { instruction: string };
+export type NoteSectionResponse = { section: NoteSection };
+
+/** 質問は最大3回（SPEC §7.10）。 */
+export const NOTE_MAX_QUESTIONS = 3;
+export const NOTE_MAX_CHAPTERS = 12;

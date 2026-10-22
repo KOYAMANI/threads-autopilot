@@ -21,7 +21,7 @@ export default function TopBar({
   onAccountTap: () => void;
 }) {
   const { pathname } = useLocation();
-  const current = TABS.find(t => t.path === pathname);
+  const current = TABS.find(t => pathname === t.path || pathname.startsWith(`${t.path}/`));
   return (
     <header className="chrome topbar"><span className="topbar-breadcrumb"><strong>{current?.desktop}</strong></span>
       <button className="icon-btn" type="button" onClick={onMenu} aria-label="メニューを開く">
