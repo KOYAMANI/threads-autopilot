@@ -202,14 +202,6 @@ button,input,select,textarea { font-family:inherit; }
 .autopilot-guide ol { padding-left:1.3rem; line-height:1.9; margin:1rem 0; }
 @media(max-width:600px) { .dashboard-toolbar { gap:.35rem; } .dashboard-toolbar .toolbar-label { display:none; } .table-pagination { gap:.4rem; } .link-editor summary { align-items:flex-start; flex-direction:column; gap:.3rem; } }
 
-.environment-notice { position:fixed; bottom:1rem; right:1rem; z-index:90; display:flex; flex-direction:column; gap:.2rem; padding:.65rem 1rem; background:#fff8e0; color:#735600; border:1px solid #e8ca70; border-radius:10px; box-shadow:0 2px 8px #0001; font-size:.7rem; pointer-events:none; }
-@media(max-width:959px) { .environment-notice { bottom:5rem; right:.5rem; padding:.4rem .7rem; } }
-/* Inside the app the staging mark lives in the chrome (sidebar on PC, top bar on phones), never over content (2026-10-20). */
-body:has(.app-shell) .environment-notice { display:none; }
-.env-chip { display:inline-flex; align-items:center; gap:.4rem; padding:.25rem .6rem; border:1px solid #e8ca70; border-radius:999px; background:#fff8e0; color:#735600; font-size:.625rem; font-weight:600; white-space:nowrap; }
-.env-chip::before { content:""; width:6px; height:6px; border-radius:50%; background:#d98e1f; }
-.sidebar-bottom .env-chip { margin:0 0 .5rem .25rem; }
-@media (min-width:1024px) { .topbar .env-chip { display:none; } }
 
 /* Daily publishing slots share one schedule across manual drafts and autopilot. */
 .queue-heading-actions,.queue-date-controls { display:flex; gap:.6rem; align-items:center; }

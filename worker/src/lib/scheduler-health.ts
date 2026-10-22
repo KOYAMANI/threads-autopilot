@@ -7,8 +7,6 @@ export const SCHEDULER_MONITOR_DB_QUERIES = 3;
 const MINUTELY = "* * * * *";
 const DAILY = "0 18 * * *";
 const PRODUCTION_CRONS = [MINUTELY, "0 * * * *", DAILY] as const;
-/** Staging registers no hourly cron (DECISIONS 2026-10-21). */
-const STAGING_CRONS = [MINUTELY, DAILY] as const;
 export type SchedulerOutcome = "success" | "error" | "paused";
 
 type SchedulerRow = {
@@ -51,10 +49,11 @@ export async function recordSchedulerFinish(db: Db, cron: string, runId: string,
 export async function readSchedulerStatus(db: Db, env: Env, now = new Date()) {
   const rows = await db.all<SchedulerRow>(`SELECT cron,last_scheduled_at,last_started_at,last_finished_at,
     last_succeeded_at,last_failed_at,last_status FROM scheduler_health ORDER BY cron LIMIT 10`);
-  const expected = env.APP_ENV === "staging" ? [...STAGING_CRONS] : [...PRODUCTION_CRONS];
+  // Staging runs the same crons as production since 2026-10-22 (DECISIONS).
+  const expected = [...PRODUCTION_CRONS];
   return {
     environment: env.APP_ENV ?? "local",
-    mode: env.APP_ENV === "staging" ? "daily_dispatch" : "job_dispatch",
+    mode: "job_dispatch",
     checkedAt: now.toISOString(),
     maintenance: env.MAINTENANCE_MODE === "1",
     // Only known fixed fields/Crons. Never return IDs, provider errors or job data.

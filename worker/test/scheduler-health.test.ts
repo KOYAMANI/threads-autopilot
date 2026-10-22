@@ -46,12 +46,12 @@ describe("Cron arrival and dispatch evidence", () => {
     expect(await testDb().first("SELECT COUNT(*) n FROM jobs")).toEqual({ n: 0 });
     expect(await testDb().first("SELECT COUNT(*) n FROM cron_sweeps")).toEqual({ n: 0 });
     const result = await health.readSchedulerStatus(testDb(), stage());
-    expect(result.mode).toBe("daily_dispatch");
-    expect(result.triggers.map(t => t.cron)).toEqual([MINUTELY, "0 18 * * *"]);
+    expect(result.mode).toBe("job_dispatch");
+    expect(result.triggers.map(t => t.cron)).toEqual([MINUTELY, "0 * * * *", "0 18 * * *"]);
     expect(result.triggers[0]).toMatchObject({ cron: MINUTELY, status: "success", stale: false, lastFailedAt: null });
     expect(result.triggers[0]!.lastStartedAt).toBeTruthy();
     expect(result.triggers[0]!.lastSucceededAt).toBeTruthy();
-    expect(result.triggers[1]!.status).toBe("not_observed");
+    expect(result.triggers[2]!.status).toBe("not_observed");
   });
 
   it("staging daily cron starts the daily sweep and enqueues account jobs (DECISIONS 2026-10-21)", async () => {

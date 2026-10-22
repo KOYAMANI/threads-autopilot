@@ -29,16 +29,12 @@ database_id = "f826a56b-58fb-4d0d-a20b-4dd2807d3292"
 migrations_dir = "worker/migrations"
 
 [triggers]
-# Minutely: arrival record + job dispatch. 18:00 UTC (03:00 JST): the daily sweep
-# (full_sync / followers / daily_views / clicks / insights_daily / ap_score).
-# The hourly insights_recent cron is deliberately not registered on staging (DECISIONS 2026-10-21).
-# Outbound writes stay blocked by code: lib/threads.ts rejects non-GET and lib/email.ts never sends on staging.
-crons = ["* * * * *", "0 18 * * *"]
+# 本番と同じ（2026-10-22 ユーザー決定「メール以外は同じ」）。Threads への投稿もする。
+# 違いはメールだけ: lib/email.ts は APP_ENV=staging では送らない。
+crons = ["* * * * *", "0 * * * *", "0 18 * * *"]
 
 [vars]
 APP_ENV = "staging"
-STAGING_THREADS_USER_ID = ""
-STAGING_THREADS_USERNAME = "yama_threads.sub" # Bootstrap; pin authenticated numeric ID after first connection.
 MAINTENANCE_MODE = "0" # set to 1 and deploy before database recovery
 APP_ORIGIN = "https://threads-autopilot-staging.yama-threads-apps.workers.dev"
 DEFAULT_TZ = "Asia/Tokyo"
