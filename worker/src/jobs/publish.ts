@@ -246,29 +246,7 @@ export async function preflight(
     if ((autoToday?.n ?? 0) >= limit) return { ok: false, message: `オートパイロットの1日上限（${limit}件）に達しています` };
   }
 
-  // Root publication remains counted after reply failure, cancellation, or retry.
-  // updated_at is intentionally ignored: editing a row must not move its publication day.
-  if (settings.minGapMin > 0) {
-    const last = await ctx.db.first<{ at: string | null }>(
-      "SELECT MAX(posted_at) AS at FROM posts WHERE account_id=? AND is_reply=0 AND source<>'external'",
-      account.id,
-    );
-    const inflight = await ctx.db.first<{ at: string | null }>(
-      "SELECT MAX(root_published_at) AS at FROM queue WHERE account_id=? AND id<>?",
-      account.id,
-      row.id,
-    );
-    const lastAt = [last?.at, inflight?.at].filter((v): v is string => Boolean(v)).sort().pop();
-    if (lastAt) {
-      const gapMin = (nowMs - Date.parse(lastAt)) / 60_000;
-      if (gapMin < settings.minGapMin) {
-        return {
-          ok: false,
-          message: `前の投稿から${settings.minGapMin}分あける設定です（いまは${Math.max(0, Math.floor(gapMin))}分）`,
-        };
-      }
-    }
-  }
+  // 投稿間隔（minGapMin）では止めない。予約した時刻どおりに出す（DECISIONS 2026-10-22）
 
   // 重複（3-gram Jaccard >= 0.8）。source='recycle' は判定対象から外す
   if (row.source !== "recycle") {

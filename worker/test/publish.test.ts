@@ -240,7 +240,7 @@ describe("publish（SPEC §8.3）", () => {
     expect(ids[0]).toBe(rootId); // root は作り直されていない
   });
 
-  it("ツリーのコメント待ちの間は、別の予約が投稿間隔をすり抜けない（SPEC §8.3）", async () => {
+  it("ツリーのコメント待ちの間も、別の予約は投稿間隔で止めない（DECISIONS 2026-10-22）", async () => {
     const { accountId, e } = await setup("pub4c");
     const tree = await insertQueue(accountId, "ツリーの1本目です。コメントを待ちます。", {
       comments: ["あとから出すコメントです。"],
@@ -257,7 +257,7 @@ describe("publish（SPEC §8.3）", () => {
     });
     expect((await readQueue(tree))!.step).toBe(2);
 
-    // 1分後: もう1本は minGapMin（既定30分）に阻まれる
+    // 1分後: もう1本も時刻どおりに出る
     await publishJob(makeJobContext(e, { now: new Date(NOW.getTime() + 60_000) }), {
       id: "j2",
       type: "publish",
@@ -265,10 +265,9 @@ describe("publish（SPEC §8.3）", () => {
       attempts: 0,
       state: {},
     });
-    const blocked = (await readQueue(other))!;
-    expect(blocked.status).toBe("failed");
-    expect(blocked.error).toContain("分あける設定です");
-    expect(JSON.parse(blocked.result_ids_json)).toEqual([]);
+    const next = (await readQueue(other))!;
+    expect(next.status).not.toBe("failed");
+    expect(JSON.parse(next.result_ids_json).length).toBe(1);
   });
 
   it("画像は コンテナ IN_PROGRESS → FINISHED → publish で done になる", async () => {
@@ -386,7 +385,7 @@ describe("publish（SPEC §8.3）", () => {
     expect(row.error).toContain("1日の投稿上限");
   });
 
-  it("投稿間隔（minGapMin）を満たさないと failed になる", async () => {
+  it("前の投稿から10分でも、予約どおりに出る（DECISIONS 2026-10-22）", async () => {
     const { accountId, e } = await setup("pub11");
     await testDb().run(
       "UPDATE accounts SET settings_json=? WHERE id=?",
@@ -408,8 +407,7 @@ describe("publish（SPEC §8.3）", () => {
     await drain(e, accountId, qid);
 
     const row = (await readQueue(qid))!;
-    expect(row.status).toBe("failed");
-    expect(row.error).toContain("30分あける");
+    expect(row.status).toBe("done");
   });
 
   it("ライセンスが revoked なら投稿せず、オートパイロットを止める（SPEC §5.4）", async () => {

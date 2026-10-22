@@ -64,13 +64,12 @@ describe("publication safety ledger", () => {
     expect((await preflight(makeJobContext(free, { now: new Date(NOW.getTime()+86400000) }), f.account, candidate)).ok).toBe(true);
   });
 
-  it("uses root publication time for the minimum gap after a reply failure", async () => {
+  it("does not hold a post back for the gap since the previous root publication", async () => {
     const f = await fixture();
     await insert(f.accountId, { status: "failed", rootAt: NOW.toISOString(), updatedAt: new Date(NOW.getTime()+86400000).toISOString() });
     const candidate = await row(await insert(f.accountId, { status: "draft" }));
     const account = { ...f.account, settings_json: JSON.stringify({ minGapMin: 30 }) };
-    expect(await preflight(makeJobContext(free, { now: new Date(NOW.getTime()+10*60_000) }), account, candidate)).toMatchObject({ ok: false, message: expect.stringContaining("30分あける") });
-    expect((await preflight(makeJobContext(free, { now: new Date(NOW.getTime()+60*60_000) }), account, candidate)).ok).toBe(true);
+    expect((await preflight(makeJobContext(free, { now: new Date(NOW.getTime()+60_000) }), account, candidate)).ok).toBe(true);
   });
 
   it("checks limits again before publishing an already-created image container", async () => {
