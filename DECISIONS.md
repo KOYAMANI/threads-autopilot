@@ -574,6 +574,7 @@ SPEC §5.4・§7.1・§7.8・§8.7・§12.3 Settings・§13 M7・§15 に対し�
 ## 2026-10-22 ステージングを本番に昇格して公開
 
 - ステージングを使っている人のデータ（15 ユーザー・17 アカウント）をそのまま本番に引き継ぐ（ユーザー決定）。DB はコピーせず、本番 Worker `threads-autopilot` の D1 をステージングの D1 に付け替えた。暗号化キーとペッパーはステージングの値（手元の控えで復号・照合して一致を確認）を本番 Worker に入れた。これで Threads 連携・AI キー・パスワード・ログイン中のセッションがそのまま使える
-- 本番 URL は `https://threads-autopilot.yama-threads-apps.workers.dev`。旧ステージング URL は 301 で本番へ転送する Worker に置き換え、ステージングの cron・Queue consumer は止めた。ステージングの予約済み投稿は時刻どおり実投稿する（ユーザー決定）
-- `wrangler.staging.toml` は転送用 Worker の設定に変えた。アプリ本体のステージングは当面持たない（`deploy:staging` / `db:migrate:staging` / `check-staging.py` / staging の CI を削除）。次に検証環境が要るときは、別の D1 で作り直す
+- 本番 URL は `https://threads-autopilot.yama-threads-apps.workers.dev`。ステージングの予約済み投稿は本番で時刻どおり実投稿する（ユーザー決定）
+- **ステージングも残す**（ユーザー指摘「2つ要る」。一度は旧 URL を本番への転送にしたが取り消し）。ステージングは昇格直後の本番 DB をコピーした新しい D1 `threads-autopilot-staging2`（`f826a56b-…`）で、コードは本番と同じ。違いは `APP_ENV=staging` による実投稿・メール停止と cron（毎分＋日次）だけ。実投稿を止めないと予約投稿が本番と二重に出るため。秘密鍵は本番と同じ値なので、同じ ID・パスワードでどちらにもログインできる。コピー後のデータは環境ごとに別々に増える
+- D1 の取り込みは1文 100KB まで。50,000 文字の参考資料1件が引っかかったので、その行だけ空で入れて 8,000 文字ずつ `UPDATE ... SET content = content || ...` で足した
 - 旧本番の D1 `threads-autopilot`（本人 1 ユーザー）は使わない。バックアップを残して保管

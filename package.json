@@ -25,7 +25,9 @@
     "make:icons": "node scripts/make-icons.mjs",
     "check:production": "python3 scripts/check-production.py",
     "deploy:production": "python3 scripts/check-production.py --remote && wrangler deploy --config wrangler.production.toml",
-    "deploy:staging-redirect": "wrangler deploy --config wrangler.staging.toml"
+    "check:staging": "python3 scripts/check-staging.py",
+    "db:migrate:staging": "python3 scripts/check-staging.py && wrangler d1 migrations apply threads-autopilot-staging2 --remote --config wrangler.staging.toml",
+    "deploy:staging": "python3 scripts/check-staging.py && wrangler deploy --config wrangler.staging.toml"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",

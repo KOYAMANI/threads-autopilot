@@ -130,4 +130,4 @@ D1を正本として先に公開する方針。Sheetsは任意の一方向同期
 - 本番 Worker `threads-autopilot` は、ステージングの D1 `threads-autopilot-staging`（`dcce5294-…`）を使う。利用者のデータがそこにあったため
 - 本番 Worker の `ENC_KEY` / `SESSION_SECRET` / `ADMIN_SECRET` / `PASSWORD_PEPPER` はステージングの値に入れ替えた（控えは `/Users/yutaro/.config/threads-autopilot/staging-*.json`）。`RESEND_API_KEY` と `THREADS_APP_*` は本番のまま
 - 旧本番の D1 `threads-autopilot`（`89935cef-…`）は使っていない。昇格前のバックアップは `~/threads-autopilot-backups/2026-10-22/`
-- 旧ステージング URL は `redirect/staging-redirect.ts` が本番 URL へ 301 で転送する（`npm run deploy:staging-redirect`）
+- ステージングは新しい D1 `threads-autopilot-staging2`（`f826a56b-…`、昇格直後の本番のコピー）で動く。`scripts/check-staging.py` がこの ID 以外を拒否する
