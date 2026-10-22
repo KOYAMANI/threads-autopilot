@@ -33,7 +33,8 @@ export type AuditAction =
   | "user_delete"
   | "export"
   | "license_issue"
-  | "license_revoke";
+  | "license_revoke"
+  | "note_write";
 
 /**
  * 1件記録する。**失敗しても呼び出し元の処理は止めない** — 監査の書き込みが

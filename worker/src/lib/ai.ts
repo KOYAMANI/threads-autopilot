@@ -253,6 +253,8 @@ export type AiCallInput = {
   /** Gemini のときだけ渡す。`file_data` として contents に足す（SPEC §10.2） */
   youtubeUrls?: string[];
   appOrigin: string;
+  /** 出力の上限トークン。長文（note）だけ明示する。省略時はプロバイダの既定 */
+  maxOutputTokens?: number;
 };
 
 export type AiRequestPlan = { url: string; init: RequestInit };
@@ -273,7 +275,11 @@ export function buildRequest(input: AiCallInput): AiRequestPlan {
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: input.system }] },
         contents: [{ role: "user", parts }],
-        generationConfig: { responseMimeType: "application/json", temperature: 0.9 },
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0.9,
+          ...(input.maxOutputTokens ? { maxOutputTokens: input.maxOutputTokens } : {}),
+        },
       }),
     },
   };
@@ -285,7 +291,7 @@ export function readResponseText(_provider: AiProvider, json: unknown): string {
     ?.candidates?.[0];
   // 上限で切れた応答は JSON が途中で終わる。「読めない」ではなく原因を出す
   if (candidate?.finishReason === "MAX_TOKENS") {
-    throw new AiError("AI_BAD_OUTPUT", "AIの応答が長さの上限で途切れました。参考情報を減らしてお試しください", JSON.stringify(json).slice(0, 500));
+    throw new AiError("AI_BAD_OUTPUT", "AIの応答が長さの上限で途切れました。参考情報や分量を減らしてお試しください", JSON.stringify(json).slice(0, 500));
   }
   const text = (candidate?.content?.parts ?? [])
     .map((p) => (typeof p.text === "string" && p.thought !== true ? p.text : ""))
