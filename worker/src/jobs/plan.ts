@@ -29,7 +29,7 @@ import {
   recentAutoTags,
   type AutopilotRow,
 } from "../lib/autopilot";
-import { AiError, buildContext, defaultModel, generateRaw, readCandidates, systemPrompt } from "../lib/ai";
+import { AiError, buildContext, generateRaw, readCandidates, resolveModel, systemPrompt } from "../lib/ai";
 import { decrypt } from "../lib/crypto";
 import type { Db } from "../lib/db";
 import { isBudgetExceeded } from "../lib/budget";
@@ -118,7 +118,7 @@ async function learningFor(db: Db, accountId: string, dim: string): Promise<Slot
 
 /* ── AIキー（サーバー保存のみ。SPEC §7.7 の ON 条件） ── */
 
-type ResolvedKey = { provider: "gemini" | "openrouter"; model: string; apiKey: string };
+type ResolvedKey = { provider: "gemini"; model: string; apiKey: string };
 
 async function serverKey(ctx: JobContext, userId: string): Promise<ResolvedKey> {
   const row = await ctx.db.first<{
@@ -136,10 +136,10 @@ async function serverKey(ctx: JobContext, userId: string): Promise<ResolvedKey> 
       "AIキーがサーバーに保存されていません（オートパイロットにはサーバー保存が必要です）",
     );
   }
-  const provider = row.provider as "gemini" | "openrouter";
+  const provider = "gemini" as const;
   return {
     provider,
-    model: row.model && row.model.trim() !== "" ? row.model : defaultModel(provider),
+    model: resolveModel(row.model),
     // 復号した値はこの関数を出たあと生成に渡すだけで、ログにもレスポンスにも出さない（SPEC §5.2）
     apiKey: await decrypt(row.key_enc, ctx.env.ENC_KEY),
   };
@@ -193,7 +193,7 @@ async function planOne(
   };
 
   const youtubeUrls =
-    source.type === "youtube" && source.url && key.provider === "gemini" ? [source.url] : [];
+    source.type === "youtube" && source.url ? [source.url] : [];
   const sourcesForPrompt =
     source.content.trim() === "" ? [] : [{ title: source.title, content: source.content }];
 

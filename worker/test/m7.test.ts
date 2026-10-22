@@ -227,7 +227,7 @@ describe("退会 DELETE /users/me（SPEC §7.8）", () => {
       now,
     );
     await db.run(
-      "INSERT INTO ai_settings (user_id, provider, key_enc, model, store_on_server, updated_at) VALUES (?,'gemini','xxx','gemini-2.5-flash',1,?)",
+      "INSERT INTO ai_settings (user_id, provider, key_enc, model, store_on_server, updated_at) VALUES (?,'gemini','xxx','gemini-3.5-flash-lite',1,?)",
       user.userId,
       now,
     );

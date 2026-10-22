@@ -70,7 +70,7 @@ export type AccountSummary = {
 export type PutAccountOrderRequest = { ids: string[] };
 
 export type AiSettingsSummary = {
-  provider: "gemini" | "openrouter" | null;
+  provider: "gemini" | null;
   model: string | null;
   hasKey: boolean;
   storeOnServer: boolean;
@@ -348,12 +348,29 @@ export type PatchSourceRequest = {
 
 /* ── AI（SPEC §7.6 / §10） ──────────────────────────── */
 
-export type AiProvider = "gemini" | "openrouter";
+/** AI は Gemini だけ（OpenRouter は 2026-10-22 に廃止。DECISIONS）。 */
+export type AiProvider = "gemini";
+
+/** 選べるモデル（設定画面のドロップダウン）。先頭が既定。 */
+export const AI_MODELS: Record<AiProvider, ReadonlyArray<{ id: string; label: string }>> = {
+  gemini: [
+    { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite（軽量・低コスト）" },
+    { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash（高性能）" },
+  ],
+};
 
 export const AI_DEFAULT_MODEL: Record<AiProvider, string> = {
-  gemini: "gemini-2.5-flash",
-  openrouter: "anthropic/claude-sonnet-4.6",
+  gemini: "gemini-3.5-flash-lite",
 };
+
+/**
+ * 一覧に無いモデル名（空・廃止された `gemini-2.5-flash` など）は既定に読み替える。
+ * Google 側で消えたモデル名を渡すと 404 になるため（DECISIONS 2026-10-22）。
+ */
+export function normalizeAiModel(model: string | null | undefined): string {
+  const id = model?.trim() ?? "";
+  return AI_MODELS.gemini.some((m) => m.id === id) ? id : AI_DEFAULT_MODEL.gemini;
+}
 
 /** `GET /ai/settings` / `PUT /ai/settings` の応答（SPEC §7.6）。 */
 export type AiSettingsResponse = {
@@ -406,7 +423,7 @@ export type AiGenerateRequest = {
 export type AiGenerateResponse = {
   candidates: AiCandidate[];
   analysis?: string;
-  /** OpenRouter に YouTube を渡せないときなど、画面に出す案内 */
+  /** 生成の材料について画面に出す案内 */
   notes: string[];
   /** 候補が0件で、AI が素材の不足を質問しているとき。画面はシートで受ける */
   question?: string;

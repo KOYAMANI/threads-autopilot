@@ -10,7 +10,7 @@ import type {
   NotificationSettings,
   UserSummary,
 } from "@tap/shared";
-import { ok } from "@tap/shared";
+import { normalizeAiModel, ok } from "@tap/shared";
 import { fail, type AppEnv } from "../app";
 import { ACCOUNT_COLUMNS, ACCOUNT_ORDER_BY, toAccountSummary, type AccountRow } from "../lib/accounts";
 import { audit } from "../lib/audit";
@@ -136,7 +136,7 @@ async function buildMe(db: Db, userId: string): Promise<MeResponse | null> {
   const ai: AiSettingsSummary = aiRow
     ? {
         provider: aiRow.provider as AiSettingsSummary["provider"],
-        model: aiRow.model,
+        model: normalizeAiModel(aiRow.model),
         hasKey: Boolean(aiRow.key_enc),
         storeOnServer: Boolean(aiRow.store_on_server),
       }

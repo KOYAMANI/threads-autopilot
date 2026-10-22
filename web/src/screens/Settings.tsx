@@ -10,8 +10,8 @@ import AccountAvatar from "../components/AccountAvatar";
  */
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import type { AccountSummary, AiProvider, DiagnoseStep, LinkSummary } from "@tap/shared";
-import { AI_DEFAULT_MODEL } from "@tap/shared";
+import type { AccountSummary, DiagnoseStep, LinkSummary } from "@tap/shared";
+import { AI_DEFAULT_MODEL, AI_MODELS, normalizeAiModel } from "@tap/shared";
 import {
   downloadCsv,
   useUpdateLink,
@@ -36,19 +36,6 @@ import Pagination, { usePagination } from "../components/Pagination";
 import { useToast } from "../components/Toast";
 import { useShell } from "../components/Shell";
 import { pushSupported, subscribePush, unsubscribePush } from "../lib/push";
-
-const PROVIDERS: Array<{ key: AiProvider; label: string; note: string }> = [
-  {
-    key: "gemini",
-    label: "Gemini",
-    note: "無料枠あり。YouTube の動画をそのまま読めます",
-  },
-  {
-    key: "openrouter",
-    label: "OpenRouter",
-    note: "モデルを選べます。動画は読めません",
-  },
-];
 
 export default function Settings() {
   const [tab, setTab] = useState(() => new URLSearchParams(window.location.search).get("tab") === "links" ? "links" : "connections");
@@ -346,26 +333,23 @@ function AiKeyCard() {
     save = useSaveAiSettings(),
     test = useTestAi(),
     remove = useDeleteAiKey();
-  const [provider, setProvider] = useState<AiProvider>("gemini");
-  const [model, setModel] = useState("");
+  const [model, setModel] = useState<string>(AI_DEFAULT_MODEL.gemini);
   const [key, setKey] = useState("");
   const [keyError, setKeyError] = useState<string | null>(null);
   useEffect(() => {
     if (settings.data) {
-      setProvider(settings.data.provider ?? "gemini");
-      setModel(settings.data.model ?? "");
+      setModel(normalizeAiModel(settings.data.model));
     }
   }, [settings.data]);
   const dirty =
     key.trim() !== "" ||
-    provider !== (settings.data?.provider ?? "gemini") ||
-    model !== (settings.data?.model ?? "");
+    model !== normalizeAiModel(settings.data?.model);
   function error(e: unknown) {
     toast.show(e instanceof Error ? e.message : "処理に失敗しました", "bad");
   }
   return (
     <section className="card section">
-      <h2>AIキー</h2>
+      <h2>Gemini APIキー</h2>
       <p className="muted">
         キーはサーバーで暗号化して保存します。
       </p>
@@ -375,31 +359,14 @@ function AiKeyCard() {
         </p>
       )}
       <label className="field">
-        <span>プロバイダ</span>
-        <select
-          className="input"
-          value={provider}
-          onChange={(e) => {
-            const p = e.target.value as AiProvider;
-            setProvider(p);
-            setModel(AI_DEFAULT_MODEL[p]);
-          }}
-        >
-          {PROVIDERS.map((p) => (
-            <option key={p.key} value={p.key}>
-              {p.label}
+        <span>モデル</span>
+        <select className="input" value={model} onChange={(e) => setModel(e.target.value)}>
+          {AI_MODELS.gemini.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
             </option>
           ))}
         </select>
-      </label>
-      <label className="field">
-        <span>モデル</span>
-        <input
-          className="input"
-          value={model}
-          placeholder={AI_DEFAULT_MODEL[provider]}
-          onChange={(e) => setModel(e.target.value)}
-        />
       </label>
       <label className="field">
         <span>APIキー</span>
@@ -428,13 +395,13 @@ function AiKeyCard() {
           disabled={save.isPending}
           onClick={() => {
             if (!key.trim() && !settings.data?.hasKey) {
-              setKeyError("APIキーを入力してください。プロバイダの管理画面で発行できます");
+              setKeyError("APIキーを入力してください。Google AI Studio で発行できます");
               return;
             }
             save.mutate(
               {
-                provider,
-                model: model || undefined,
+                provider: "gemini",
+                model,
                 key: key.trim() || undefined,
                 storeOnServer: true,
               },

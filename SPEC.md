@@ -38,7 +38,7 @@ Threadsアカウントを「見る→作る→出す→学ぶ」まで1つの画
 
 ビジネス制約:
 - 買い切り（ライセンスキー）。月額課金なし
-- AIは買い手のキー（Gemini / OpenRouter）で動く。運営側にAI費用が発生しない
+- AIは買い手のキー（Gemini）で動く。運営側にAI費用が発生しない（OpenRouter は 2026-10-22 に廃止）
 - Meta App Reviewを受けない。買い手が自分のMetaアプリでトークンを取得して貼る
 - DM送信・他人のアカウントの取得・Webhookは使わない（API未提供または要審査）
 - ホスティングとDBは運営側が持つ。運営コストは永続するので、販売時に「買い切り＝ホスティング込み◯年間」と期間を明示して売る（年数はオーナー確定待ち）。想定販売本数はD1の10GB上限に直結するため、§2.5 の注記を参照
@@ -55,7 +55,7 @@ Threadsアカウントを「見る→作る→出す→学ぶ」まで1つの画
     ├ fetch handler   … API と SPA配信（Workers Static Assets）
     └ scheduled handler … Cron Triggers（*/5, 毎時, 日次）
 [D1]  SQLite
-[外部] graph.threads.net / generativelanguage.googleapis.com / openrouter.ai / api.resend.com
+[外部] graph.threads.net / generativelanguage.googleapis.com / api.resend.com
 ```
 
 ### 2.2 採用ライブラリ
@@ -288,7 +288,7 @@ CREATE TABLE links (
 );
 
 CREATE TABLE ai_settings (
-  user_id TEXT PRIMARY KEY, provider TEXT NOT NULL,        -- gemini|openrouter
+  user_id TEXT PRIMARY KEY, provider TEXT NOT NULL,        -- gemini（2026-10-22 以降これだけ）
   key_enc TEXT, model TEXT, store_on_server INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL
 );
 CREATE TABLE autopilot (
@@ -802,10 +802,9 @@ AIを使うのは本文の生成と修正だけ（`POST /ai/generate`, `POST /ai
 ### 10.1 プロバイダ
 | provider | エンドポイント | 既定モデル |
 |---|---|---|
-| gemini | `POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key=` | `gemini-2.5-flash` |
-| openrouter | `POST https://openrouter.ai/api/v1/chat/completions`（`Authorization: Bearer`, `HTTP-Referer: APP_ORIGIN`, `X-Title: Threads Autopilot`） | ユーザー選択（既定 `anthropic/claude-sonnet-4.6`） |
+| gemini | `POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key=` | ドロップダウンの2択: `gemini-3.5-flash-lite`（既定）/ `gemini-3.8-flash`。一覧外の保存値は既定に読み替える（2026-10-22） |
 
-- 出力はJSON固定。Gemini は `generationConfig.responseMimeType='application/json'`、OpenRouter は `response_format:{type:'json_object'}`。どちらも失敗時は ```json フェンスを剥がしてパースを試み、それでもダメなら `AI_BAD_OUTPUT`
+- 出力はJSON固定。Gemini の `generationConfig.responseMimeType='application/json'`。失敗時は ```json フェンスを剥がしてパースを試み、それでもダメなら `AI_BAD_OUTPUT`
 - タイムアウト 60秒、1回リトライ
 - キーの所在: `store_on_server=1` ならDBの `key_enc`、`0` ならリクエストの `clientKey`（保存しない）
 
@@ -813,7 +812,7 @@ AIを使うのは本文の生成と修正だけ（`POST /ai/generate`, `POST /ai
 ```
 文体の見本: picks（pickMode=template）または、指定が無ければアカウントの score 上位3本（型が重ならないように）
 リライト元: picks（pickMode=rewrite）の本文（1本目）
-参考情報: sources の content を各3,000文字、合計9,000文字まで。youtube で Gemini の場合は content 空でも `file_data:{file_uri:url}` を contents に追加する（OpenRouter の場合は「文字起こしを貼ってください」の案内を返す）
+参考情報: sources の content を各3,000文字、合計9,000文字まで。youtube は content 空でも `file_data:{file_uri:url}` を contents に追加する
 リンク: アカウントの links（ラベルとURL）
 制約: 500文字、リンク5本まで、リンクの置き場所、NGワード、絵文字方針（設定 `emoji: none|few`）
 ```

@@ -5,13 +5,13 @@
  * `ap_plan` の生成）。採点（§9.2）・集計（`learning`）・枠と型の選択（§9.3 / §9.4）・
  * 重複判定（§8.3）・クリックの按分（§8.5）に AI は一切使わない。
  *
- * - 出力は JSON 固定（Gemini: `responseMimeType`、OpenRouter: `response_format`）
+ * - 出力は JSON 固定（Gemini の `responseMimeType`）。プロバイダは Gemini だけ（2026-10-22）
  * - ダメなら ```json フェンスを剥がしてパース、それでもダメなら `AI_BAD_OUTPUT`
  * - タイムアウト60秒、1回リトライ
  * - キーの所在: `store_on_server=1` なら DB の `key_enc`、`0` ならリクエストの `clientKey`
  */
 import type { AiCandidate, AiHistoryTurn, AiProvider } from "@tap/shared";
-import { AI_DEFAULT_MODEL } from "@tap/shared";
+import { AI_DEFAULT_MODEL, normalizeAiModel } from "@tap/shared";
 import { DEV, type Env } from "../env";
 import type { Budget } from "./budget";
 import { redact } from "./redact";
@@ -228,72 +228,39 @@ export type AiCallInput = {
 export type AiRequestPlan = { url: string; init: RequestInit };
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 /** リクエストの組み立て。テストはここを直接見る。 */
 export function buildRequest(input: AiCallInput): AiRequestPlan {
-  if (input.provider === "gemini") {
-    const parts: unknown[] = [{ text: input.user }];
-    for (const url of input.youtubeUrls ?? []) {
-      parts.push({ file_data: { file_uri: url } });
-    }
-    return {
-      url: `${GEMINI_BASE}/${encodeURIComponent(input.model)}:generateContent?key=${encodeURIComponent(input.apiKey)}`,
-      init: {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: input.system }] },
-          contents: [{ role: "user", parts }],
-          generationConfig: { responseMimeType: "application/json", temperature: 0.9 },
-        }),
-      },
-    };
+  const parts: unknown[] = [{ text: input.user }];
+  for (const url of input.youtubeUrls ?? []) {
+    parts.push({ file_data: { file_uri: url } });
   }
-
   return {
-    url: OPENROUTER_URL,
+    url: `${GEMINI_BASE}/${encodeURIComponent(input.model)}:generateContent?key=${encodeURIComponent(input.apiKey)}`,
     init: {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${input.apiKey}`,
-        "HTTP-Referer": input.appOrigin,
-        "X-Title": "Threads Autopilot",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: input.model,
-        messages: [
-          { role: "system", content: input.system },
-          { role: "user", content: input.user },
-        ],
-        response_format: { type: "json_object" },
-        temperature: 0.9,
+        systemInstruction: { parts: [{ text: input.system }] },
+        contents: [{ role: "user", parts }],
+        generationConfig: { responseMimeType: "application/json", temperature: 0.9 },
       }),
     },
   };
 }
 
 /** 応答から本文テキストを取り出す。形が違えば `AI_BAD_OUTPUT`。 */
-export function readResponseText(provider: AiProvider, json: unknown): string {
-  if (provider === "gemini") {
-    const parts = (json as { candidates?: Array<{ content?: { parts?: Array<{ text?: unknown }> } }> })
-      ?.candidates?.[0]?.content?.parts;
-    const text = (parts ?? [])
-      .map((p) => (typeof p.text === "string" ? p.text : ""))
-      .join("")
-      .trim();
-    if (text === "") {
-      throw new AiError("AI_BAD_OUTPUT", "AIの応答が空でした", JSON.stringify(json).slice(0, 500));
-    }
-    return text;
-  }
-  const content = (json as { choices?: Array<{ message?: { content?: unknown } }> })?.choices?.[0]
-    ?.message?.content;
-  if (typeof content !== "string" || content.trim() === "") {
+export function readResponseText(_provider: AiProvider, json: unknown): string {
+  const parts = (json as { candidates?: Array<{ content?: { parts?: Array<{ text?: unknown }> } }> })
+    ?.candidates?.[0]?.content?.parts;
+  const text = (parts ?? [])
+    .map((p) => (typeof p.text === "string" ? p.text : ""))
+    .join("")
+    .trim();
+  if (text === "") {
     throw new AiError("AI_BAD_OUTPUT", "AIの応答が空でした", JSON.stringify(json).slice(0, 500));
   }
-  return content;
+  return text;
 }
 
 export type AiCallOptions = {
@@ -425,4 +392,9 @@ export async function generateRaw(
 
 export function defaultModel(provider: AiProvider): string {
   return AI_DEFAULT_MODEL[provider];
+}
+
+/** 保存済みのモデル名を、呼び出しに使える名前にする（一覧外は既定）。 */
+export function resolveModel(model: string | null | undefined): string {
+  return normalizeAiModel(model);
 }

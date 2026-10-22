@@ -12,13 +12,14 @@ import {
   readCandidates,
   readResponseText,
   stripJsonFence,
+  resolveModel,
   systemPrompt,
   SOURCE_CHARS_EACH,
   SOURCE_CHARS_TOTAL,
 } from "../src/lib/ai";
 
 const BASE = {
-  model: "gemini-2.5-flash",
+  model: "gemini-3.5-flash-lite",
   apiKey: "AIza-test-key-000",
   system: "システム",
   user: "ユーザー",
@@ -27,9 +28,6 @@ const BASE = {
 
 function geminiOk(text: string): Response {
   return Response.json({ candidates: [{ content: { parts: [{ text }] } }] });
-}
-function openrouterOk(text: string): Response {
-  return Response.json({ choices: [{ message: { content: text } }] });
 }
 
 const GOOD = JSON.stringify({
@@ -42,7 +40,7 @@ describe("buildRequest（SPEC §10.1）", () => {
   it("Gemini は generateContent にキーをクエリで付け、JSON 固定にする", () => {
     const plan = buildRequest({ ...BASE, provider: "gemini" });
     expect(plan.url).toContain(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
     );
     expect(plan.url).toContain("key=AIza-test-key-000");
     const body = JSON.parse(String(plan.init.body));
@@ -63,41 +61,28 @@ describe("buildRequest（SPEC §10.1）", () => {
     );
   });
 
-  it("OpenRouter は chat/completions に Bearer・HTTP-Referer・X-Title を付ける", () => {
-    const plan = buildRequest({
-      ...BASE,
-      provider: "openrouter",
-      model: "anthropic/claude-sonnet-4.6",
-    });
-    expect(plan.url).toBe("https://openrouter.ai/api/v1/chat/completions");
-    const h = plan.init.headers as Record<string, string>;
-    expect(h.Authorization).toBe("Bearer AIza-test-key-000");
-    expect(h["HTTP-Referer"]).toBe("https://app.example.com");
-    expect(h["X-Title"]).toBe("Threads Autopilot");
-    const body = JSON.parse(String(plan.init.body));
-    expect(body.response_format).toEqual({ type: "json_object" });
-    expect(body.messages[0]).toEqual({ role: "system", content: "システム" });
-    expect(body.messages[1]).toEqual({ role: "user", content: "ユーザー" });
-    // OpenRouter に YouTube は渡さない
-    expect(String(plan.init.body)).not.toContain("file_data");
+  it("一覧に無いモデル名（廃止された gemini-2.5-flash など）は既定の 3.5 Flash-Lite に読み替える（DECISIONS 2026-10-22）", () => {
+    expect(resolveModel("gemini-2.5-flash")).toBe("gemini-3.5-flash-lite");
+    expect(resolveModel("anthropic/claude-sonnet-4.6")).toBe("gemini-3.5-flash-lite");
+    expect(resolveModel(null)).toBe("gemini-3.5-flash-lite");
+    expect(resolveModel(" gemini-3.8-flash ")).toBe("gemini-3.8-flash");
   });
 });
 
 /* ── 応答の解析（SPEC §10.1） ────────────────────────── */
 
 describe("応答の解析（SPEC §10.1）", () => {
-  it("Gemini と OpenRouter のどちらからも本文テキストを取り出す", () => {
+  it("Gemini の応答から本文テキストを取り出す", () => {
     expect(readResponseText("gemini", { candidates: [{ content: { parts: [{ text: "あ" }] } }] })).toBe(
       "あ",
     );
-    expect(readResponseText("openrouter", { choices: [{ message: { content: "い" } }] })).toBe("い");
   });
 
   it("形が違えば AI_BAD_OUTPUT", () => {
     expect(() => readResponseText("gemini", { nope: 1 })).toThrow(AiError);
     const e = (() => {
       try {
-        readResponseText("openrouter", { choices: [] });
+        readResponseText("gemini", { candidates: [] });
       } catch (x) {
         return x as AiError;
       }
@@ -168,7 +153,7 @@ describe("callAi（SPEC §10.1 タイムアウト60秒・1回リトライ）", (
   it("2回とも失敗したら AI_FAILED（リトライは1回だけ）", async () => {
     const fetchImpl = vi.fn().mockImplementation(async () => new Response("boom", { status: 500 }));
     const e = (await callAi(
-      { ...BASE, provider: "openrouter" },
+      { ...BASE, provider: "gemini" },
       { fetchImpl: fetchImpl as unknown as typeof fetch },
     ).catch((x) => x)) as AiError;
     expect(fetchImpl).toHaveBeenCalledTimes(2);
@@ -179,16 +164,16 @@ describe("callAi（SPEC §10.1 タイムアウト60秒・1回リトライ）", (
     const fetchImpl = vi
       .fn()
       .mockResolvedValueOnce(Response.json({ nope: 1 }))
-      .mockResolvedValueOnce(openrouterOk(GOOD));
+      .mockResolvedValueOnce(geminiOk(GOOD));
     const raw = await callAi(
-      { ...BASE, provider: "openrouter" },
+      { ...BASE, provider: "gemini" },
       { fetchImpl: fetchImpl as unknown as typeof fetch },
     );
     expect(readCandidates(raw, 1)[0]!.hook).toBe("警告型");
 
     const always = vi.fn().mockImplementation(async () => Response.json({ nope: 1 }));
     const e = (await callAi(
-      { ...BASE, provider: "openrouter" },
+      { ...BASE, provider: "gemini" },
       { fetchImpl: always as unknown as typeof fetch },
     ).catch((x) => x)) as AiError;
     expect(e.code).toBe("AI_BAD_OUTPUT");

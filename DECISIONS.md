@@ -568,3 +568,5 @@ SPEC §5.4・§7.1・§7.8・§8.7・§12.3 Settings・§13 M7・§15 に対し�
 - 登録画面からライセンスキーの入力欄と説明（3ステップの案内）を消し、`POST /api/auth/register` の `license_key` を任意にする。無ければサーバーが `licenses` に1本発行（`generateLicenseKey()`、`note='self-register'`）して `active` にし、そのユーザーに結びつける。キーは応答にも設定画面にも出さない（設定 > セキュリティの「ライセンス」カードを削除。`GET /users/me/license` は残す）
 - `licenses` の行と `users.license_id` はそのまま使う。退会時の `revoked` と管理者の `POST /admin/licenses/:id/revoke`、ログイン時の `LICENSE_REVOKED` 判定は今までどおり効く。管理者が発行したキーを `license_key` で渡す経路も API としては残す（画面からは送らない）
 - 以前の統合ブランチ（取り下げたもの）でも同じ方針で入れていたが、ステージングに出ている `main` には入っていなかった
+- AI は **Gemini だけ**にし、OpenRouter を廃止（ユーザー決定）。設定画面のプロバイダ選択を外して「Gemini APIキー」にし、サーバーは `provider` が `gemini` 以外の保存を `BAD_REQUEST`。staging に OpenRouter の行は無かった
+- Gemini のモデルは**ドロップダウンの2択**に戻す（`AI_MODELS`: `gemini-3.5-flash-lite` = 既定 / `gemini-3.8-flash`）。きっかけ: 統合ブランチのロールバックでモデル欄が自由入力・既定 `gemini-2.5-flash` に戻り、そのまま保存した人が Google 側に無いモデル名で 404（「AIの呼び出しに失敗しました（404）」）になっていた。一覧外のモデル名は保存時・読み出し時・呼び出し時に既定へ読み替え（`normalizeAiModel`）、DB の `gemini-2.5-flash` の行も既定に更新

@@ -44,7 +44,7 @@ export function useSaveAiSettings() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: {
-      provider: "gemini" | "openrouter";
+      provider: "gemini";
       key?: string;
       model?: string;
       storeOnServer: boolean;

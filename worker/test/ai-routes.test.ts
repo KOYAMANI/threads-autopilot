@@ -30,7 +30,7 @@ async function setup(suffix: string) {
 
 async function saveKey(
   cookie: string,
-  options: { storeOnServer: boolean; key?: string; provider?: "gemini" | "openrouter" } = {
+  options: { storeOnServer: boolean; key?: string; provider?: string } = {
     storeOnServer: true,
   },
 ) {
@@ -129,7 +129,7 @@ describe("/api/ai/settings（SPEC §7.6）", () => {
       autopilotAvailable: true,
     });
     expect(JSON.stringify(res.body)).not.toContain("AIzaSECRETKEY0123456789");
-    expect(res.body.data.model).toBe("gemini-2.5-flash");
+    expect(res.body.data.model).toBe("gemini-3.5-flash-lite");
   });
 
   it("端末保存への変更を拒否し、既存のサーバーキーを保持する", async () => {
@@ -145,10 +145,10 @@ describe("/api/ai/settings（SPEC §7.6）", () => {
     await saveKey(cookie, { storeOnServer: true, key: "AIzaKEEPME0123456789" });
     const res = await api("PUT", "/api/ai/settings", {
       cookie,
-      body: { provider: "gemini", model: "gemini-2.5-pro", storeOnServer: true },
+      body: { provider: "gemini", model: "gemini-3.8-flash", storeOnServer: true },
     });
     expect(res.body.data.hasKey).toBe(true);
-    expect(res.body.data.model).toBe("gemini-2.5-pro");
+    expect(res.body.data.model).toBe("gemini-3.8-flash");
     const row = await testDb().first<{ key_enc: string | null }>(
       "SELECT key_enc FROM ai_settings WHERE user_id=?",
       userId,
@@ -174,7 +174,7 @@ describe("POST /api/ai/test（SPEC §7.6）", () => {
     const res = await withAiMock(() => api("POST", "/api/ai/test", { cookie }));
     expect(res.status).toBe(200);
     expect(res.body.data.ok).toBe(true);
-    expect(res.body.data.model).toBe("gemini-2.5-flash");
+    expect(res.body.data.model).toBe("gemini-3.5-flash-lite");
     expect(typeof res.body.data.latencyMs).toBe("number");
   });
 
@@ -253,24 +253,24 @@ describe("POST /api/ai/generate（SPEC §7.6）", () => {
     expect(res.status).toBe(404);
   });
 
-  it("OpenRouter に YouTube のネタ源を渡すと、貼り付けの案内が notes に入る（SPEC §10.2）", async () => {
-    const { cookie, accountId, userId } = await setup("aig6");
-    await saveKey(cookie, { storeOnServer: true, provider: "openrouter", key: "sk-or-TESTKEY0123" });
-    // oEmbed を叩かずに youtube 行を作る（外部 fetch をしない）
-    const sid = crypto.randomUUID();
-    await testDb().run(
-      `INSERT INTO sources (id, user_id, type, title, url, content, char_count, enabled_for_ap, last_used_at, use_count, created_at)
-         VALUES (?,?,'youtube','動画のタイトル','https://www.youtube.com/watch?v=dQw4w9WgXcQ','',0,1,NULL,0,?)`,
-      sid,
-      userId,
-      new Date().toISOString(),
-    );
+  it("OpenRouter は保存できない（Gemini だけ。DECISIONS 2026-10-22）", async () => {
+    const { cookie } = await setup("aig6");
+    const res = await saveKey(cookie, { storeOnServer: true, provider: "openrouter", key: "sk-or-TESTKEY0123" });
+    expect(res.status).toBe(400);
+  });
 
-    const res = await withAiMock(() =>
-      api("POST", "/api/ai/generate", { cookie, body: { accountId, sourceIds: [sid] } }),
-    );
-    expect(res.status).toBe(200);
-    expect((res.body.data.notes as string[]).join()).toContain("文字起こし");
+  it("一覧に無いモデル名で保存しても既定の 3.5 Flash-Lite になり、保存済みの廃止モデルも読み替えて返す", async () => {
+    const { cookie, userId } = await setup("aig7");
+    const res = await api("PUT", "/api/ai/settings", {
+      cookie,
+      body: { provider: "gemini", key: "AIzaTESTKEY0123456789", model: "gemini-2.5-flash", storeOnServer: true },
+    });
+    expect(res.body.data.model).toBe("gemini-3.5-flash-lite");
+    await testDb().run("UPDATE ai_settings SET model='gemini-2.5-flash' WHERE user_id=?", userId);
+    const me = await api("GET", "/api/auth/me", { cookie });
+    expect(me.body.data.ai.model).toBe("gemini-3.5-flash-lite");
+    const t = await withAiMock(() => api("POST", "/api/ai/test", { cookie }));
+    expect(t.body.data.model).toBe("gemini-3.5-flash-lite");
   });
 });
 

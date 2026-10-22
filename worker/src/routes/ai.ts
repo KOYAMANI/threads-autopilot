@@ -19,7 +19,7 @@ import {
   AiError,
   clipSources,
   buildRevisePrompt,
-  defaultModel,
+  resolveModel,
   generateRaw,
   readCandidates,
   systemPrompt,
@@ -33,7 +33,8 @@ import type { Db } from "../lib/db";
 import type { Env } from "../env";
 import { SOURCE_SELECT, type SourceRow } from "./sources";
 
-const PROVIDERS = ["gemini", "openrouter"] as const;
+// プロバイダは Gemini だけ（OpenRouter は 2026-10-22 に廃止）
+const PROVIDERS = ["gemini"] as const;
 
 /** `/ai/test` `/ai/generate` `/ai/revise` の回数制限（1分10回、`ai:<user_id>`）。 */
 async function aiRateLimit(
@@ -131,7 +132,7 @@ function toSummary(row: AiSettingsRow | null) {
   const hasKey = storeOnServer && Boolean(row.key_enc);
   return {
     provider: row.provider as AiProvider,
-    model: row.model,
+    model: resolveModel(row.model),
     hasKey,
     storeOnServer,
     // サーバーが自動生成のときにキーを読めないので、端末保存ではオートパイロットを使えない
@@ -149,7 +150,7 @@ async function resolveKey(
     throw new AiError("AI_KEY_REQUIRED", "AIキーが設定されていません。設定から登録してください");
   }
   const provider = row.provider as AiProvider;
-  const model = row.model && row.model.trim() !== "" ? row.model : defaultModel(provider);
+  const model = resolveModel(row.model);
 
   if (row.store_on_server) {
     if (!row.key_enc) {
@@ -287,7 +288,7 @@ export function aiRoutes() {
       userId,
       input.provider,
       keyEnc,
-      input.model && input.model !== "" ? input.model : defaultModel(input.provider),
+      resolveModel(input.model),
       input.storeOnServer ? 1 : 0,
       new Date().toISOString(),
     );
@@ -392,12 +393,7 @@ export function aiRoutes() {
     const youtubeUrls: string[] = [];
     for (const s of sourceRows) {
       if (s.type !== "youtube" || !s.url) continue;
-      if (key.provider === "gemini") {
-        youtubeUrls.push(s.url);
-      } else if (s.content.trim() === "") {
-        // OpenRouter は動画を読めない（SPEC §10.2）
-        notes.push(`「${s.title}」は動画です。OpenRouter では読めないので、文字起こしを貼ってください`);
-      }
+      youtubeUrls.push(s.url);
     }
 
     const links = await db.all<{ label: string; url: string }>(
