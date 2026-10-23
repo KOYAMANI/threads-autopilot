@@ -328,6 +328,29 @@ CREATE TABLE push_subscriptions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, jso
 CREATE TABLE audit_log (id TEXT PRIMARY KEY, user_id TEXT, at TEXT NOT NULL, action TEXT NOT NULL, detail TEXT);
 ```
 
+`worker/migrations/0013_notes.sql`（note 記事。§7.10）:
+
+```sql
+CREATE TABLE notes (                         -- 1本の note。user_id / account_id は FK ON DELETE CASCADE
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL, account_id TEXT NOT NULL,
+  title TEXT, title_options_json TEXT, memo TEXT, style TEXT, -- story|general
+  volume TEXT,                               -- short|standard|same
+  ref_note TEXT, ref_profile_json TEXT, source_ids_json TEXT, outline_json TEXT,
+  paywall_after INTEGER,                     -- 無料で読める最後の章（0始まり）。NULL は有料ライン無し
+  qa_json TEXT,                              -- [{question, answer}] 最大3
+  status TEXT,                               -- draft|outlined|writing|done
+  engine TEXT, created_at TEXT, updated_at TEXT
+);
+CREATE TABLE note_sections (                 -- 章。note_id は FK ON DELETE CASCADE
+  id TEXT PRIMARY KEY, note_id TEXT NOT NULL, ord INTEGER NOT NULL, heading TEXT, target_chars INTEGER,
+  body TEXT, summary TEXT, char_count INTEGER,
+  status TEXT,                               -- todo|writing|done|failed
+  error TEXT, updated_at TEXT, UNIQUE(note_id, ord)
+);
+```
+
+`worker/migrations/0014_note_source_digest.sql`: `notes.source_digest_json`（source id → 動画の要点。本文の無い YouTube 資料を目次の前に1回だけ Gemini で書き出す）。
+
 `tags_json` の形: `{"hook":"警告型","length":"100-200","slot":"21","daytype":"weekday","source_id":"...","link":"comment"}`
 
 投稿を参照するときは必ず `(account_id, id)` の組で引く。`queue.origin_post_id` は同じ行の `account_id` とセットで `posts` を引く。`post_metrics_history` も `(account_id, post_id)` で引く。
@@ -540,6 +563,7 @@ type PostSummary = { id, text, permalink, postedAt, mediaType, hasImage, views, 
 | §7.1 の全削除（アカウントごと） | `accounts`, `posts`, `post_metrics_history`, `queue`, `learning`, `links`, `autopilot`, `jobs`, `daily_views`, `follower_snapshots`, `click_weeks`, `click_weeks_done`, `demographics`, `ap_log` |
 | `user_id` を持つテーブル | `sessions`, `password_resets`, `sources`, `ai_settings`, `notifications`, `push_subscriptions` |
 | キー付きの記録 | `rate_events`（`login:<email>` / `forgot:<email>` の行） |
+| FK の CASCADE（文を足さない） | `notes`, `note_sections`（0013。`posting_slots` と同じ方式） |
 
 `licenses` は行を残し、`user_id` を外して `status='revoked'`, `revoked_at=now` にする（再利用させない）。`users` 行は削除する。`audit_log` には削除の事実だけ残す（メールは SHA-256 でハッシュ化して保存し、平文を残さない）。完了後にメールで通知する。
 
@@ -572,6 +596,24 @@ token   = base64url(payload) + "." + base64url(sig)
 
 ---
 
+### 7.10 note 記事（長文）
+Threads の投稿とは別に、note.com 向けの長文記事（2〜3万字、有料ライン付き）を書く。本文は章ごとにジョブ `note_write`（§8.2）が書く。原稿の書き出しは画面側（`shared/src/note-export.ts`。Markdown / HTML をコピーして note のエディタに貼る。note に投稿 API は無い）。
+
+| メソッド/パス | 内容 |
+|---|---|
+| `GET /notes?accountId=` | 一覧 `{notes: NoteSummary[]}`（章の done 数と字数は `note_sections` の集計） |
+| `POST /notes` `{accountId, title?, memo}` | 下書きを作る |
+| `GET /notes/:id` | `{note: NoteDetail}`（章の本文込み） |
+| `PATCH /notes/:id` `{title?, memo?, style?, volume?, refNote?, sourceIds?, outline?, paywallAfter?}` | 各手順の保存。`outline` は `normalizeOutline()` で形をそろえる。`status='writing'` のときは 409 |
+| `DELETE /notes/:id` | 削除 |
+| `POST /notes/:id/outline` `{answer?, assume?}` | Gemini が目次を作る（同期・90秒）。確かめたいことがあれば `{status:"question", question, round}` を返し `qa_json` に積む。質問は最大3回（`NOTE_MAX_QUESTIONS`）。4回目以降と `assume` は必ず目次。`ok` なら `title` / `title_options_json` / `outline_json` / `paywall_after` / `ref_profile_json` を保存して `status='outlined'` |
+| `POST /notes/:id/write` `{resume?}` | 章を `todo` で並べ直して `status='writing'`、`note_write` を投入（`force`）。`resume` は「やめる」のあとの続き（書けた章は残す） |
+| `POST /notes/:id/cancel` | `status='outlined'`。pending の `note_write` を消す。走っている章は次の章の前に止まる |
+| `POST /notes/:id/sections/:sid/revise` `{instruction}` | 1章を指示で直す（同期・120秒）。done の章だけ |
+| `POST /notes/:id/sections/:sid/rewrite` | その章だけ `todo` に戻して書き直す |
+
+AI を呼ぶ3本（`outline` / `revise` と、ジョブ）は `/ai/*` と同じ `ai:<user_id>` の回数制限。鍵は `lib/ai-key.ts` の `resolveServerKey()`（サーバー保存のみ）。参考情報は投稿用の 3,000 / 9,000 字ではなく、note 用に各 12,000 / 合計 40,000 字まで渡す（`lib/note-writing.ts`）。
+
 ## 8. ジョブ実行（`lib/jobs.ts`）
 
 ### 8.1 仕組み
@@ -589,6 +631,7 @@ token   = base64url(payload) + "." + base64url(sig)
 | `*/5 * * * *` | `runJobs()` のみ（publish系は常に最優先） |
 | `0 * * * *` | 各アカウント: `insights_recent`（3日以内の投稿）、`ap_plan`、`ap_notify` |
 | `0 18 * * *`（03:00 JST） | 各アカウント: `full_sync` → `insights_daily`（3〜60日）→ 週1で `insights_old`（60日超）、`daily_views`、`clicks`、`followers`、`demographics`（週1）、`ap_score`、`token_refresh`（週1）、`cleanup` |
+| （cron では投入しない） | `note_write`（§7.10）。`POST /notes/:id/write` が投入し、1実行で章1つ書いて自分の続きを投入する（free プランの1実行＝ジョブ1件に合わせる。`publish` の続行と同じ形）。Queue があれば `wakeJob()` で即時、無ければ cron の dispatch。開発（`NOTE_JOBS_INLINE=1`、Queue 無し）はリクエストの裏で続けて動かす |
 
 ### 8.3 `publish` ジョブ（キュー1件＝ステップ実行）
 `queue.status='scheduled' AND scheduled_at<=now AND (next_step_at IS NULL OR next_step_at<=now)` を拾い `publishing` にして進める。
@@ -856,6 +899,17 @@ Resend `POST https://api.resend.com/emails`。差出人 `noreply@<domain>`。テ
 
 ---
 
+### 10.6 note の執筆（`lib/note-writing.ts`）
+3つの呼び出し。入力は JSON 1つで `task` で見分ける（モックも同じ合図を見る）:
+
+| task | 役割 | 出力 |
+|---|---|---|
+| `note-outline` | memo・資料・文体からタイトル案3つと章立て。確かめたいことが1つあれば `needs_input` | `{status, question?, titles[3], chapters[{heading,targetChars,sections[{title,caution?}]}], paywallAfter, refProfile?}` |
+| `note-write` | 章を1つ書く。前の章の要約・資料・参考 note の抜粋（先頭 6,000字）を渡す | `{body, summary, placeholders[]}`。節は `## 1-1 …` で始める。本人しか書けない所は `【 】` |
+| `note-revise` | 1章を指示の範囲だけ直す | `{body, summary}` |
+
+文体は2つ（`story` = 体験談型、`general` = 一般論型。一般論でも読者に語りかけ、他人事にしない）。章は `targetChars` の 0.7〜1.3 倍、検査（`chapterIssue()`）は 0.5〜2.0 倍の外と見出し無しを弾き、1回だけ書き直す。`generateRaw()` には `maxOutputTokens`（章 16,384 / 目次 8,192）を渡し、Gemini の `finishReason=MAX_TOKENS` は `AI_BAD_OUTPUT` にする。
+
 ## 11. モックとシード
 
 - `THREADS_MOCK=1` のとき `lib/threads.ts` は `mock/threads.ts` を使う。モックはメモリ上に投稿を持ち、`POST /me/threads` で投稿を追加して `{id}` を返す。`/insights` は投稿日からの経過で増える擬似数字を返す。`clicks` は本文中URLに対して返す。トークンが `THAAdemo` で始まる場合のみモックに入る（それ以外は実API）
@@ -912,6 +966,12 @@ Resend `POST https://api.resend.com/emails`。差出人 `noreply@<domain>`。テ
 「キーをこの端末にだけ保存」をONにしようとした時点で、保存前に確認を出す:
 「この端末にだけ保存すると、オートパイロットは使えません（サーバーが自動生成のときにキーを読めないため）。それでもよろしいですか？」
 OKなら `localStorage.aiKey` に保存し、サーバーには `storeOnServer=false` を送る。トーストでの事後通知にはしない。既にオートパイロットがONのアカウントがある場合は、その一覧も確認文に添える。
+
+**note（`/app/note`、`/app/note/new`、`/app/note/:id`。試作 `proto/note-flow.html`）**
+- 入口: PC はサイドバー、スマホは ≡ メニュー（下タブには出さない。`TABS` の `phone:false`）
+- 一覧 → 書きたいこと（1/5）→ 資料（2/5）→ 文体と分量（3/5）→ Gemini の質問（最大3回。1画面1問、「答える」/「お任せで進む」）→ 目次を整える（4/5。タイトル案・章と節の編集・有料ラインの位置）→ 書く（5/5）→ 原稿
+- 手順は `?step=`、note は `?id=`。入力は各手順で `PATCH` して保存する（in-memory store は使わない）
+- 原稿: 書いている間は3秒ごとに読み直す。進捗と章の一覧、「自分で埋める箇所 nか所」、章を開いて「指示で直す」「この章を書き直す」、ヘッダの「コピー」（Markdown / HTML、全文 / この章）。PC は2列、スマホは章を全画面で読む
 
 ### 12.4 PWA（M6）
 `vite-plugin-pwa`。マニフェスト名「Threads オートパイロット」、アイコンは飛行機モチーフ（プロトタイプのロゴ）。Service Worker は静的資産のみキャッシュ、APIはキャッシュしない。Push は `push_subscriptions` に登録。
@@ -1013,6 +1073,10 @@ OKなら `localStorage.aiKey` に保存し、サーバーには `storeOnServer=f
 - 複数アカウント（3件上限、切替、削除）、診断、CSV書き出し（`/export/:accountId?format=csv`）、`DELETE /users/me`（退会・全データ削除）、レート制限（`/a/*` を含む）、監査ログ、README
 - README に書くこと: デプロイ手順、買い手向けセットアップ手順のリンク、プライバシーポリシーと特定商取引法表記の置き場、D1 Time Travel を使った復旧方針（Paid 30日）、「買い切り＝ホスティング込み◯年間」の表記
 - 完了条件: 3アカウントで数字とキューが混ざらない（テスト）。同じThreadsアカウントを2ユーザーが接続してもデータが混ざらない（テスト、B1の主キー確認）。退会でユーザーに紐づく行が全部消える（テスト）。`wrangler deploy` で本番に上がる
+
+### M8 note 記事（2026-10-21、第1段: Gemini のみ）
+- §7.10 の API、§8.2 の `note_write`、§10.6 のプロンプト、§12.3 の note 画面。Claude（MCP）で書くのは第2段
+- 完了条件: モックで 一覧 → 目次（質問3回）→ 書く → 章が順に届く → 直す → コピー まで通る。`note_write` は free プランの予算（外部20・DB32）で1章書ける（テスト）。退会・アカウント削除で `notes` / `note_sections` が消える（テスト）
 
 ---
 

@@ -25,6 +25,7 @@ import { queueRoutes } from "./routes/queue";
 import { linkRoutes } from "./routes/links";
 import { healthRoutes } from "./routes/health";
 import { sourceRoutes } from "./routes/sources";
+import { noteRoutes } from "./routes/notes";
 import { aiRoutes } from "./routes/ai";
 import { autopilotRoutes } from "./routes/autopilot";
 import { notificationRoutes, pushRoutes } from "./routes/notifications";
@@ -134,6 +135,7 @@ export function createApp() {
   app.route("/accounts", linkRoutes());
   app.route("/accounts", autopilotRoutes());
   app.route("/sources", sourceRoutes());
+  app.route("/notes", noteRoutes());
   app.route("/ai", aiRoutes());
   app.route("/notifications", notificationRoutes());
   app.route("/push", pushRoutes());
