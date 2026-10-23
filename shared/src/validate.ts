@@ -24,14 +24,18 @@ export type ValidateOptions = {
 export type ValidationIssue = { code: string; message: string; field: string };
 export type ValidationResult = { ok: boolean; issues: ValidationIssue[] };
 
+/** 絵文字を組み立てる文字（絵文字本体・国旗・異体字セレクタ・ZWJ・肌色）。 */
+const EMOJI_PART = /[\p{Extended_Pictographic}\p{Regional_Indicator}\u{FE0F}\u{200D}\u{1F3FB}-\u{1F3FF}]/u;
+const encoder = new TextEncoder();
+
 /**
- * 本文長。API 資料は「絵文字は UTF-8 バイト数で数える」としており、コードポイント数と
- * 食い違う。smoke.ts（SPEC §14-4）で実測して確定するまでは厳しい方を採用する。
+ * 本文長。1文字（コードポイント）を1と数え、絵文字だけは API 資料どおり UTF-8 バイト数で数える。
+ * 日本語 492 文字（1,436 バイト）の投稿が実際に通っているので、日本語をバイト数で数えない（DECISIONS 2026-10-24）。
  */
 export function bodyLength(text: string): number {
-  const codePoints = [...(text ?? "")].length;
-  const utf8Bytes = new TextEncoder().encode(text ?? "").length;
-  return Math.max(codePoints, utf8Bytes);
+  let n = 0;
+  for (const ch of text ?? "") n += EMOJI_PART.test(ch) ? encoder.encode(ch).length : 1;
+  return n;
 }
 
 export function parseNgWords(ngWords: string | string[] | undefined): string[] {

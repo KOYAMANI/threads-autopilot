@@ -8,10 +8,20 @@ describe("bodyLength", () => {
     expect(bodyLength("abc")).toBe(3);
   });
 
-  it("絵文字はバイト数（厳しい方）で数える", () => {
-    // "あ" は1コードポイント・3バイト → 厳しい方は3
-    expect(bodyLength("あ")).toBe(3);
+  it("日本語は1文字1と数え、絵文字だけ UTF-8 バイト数で数える", () => {
+    expect(bodyLength("あ")).toBe(1);
     expect(bodyLength("🙂")).toBe(4);
+    expect(bodyLength("❤️")).toBe(6);
+  });
+
+  it("日本語500文字は通り、501文字は長すぎる", () => {
+    expect(codes(validatePost("あ".repeat(500)))).not.toContain("BODY_TOO_LONG");
+    expect(codes(validatePost("あ".repeat(501)))).toContain("BODY_TOO_LONG");
+  });
+
+  it("絵文字は125個（500バイト）まで", () => {
+    expect(codes(validatePost("😀".repeat(125)))).not.toContain("BODY_TOO_LONG");
+    expect(codes(validatePost("😀".repeat(126)))).toContain("BODY_TOO_LONG");
   });
 });
 

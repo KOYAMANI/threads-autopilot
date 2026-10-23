@@ -440,7 +440,7 @@ async function call(token, method: "GET"|"POST"|"DELETE", path, params, budget):
 | 残り枠 | `GET /me/threads_publishing_limit?fields=quota_usage,config,reply_quota_usage,reply_config` | 診断で表示 |
 
 制限: 本文500文字、1投稿にリンク5本まで、投稿250/日、返信1,000/日。投稿前に `validatePost()` で本文長・リンク本数・NGワードを検査する。
-本文長の数え方はAPI資料が「絵文字はUTF-8バイト数で数える」としており、コードポイント数と食い違う。`scripts/smoke.ts`（§14）で絵文字入りの本文を実測し、`validatePost()` の数え方を確定させる。確定するまでは「コードポイント数と UTF-8 バイト数の厳しい方」で判定する。
+本文長は1文字（コードポイント）を1と数え、絵文字だけはAPI資料どおりUTF-8バイト数で数える（2026-10-24 確定。日本語492文字・1,436バイトの投稿が実際に通っている）。
 
 ---
 
