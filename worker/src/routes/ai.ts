@@ -36,6 +36,9 @@ import { SOURCE_SELECT, type SourceRow } from "./sources";
 // プロバイダは Gemini だけ（OpenRouter は 2026-10-22 に廃止）
 const PROVIDERS = ["gemini"] as const;
 
+/** `/ai/generate` 全体の締め切り。これを過ぎそうなら再試行せず、作れた案で返す。 */
+export const GENERATE_DEADLINE_MS = 100_000;
+
 /** `/ai/test` `/ai/generate` `/ai/revise` の回数制限（1分10回、`ai:<user_id>`）。 */
 async function aiRateLimit(
   c: { get: (k: "db" | "userId") => any },
@@ -406,8 +409,12 @@ export function aiRoutes() {
     const fullSources = sourceRows.filter(s => s.content.trim() !== "").map(s => ({ title: s.title, content: s.content }));
     const sources = clipSources(fullSources);
     if (sources.reduce((n, s) => n + s.content.length, 0) < fullSources.reduce((n, s) => n + s.content.length, 0)) notes.push("参考情報は各3,000文字・合計9,000文字まで使用しています。重要な内容を先頭にまとめてください。");
+    // 構成分析・3案・再試行で AI を何度も呼ぶ。思考型モデルは1回が長いので、全体に締め切りを置き、
+    // 各呼び出しの待ち時間も残りに合わせる（「作成が終わらない」対策、DECISIONS 2026-10-21）
+    const deadline = Date.now() + GENERATE_DEADLINE_MS;
     const result = await compose({ mode: pickMode, references, sources, youtubeUrls, links, instruction: input.instruction ?? "", n, constraints, assume: input.assume },
-      (system, user, videoUrls) => generateRaw(c.env, { ...key, system, user, youtubeUrls: videoUrls, appOrigin: c.env.APP_ORIGIN }, { budget: c.get("budget"), retries: 0 }));
+      (system, user, videoUrls) => generateRaw(c.env, { ...key, system, user, youtubeUrls: videoUrls, appOrigin: c.env.APP_ORIGIN }, { budget: c.get("budget"), retries: 0, timeoutMs: Math.max(10_000, Math.min(60_000, deadline - Date.now())) }),
+      { deadline });
     const { candidates } = result;
 
     if (candidates.length && sourceRows.length > 0) {

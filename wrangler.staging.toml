@@ -70,3 +70,7 @@ max_batch_size = 1
 max_batch_timeout = 1
 max_retries = 3
 max_concurrency = 1
+
+# AI の失敗などの console.error を Workers Logs に残す（秘密は redact() 済み。DECISIONS 2026-10-23）
+[observability]
+enabled = true

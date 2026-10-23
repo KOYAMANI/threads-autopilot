@@ -59,18 +59,48 @@ export function stripJsonFence(text: string): string {
   return t;
 }
 
-/** JSON として読む。フェンス剥がし → 最初の { … } の切り出し、まで試す。 */
+/**
+ * 軽い JSON の崩れを直す。文字列の中の生の改行・タブ（Gemini が日本語の改行をそのまま
+ * 入れてくることがある）をエスケープし、閉じ括弧の直前の余分なカンマを落とす。
+ */
+export function repairJson(text: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (const ch of text) {
+    if (inString) {
+      if (escaped) { escaped = false; out += ch; continue; }
+      if (ch === "\\") { escaped = true; out += ch; continue; }
+      if (ch === '"') { inString = false; out += ch; continue; }
+      if (ch === "\n") { out += "\\n"; continue; }
+      if (ch === "\r") { out += "\\r"; continue; }
+      if (ch === "\t") { out += "\\t"; continue; }
+      if (ch < " ") continue;
+      out += ch;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    out += ch;
+  }
+  return out.replace(/,(\s*[}\]])/g, "$1");
+}
+
+/** JSON として読む。フェンス剥がし → 最初の { … } の切り出し → 軽い修復、まで試す。 */
 export function parseJsonLoose(text: string): unknown {
   const candidates = [text.trim(), stripJsonFence(text)];
   const stripped = stripJsonFence(text);
   const first = stripped.indexOf("{");
   const last = stripped.lastIndexOf("}");
   if (first >= 0 && last > first) candidates.push(stripped.slice(first, last + 1));
+  candidates.push(...candidates.map(repairJson));
 
   for (const c of candidates) {
     if (c === "") continue;
     try {
-      return JSON.parse(c) as unknown;
+      const value = JSON.parse(c) as unknown;
+      // 1件だけの配列で包んでくるモデルがある（[{...}]）。中身を返す
+      if (Array.isArray(value) && value.length === 1 && value[0] && typeof value[0] === "object") return value[0] as unknown;
+      return value;
     } catch {
       // 次の候補
     }
@@ -251,10 +281,14 @@ export function buildRequest(input: AiCallInput): AiRequestPlan {
 
 /** 応答から本文テキストを取り出す。形が違えば `AI_BAD_OUTPUT`。 */
 export function readResponseText(_provider: AiProvider, json: unknown): string {
-  const parts = (json as { candidates?: Array<{ content?: { parts?: Array<{ text?: unknown }> } }> })
-    ?.candidates?.[0]?.content?.parts;
-  const text = (parts ?? [])
-    .map((p) => (typeof p.text === "string" ? p.text : ""))
+  const candidate = (json as { candidates?: Array<{ finishReason?: unknown; content?: { parts?: Array<{ text?: unknown; thought?: unknown }> } }> })
+    ?.candidates?.[0];
+  // 上限で切れた応答は JSON が途中で終わる。「読めない」ではなく原因を出す
+  if (candidate?.finishReason === "MAX_TOKENS") {
+    throw new AiError("AI_BAD_OUTPUT", "AIの応答が長さの上限で途切れました。参考情報を減らしてお試しください", JSON.stringify(json).slice(0, 500));
+  }
+  const text = (candidate?.content?.parts ?? [])
+    .map((p) => (typeof p.text === "string" && p.thought !== true ? p.text : ""))
     .join("")
     .trim();
   if (text === "") {
@@ -304,7 +338,7 @@ async function callOnce(
     throw new AiError(
       "AI_FAILED",
       aborted
-        ? "AIの応答が60秒以内に返りませんでした。もう一度お試しください"
+        ? "AIの応答が時間内に返りませんでした。もう一度お試しください"
         : "AIの呼び出しに失敗しました。キーとモデル名をご確認ください",
       e instanceof Error ? e.message : String(e),
     );

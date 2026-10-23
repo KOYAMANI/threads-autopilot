@@ -194,7 +194,7 @@ describe("callAi（SPEC §10.1 タイムアウト60秒・1回リトライ）", (
       { fetchImpl, timeoutMs: 10, retries: 0 },
     ).catch((x) => x)) as AiError;
     expect(e.code).toBe("AI_FAILED");
-    expect(e.message).toContain("60秒");
+    expect(e.message).toContain("時間内");
   });
 
   it("エラーの原文はキーを伏せてから持つ（redact）", async () => {
@@ -251,5 +251,20 @@ describe("buildContext / systemPrompt（SPEC §10.2 / §10.3）", () => {
     expect(s).toContain("絶対, 必ず");
     expect(s).toContain("絵文字は使わない");
     expect(s).toContain('"candidates"');
+  });
+});
+
+describe("parseJsonLoose の修復", () => {
+  it("文字列の中の生の改行と末尾カンマを直して読む", async () => {
+    const { parseJsonLoose } = await import("../src/lib/ai");
+    expect(parseJsonLoose('{"candidates":[{"body":"1行目\n2行目","comments":[],}]}')).toEqual({ candidates: [{ body: "1行目\n2行目", comments: [] }] });
+  });
+  it("1件だけの配列で包まれた応答は中身を返す", async () => {
+    const { parseJsonLoose } = await import("../src/lib/ai");
+    expect(parseJsonLoose('[{"status":"ok"}]')).toEqual({ status: "ok" });
+  });
+  it("MAX_TOKENS で切れた Gemini 応答は理由つきで弾く", async () => {
+    const { readResponseText } = await import("../src/lib/ai");
+    expect(() => readResponseText("gemini", { candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [{ text: '{"a":' }] } }] })).toThrow("上限");
   });
 });
