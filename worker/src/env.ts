@@ -24,6 +24,8 @@ export type Env = {
   REPLY_TWO_STEP: string;
   /** AI 呼び出しのモック（SPEC §11 と同じ DEV ガード）。`1` で `mock/ai.ts` を使う */
   AI_MOCK?: string;
+  /** [vars]。`1` のときだけオートパイロットを動かす（`lib/autopilot-pause.ts`）。本番とステージングでは設定しない */
+  AUTOPILOT_RUNNING?: string;
 
   // secrets（SPEC §3.2）。開発は .dev.vars
   ENC_KEY: string;

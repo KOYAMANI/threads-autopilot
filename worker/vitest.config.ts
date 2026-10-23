@@ -25,6 +25,8 @@ export default defineConfig(async () => {
             JOB_TIME_BUDGET_MS: "20000",
             THREADS_MOCK: "1",
             REPLY_TWO_STEP: "0",
+            // 既存のオートパイロットのテストを動かすため。本番とステージングでは止めている
+            AUTOPILOT_RUNNING: "1",
             // テスト専用のダミー値。実鍵ではない
             ENC_KEY: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
             PASSWORD_PEPPER: "test-password-pepper-test-password-pepper-0123",

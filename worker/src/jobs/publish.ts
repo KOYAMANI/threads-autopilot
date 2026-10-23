@@ -22,6 +22,7 @@ import { sendEmail } from "../lib/email";
 import { notifyTargets, pushToUser } from "../lib/notify";
 import { buildUpsertChunks, type Db } from "../lib/db";
 import { redact } from "../lib/redact";
+import { autopilotRunning } from "../lib/autopilot-pause";
 import { enqueueJob, type JobContext, type RunningJob } from "../lib/jobs";
 import {
   findDuplicate,
@@ -700,11 +701,12 @@ export async function publishJob(ctx: JobContext, job: RunningJob): Promise<void
     const row = await ctx.db.first<QueueRow>(
       `SELECT ${QUEUE_SELECT} FROM queue
          WHERE account_id=? AND status IN ('scheduled','publishing')
-           AND (status='publishing' OR source<>'autopilot' OR EXISTS (
-             SELECT 1 FROM autopilot ap WHERE ap.account_id=queue.account_id AND ap.enabled=1))
+           AND (status='publishing' OR source<>'autopilot' OR (? AND EXISTS (
+             SELECT 1 FROM autopilot ap WHERE ap.account_id=queue.account_id AND ap.enabled=1)))
            AND scheduled_at<=? AND (next_step_at IS NULL OR next_step_at<=?)
          ORDER BY scheduled_at ASC LIMIT 1`,
       account.id,
+      autopilotRunning(ctx.env) ? 1 : 0,
       nowIso,
       nowIso,
     );
@@ -715,10 +717,10 @@ export async function publishJob(ctx: JobContext, job: RunningJob): Promise<void
         `UPDATE queue SET status='publishing', updated_at=? WHERE id=? AND status='scheduled'
            AND updated_at=? AND scheduled_at=? AND body=? AND comments_json=? AND image_url IS ?
            AND reply_control=? AND next_step_at IS ? AND step=?
-           AND (source<>'autopilot' OR EXISTS (
-             SELECT 1 FROM autopilot ap WHERE ap.account_id=queue.account_id AND ap.enabled=1))`,
+           AND (source<>'autopilot' OR (? AND EXISTS (
+             SELECT 1 FROM autopilot ap WHERE ap.account_id=queue.account_id AND ap.enabled=1)))`,
         nowIso, row.id, row.updated_at, row.scheduled_at, row.body, row.comments_json, row.image_url,
-        row.reply_control, row.next_step_at, row.step,
+        row.reply_control, row.next_step_at, row.step, autopilotRunning(ctx.env) ? 1 : 0,
       );
       if (claim.changes === 0) continue;
       row.status = "publishing";

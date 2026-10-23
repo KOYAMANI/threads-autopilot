@@ -15,6 +15,11 @@ import { apNotifyJob } from "./notify";
 import { apScoreJob } from "./score";
 import { sheetsSyncJob } from "./sheets";
 import { dailyDigestJob } from "./digest";
+import { autopilotRunning } from "../lib/autopilot-pause";
+
+/** オートパイロットを止めている間は、残っていたジョブが動いても何もしない */
+const unlessPaused = (handler: JobHandler): JobHandler => (ctx, job) =>
+  autopilotRunning(ctx.env) ? handler(ctx, job) : Promise.resolve();
 
 export const HANDLERS: Partial<Record<JobType, JobHandler>> = {
   publish: publishJob,
@@ -29,8 +34,8 @@ export const HANDLERS: Partial<Record<JobType, JobHandler>> = {
   clicks: clicksJob,
   token_refresh: tokenRefreshJob,
   cleanup: cleanupJob,
-  ap_plan: apPlanJob,
-  ap_notify: apNotifyJob,
-  ap_score: apScoreJob,
+  ap_plan: unlessPaused(apPlanJob),
+  ap_notify: unlessPaused(apNotifyJob),
+  ap_score: unlessPaused(apScoreJob),
   daily_digest: dailyDigestJob,
 };

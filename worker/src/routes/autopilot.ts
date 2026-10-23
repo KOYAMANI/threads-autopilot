@@ -25,6 +25,7 @@ import {
 import { fail, type AppEnv } from "../app";
 import { loadOwnedAccount } from "../lib/accounts";
 import { audit } from "../lib/audit";
+import { AUTOPILOT_PAUSED_MESSAGE, autopilotRunning } from "../lib/autopilot-pause";
 import {
   AUTOPILOT_SELECT,
   BLOCKER_MESSAGE,
@@ -222,6 +223,9 @@ export function autopilotRoutes() {
       accountStatus: account.status,
     });
 
+    if (input.enabled === true && !autopilotRunning(c.env)) {
+      return fail("AP_BLOCKED", AUTOPILOT_PAUSED_MESSAGE, 409);
+    }
     // ON にできない理由があるときは、理由を添えて断る（画面はトーストに出す。SPEC §12.3）
     if (input.enabled === true && blockers.length > 0) {
       return fail("AP_BLOCKED", BLOCKER_MESSAGE[blockers[0]!], 409);

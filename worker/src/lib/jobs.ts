@@ -15,6 +15,7 @@ import { budgetFromEnv, createBudget, isBudgetExceeded, type Budget } from "./bu
 import { createDb, type Db } from "./db";
 import { markNeedsReauth, isReauthError } from "./accounts";
 import { redact } from "./redact";
+import { autopilotRunning } from "./autopilot-pause";
 import { ThreadsApiError } from "./threads-error";
 import { HANDLERS } from "../jobs/registry";
 
@@ -220,8 +221,9 @@ async function enqueueForCronInner(ctx: JobContext, cron: string): Promise<void>
   for (const sweep of sweeps) {
     const accounts = await ctx.sys.all<{id:string}>("SELECT id FROM accounts WHERE status='ok' AND id>? ORDER BY id LIMIT 200", sweep.cursor);
     const weekly = new Date(sweep.period).getUTCDay() === WEEKLY_UTC_DAY;
-    const types: JobType[] = sweep.kind === "hourly" ? ["insights_recent","ap_plan","ap_notify"] :
-      ["full_sync","insights_daily","daily_views","clicks","followers","ap_score", ...(weekly ? ["insights_old","demographics","token_refresh"] as JobType[] : [])];
+    const ap = autopilotRunning(ctx.env);
+    const types: JobType[] = sweep.kind === "hourly" ? ["insights_recent", ...(ap ? ["ap_plan","ap_notify"] as JobType[] : [])] :
+      ["full_sync","insights_daily","daily_views","clicks","followers", ...(ap ? ["ap_score"] as JobType[] : []), ...(weekly ? ["insights_old","demographics","token_refresh"] as JobType[] : [])];
     const end = accounts.at(-1)?.id ?? sweep.cursor;
     const statements: Array<{sql:string;params:unknown[]}> = types.map(type => ({
       sql: `INSERT OR IGNORE INTO jobs(id,type,account_id,state_json,status,priority,next_run_at,attempts,created_at,updated_at)
