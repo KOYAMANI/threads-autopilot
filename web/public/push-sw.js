@@ -15,13 +15,13 @@
 self.addEventListener("push", (event) => {
   // Lock screens and delayed delivery on shared devices must not reveal account names or drafts.
   // Ignore older payloads too, including notifications queued before a logout.
-  const data = { title: "Threads オートパイロット", body: "アプリに新しいお知らせがあります。ログインして確認してください。", url: "/app/queue" };
+  const data = { title: "スレメイト", body: "アプリに新しいお知らせがあります。ログインして確認してください。", url: "/app/queue" };
 
   event.waitUntil(
     self.registration.showNotification(data.title, {
       body: data.body,
       icon: "/icon-192.png",
-      badge: "/icon-192.png",
+      badge: "/badge-96.png",
       // 同じ tag の通知は置き換わる。下書きの通知が何枚も溜まらないようにする
       tag: "tap-notification",
       renotify: true,

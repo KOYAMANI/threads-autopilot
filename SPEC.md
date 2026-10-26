@@ -1,4 +1,4 @@
-# Threads オートパイロット 実装仕様書
+# スレメイト 実装仕様書
 
 版: 1.1（2026-09-03）
 v1.0 からの変更: `DECISIONS.md` 参照
@@ -914,7 +914,7 @@ Resend `POST https://api.resend.com/emails`。差出人 `noreply@<domain>`。テ
 OKなら `localStorage.aiKey` に保存し、サーバーには `storeOnServer=false` を送る。トーストでの事後通知にはしない。既にオートパイロットがONのアカウントがある場合は、その一覧も確認文に添える。
 
 ### 12.4 PWA（M6）
-`vite-plugin-pwa`。マニフェスト名「Threads オートパイロット」、アイコンは飛行機モチーフ（プロトタイプのロゴ）。Service Worker は静的資産のみキャッシュ、APIはキャッシュしない。Push は `push_subscriptions` に登録。
+`vite-plugin-pwa`。マニフェスト名「スレメイト」、アイコンはロゴ「スレメイト」の a マーク（黒の角丸に白の a。`scripts/make-icons.mjs`）。Service Worker は静的資産のみキャッシュ、APIはキャッシュしない。Push は `push_subscriptions` に登録。
 
 ### 12.5 デザイン原則
 `.claude/skills/apple-design/SKILL.md` を正とする。フロントを実装・レビューするときは必ず読む。

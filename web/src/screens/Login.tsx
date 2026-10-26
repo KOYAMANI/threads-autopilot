@@ -1,7 +1,7 @@
 /**
  * Login（SPEC §12.1 `/login`）。
  * 登録 / ログインの切替、「パスワードを忘れた」導線、`?reset=<token>` の再設定フォーム。
- * 見た目は M3（prototype 到着後）に作り直す。ここは動く導線を置くだけ。
+ * 見た目は左にロゴ、右にフォームの2カラム（スマホはロゴの下にフォーム。DECISIONS 2026-10-26）。
  */
 import { useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -41,12 +41,13 @@ export default function Login() {
 function Shell({ title, lead, children }: { title: string; lead: string; children: React.ReactNode }) {
   return (
     <main className="auth-layout">
-      <aside className="auth-story"><div className="brand"><span className="brand-symbol">a</span><span>autopilot<span className="brand-sub">for Threads</span></span></div>
-        <div><h2>伝わる投稿を。<br />続けられる仕組みを。</h2><p>振り返る、書く、届ける。<br />あなたのThreadsを、ひとつの場所で。</p>
-        <div className="auth-flow"><span>01<b>分析する</b></span><span>02<b>投稿をつくる</b></span><span>03<b>予約する</b></span></div></div>
-        <small>Threads オートパイロット</small></aside>
+      <aside className="auth-story">
+        <img className="auth-story-logo" src="/logo.png" alt="スレメイト" />
+        <p>振り返る、書く、届ける。<br />あなたのThreadsを、ひとつの場所で。</p>
+        <small>© スレメイト</small>
+      </aside>
       <div className="auth-form-wrap"><div className="auth-form-inner">
-      <div className="brand auth-mobile-brand"><span className="brand-symbol">a</span><span>autopilot<span className="brand-sub">for Threads</span></span></div>
+      <img className="auth-mobile-brand" src="/logo.png" alt="スレメイト" />
       <h1 style={{ fontSize: 24 }}>{title}</h1>
       <p className="muted" style={{ marginTop: 6, marginBottom: "calc(var(--sp) * 3)" }}>
         {lead}
@@ -118,7 +119,7 @@ function AuthForm() {
       ? "メールアドレスとパスワードで登録します"
       : mode === "forgot"
         ? "登録したメールアドレスに再設定リンクを送ります"
-        : "Threads オートパイロット";
+        : "おかえりなさい";
 
   return (
     <Shell title={title} lead={lead}>
@@ -168,7 +169,7 @@ function AuthForm() {
         )}
 
         <div style={{ marginTop: "calc(var(--sp) * 3)" }}>
-          <button aria-busy={busy} className="btn" type="submit" disabled={busy}>
+          <button aria-busy={busy} className="btn btn-brand" type="submit" disabled={busy}>
             {busy ? "送信中…" : mode === "register" ? "登録する" : mode === "forgot" ? "リンクを送る" : "ログイン"}
           </button>
         </div>
@@ -255,7 +256,7 @@ function ResetForm({ token, onDone }: { token: string; onDone: () => void }) {
         )}
 
         <div style={{ marginTop: "calc(var(--sp) * 3)" }}>
-          <button aria-busy={reset.isPending} className="btn" type="submit" disabled={reset.isPending}>
+          <button aria-busy={reset.isPending} className="btn btn-brand" type="submit" disabled={reset.isPending}>
             {reset.isPending ? "設定中…" : "設定する"}
           </button>
         </div>

@@ -24,8 +24,8 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["apple-touch-icon.png", "icon.svg"],
       manifest: {
-        name: "Threads オートパイロット",
-        short_name: "オートパイロット",
+        name: "スレメイト",
+        short_name: "スレメイト",
         description: "Threads の投稿を、見る・作る・出す・学ぶまで1つの画面で回す",
         lang: "ja",
         start_url: "/app/home",

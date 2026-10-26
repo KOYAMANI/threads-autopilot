@@ -148,7 +148,7 @@ export async function pushToUser(
       removed++;
       continue;
     }
-    const res = await sendPush({ publicKey, privateKey }, sub, {title:"Threads オートパイロット",body:"アプリに新しいお知らせがあります。ログインして確認してください。",url:"/app/queue"}, subject);
+    const res = await sendPush({ publicKey, privateKey }, sub, {title:"スレメイト",body:"アプリに新しいお知らせがあります。ログインして確認してください。",url:"/app/queue"}, subject);
     if (res.ok) {
       sent++;
       if (row.fail_count > 0) {

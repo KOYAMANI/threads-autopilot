@@ -29,6 +29,9 @@
   --ap-soft: #e9edfd;
   --ap-ink: #1b33b8;
 
+  /* ロゴ「スレメイト」の紫→ピンク。ログインのボタンだけに使う */
+  --brand-grad: linear-gradient(100deg, #7a45f6, #c837e6 55%, #ee3c98);
+
   /* 状態色 */
   --amber: #d98e1f;
   --amber-soft: #fbf0da;

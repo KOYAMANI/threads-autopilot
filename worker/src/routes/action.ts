@@ -56,7 +56,7 @@ function page(env: Env, out: Outcome, formAction: string | null): Response {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>${esc(out.title)}｜Threads オートパイロット</title>
+<title>${esc(out.title)}｜スレメイト</title>
 <style>
   :root { color-scheme: light dark; }
   body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;

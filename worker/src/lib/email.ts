@@ -76,7 +76,7 @@ function render(template: EmailTemplate, vars: Record<string, string>): Rendered
   switch (template) {
     case "password_reset":
       return {
-        subject: "【Threads オートパイロット】パスワードの再設定",
+        subject: "【スレメイト】パスワードの再設定",
         text: [
           "パスワードの再設定リンクをお送りします。",
           "",
@@ -116,15 +116,15 @@ function render(template: EmailTemplate, vars: Record<string, string>): Rendered
       );
       return {
         subject: cancelMode
-          ? `【Threads オートパイロット】${vars.when ?? ""} に投稿します（取り消せます）`
-          : `【Threads オートパイロット】${vars.when ?? ""} の下書きを承認してください`,
+          ? `【スレメイト】${vars.when ?? ""} に投稿します（取り消せます）`
+          : `【スレメイト】${vars.when ?? ""} の下書きを承認してください`,
         text: lines.join("\n"),
       };
     }
 
     case "ap_published":
       return {
-        subject: "【Threads オートパイロット】自動投稿しました",
+        subject: "【スレメイト】自動投稿しました",
         text: [
           `${vars.when ?? ""} に自動で投稿しました。`,
           "",
@@ -140,7 +140,7 @@ function render(template: EmailTemplate, vars: Record<string, string>): Rendered
 
     case "publish_failed":
       return {
-        subject: "【Threads オートパイロット】投稿に失敗しました",
+        subject: "【スレメイト】投稿に失敗しました",
         text: [
           `${vars.username ?? ""} の投稿に失敗しました。`,
           "",
@@ -155,7 +155,7 @@ function render(template: EmailTemplate, vars: Record<string, string>): Rendered
 
     case "token_expiring":
       return {
-        subject: "【Threads オートパイロット】トークンの期限が近づいています",
+        subject: "【スレメイト】トークンの期限が近づいています",
         text: [
           `${vars.username ?? ""} のトークンが、あと${vars.days ?? ""}日で切れます。`,
           "",
@@ -167,7 +167,7 @@ function render(template: EmailTemplate, vars: Record<string, string>): Rendered
 
     case "needs_reauth":
       return {
-        subject: "【Threads オートパイロット】再接続が必要です",
+        subject: "【スレメイト】再接続が必要です",
         text: [
           `${vars.username ?? ""} のトークンが無効になりました。`,
           "",
@@ -179,7 +179,7 @@ function render(template: EmailTemplate, vars: Record<string, string>): Rendered
 
     case "ap_stopped":
       return {
-        subject: "【Threads オートパイロット】オートパイロットを止めました",
+        subject: "【スレメイト】オートパイロットを止めました",
         text: [
           `${vars.username ?? ""} のオートパイロットを止めました。`,
           "",
@@ -193,7 +193,7 @@ function render(template: EmailTemplate, vars: Record<string, string>): Rendered
 
     case "account_deleted":
       return {
-        subject: "【Threads オートパイロット】退会が完了しました",
+        subject: "【スレメイト】退会が完了しました",
         text: [
           "退会の手続きが終わりました。",
           "",
@@ -208,7 +208,7 @@ function render(template: EmailTemplate, vars: Record<string, string>): Rendered
 
     case "daily_digest":
       return {
-        subject: `【Threads オートパイロット】${vars.date ?? ""} のまとめ`,
+        subject: `【スレメイト】${vars.date ?? ""} のまとめ`,
         text: [
           `${vars.date ?? ""} の結果です。`,
           "",
@@ -223,7 +223,7 @@ function render(template: EmailTemplate, vars: Record<string, string>): Rendered
 
     default:
       return {
-        subject: `【Threads オートパイロット】${template as string}`,
+        subject: `【スレメイト】${template as string}`,
         text: `このテンプレート（${template as string}）は未実装です。`,
       };
   }

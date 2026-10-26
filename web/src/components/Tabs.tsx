@@ -25,7 +25,7 @@ export default function Tabs({ account, onAccount, email, onLogout }: { account:
 
   return (
     <nav className="chrome tabs" aria-label="画面の切り替え">
-      <div className="sidebar-top"><div className="brand"><span className="brand-symbol">a</span><span>autopilot<span className="brand-sub">for Threads</span></span></div>
+      <div className="sidebar-top"><div className="brand"><img className="brand-logo" src="/logo.png" alt="スレメイト" /></div>
         <button className="sidebar-account" onClick={onAccount}><AccountAvatar account={account} /><span><strong>{account ? `@${account.username}` : "アカウントを接続"}</strong><small>Threads ワークスペース</small></span><span aria-hidden="true">⌄</span></button>
         <button className="btn sidebar-compose" onClick={() => navigate("/app/create")}><PenIcon size={16} />投稿をつくる</button>
         <p className="nav-caption">メニュー</p>

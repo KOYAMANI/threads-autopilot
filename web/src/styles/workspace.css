@@ -30,8 +30,7 @@ button,input,select,textarea { font-family:inherit; }
 .page-heading { display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-bottom:1.8rem; }
 .page-heading .muted { margin-top:.45rem; }
 .brand { display:flex; align-items:center; gap:.7rem; color:var(--ink); font-size:1.18rem; font-weight:750; letter-spacing:-.035em; line-height:1.2; }
-.brand-symbol { display:grid; place-items:center; width:35px; height:35px; background:#242529; color:white; border-radius:10px; font-size:1.7rem; font-weight:600; font-family:Georgia,serif; font-style:italic; }
-.brand-sub { display:block; font-size:.625rem; color:var(--ink3); letter-spacing:.02em; font-weight:500; margin-top:3px; }
+.brand-logo { display:block; height:52px; width:auto; }
 .sidebar-top,.sidebar-bottom,.nav-desktop-label,.topbar-breadcrumb { display:none; }
 .apbar { border:0; border-bottom:1px solid var(--line); background:#f6f6f8; color:var(--ink2); }
 .topbar { box-shadow:none; border-bottom:1px solid var(--line); }
@@ -106,13 +105,11 @@ button,input,select,textarea { font-family:inherit; }
   .kpi > .value { font-size:1.85rem; }
   .password-fields,.onboarding-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .auth-layout { grid-template-columns:minmax(0,1fr) minmax(460px,1fr); }
-  .auth-story { display:flex; flex-direction:column; justify-content:space-between; background:#f3f3f5; margin:1rem; padding:2.5rem; border:1px solid var(--line); border-radius:14px; }
-  .auth-story h2 { font-size:clamp(1.7rem,3.2vw,3rem); font-weight:550; letter-spacing:-.05em; line-height:1.55; margin:1rem 0; }
-  .auth-story p:not(.eyebrow) { color:var(--ink2); font-size:.875rem; line-height:2; }
-  .auth-story > small { color:var(--ink3); font-size:.625rem; }
-  .auth-flow { display:flex; flex-wrap:wrap; gap:1.75rem; margin-top:3rem; }
-  .auth-flow > span { color:var(--ink3); font-size:.625rem; }
-  .auth-flow b { display:block; color:var(--ink2); font-weight:500; font-size:.75rem; margin-top:.5rem; }
+  /* ロゴ1枚とひとことだけ。ロゴの白黒のフチが映える明るい面に置く */
+  .auth-story { position:relative; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; background:#f6f6f8; margin:1rem; padding:3rem; border:1px solid var(--line); border-radius:16px; }
+  .auth-story-logo { width:min(78%,440px); height:auto; }
+  .auth-story p { margin:2.5rem 0 0; color:var(--ink2); font-size:1.05rem; line-height:1.9; }
+  .auth-story > small { position:absolute; bottom:1.5rem; color:var(--ink3); font-size:.625rem; }
   .auth-form-wrap { padding:3rem; }
 }
 @media (min-width:1024px) {
@@ -333,7 +330,8 @@ button[aria-busy="true"]::before { content:""; flex:none; width:.9em; height:.9e
 .more p { margin-top:.5rem; }
 
 /* Auth: brand above the form on phones, no black strip. */
-.auth-mobile-brand { margin-bottom:2rem; }
+.auth-mobile-brand { display:block; height:56px; width:auto; margin-bottom:2.25rem; }
+.btn-brand { background:var(--brand-grad); }
 @media (min-width:760px) { .auth-mobile-brand { display:none; } }
 .auth-form-wrap { align-items:start; }
 @media (min-width:760px) { .auth-form-wrap { align-items:center; } }
