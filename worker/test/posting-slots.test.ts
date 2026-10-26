@@ -5,7 +5,7 @@ import { api, countRows, insertAccount, registerUser, testDb } from "./helpers";
 import { loadAccount } from "../src/lib/accounts";
 import { availablePostingSlots } from "../src/lib/posting-schedule";
 import { planAccount } from "../src/jobs/plan";
-import { preflight } from "../src/jobs/publish";
+import { preflight, publishJob } from "../src/jobs/publish";
 import { QUEUE_SELECT, type QueueRow } from "../src/lib/queue";
 import { makeJobContext } from "../src/lib/jobs";
 
@@ -104,6 +104,17 @@ describe("posting schedule APIs", () => {
     const make = (at: string) => api("POST", `${f.base}/queue`, { cookie: f.cookie, body: { status: "scheduled", scheduledAt: at, reserveSlot: true, body: `時間 ${at}` } });
     const result = await Promise.all([make("2026-09-08T01:00:00.000Z"), make("2026-09-08T01:05:00.000Z")]);
     expect(result.map((r) => r.status).sort()).toEqual([201, 409]);
+  });
+  // hiroko_recovery 2026-10-25: 枠の予約の15分後に時刻指定の予約があり、枠の側が投稿中に移れず後ろも全部止まった
+  it("publishes a slot appointment even when a custom-time post sits within the gap", async () => {
+    const f = await fixture();
+    const slot = await insertManaged(f.accountId, "2026-09-07T12:00:00.000Z", "manual");
+    const custom = crypto.randomUUID();
+    await testDb().run(`INSERT INTO queue (id,account_id,status,scheduled_at,body,source,created_at,updated_at)
+      VALUES (?,?,'scheduled','2026-09-07T12:15:00.000Z','時刻指定の本文','manual',?,?)`, custom, f.accountId, NOW.toISOString(), NOW.toISOString());
+    await publishJob(makeJobContext(env, { now: NOW }), { id: "job", type: "publish", accountId: f.accountId, attempts: 0, state: {} });
+    const rows = await testDb().all<{ id: string; status: string }>("SELECT id, status FROM queue WHERE account_id=?", f.accountId);
+    expect(Object.fromEntries(rows.map((r) => [r.id, r.status]))).toEqual({ [slot]: "done", [custom]: "done" });
   });
   it("still blocks scheduling without a connected Threads account", async () => {
     const f = await fixture();
