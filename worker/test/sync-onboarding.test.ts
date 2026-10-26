@@ -7,7 +7,7 @@ import * as threads from '../src/lib/threads';
 import worker from '../src/index';
 import type { Env } from '../src/env';
 
-afterEach(()=>vi.restoreAllMocks());
+afterEach(()=>{vi.restoreAllMocks();vi.useRealTimers();});
 const queue = () => ({sendBatch:vi.fn().mockResolvedValue(undefined),send:vi.fn().mockResolvedValue(undefined)});
 describe('initial analytics ingestion',()=>{
   it('immediately dispatches this account’s complete initial data jobs within the free budget',async()=>{
@@ -38,6 +38,8 @@ describe('initial analytics ingestion',()=>{
     expect(status.body.data).toMatchObject({running:false,status:'failed',progress:2,posts:0});expect(status.body.data.message).toBeTruthy();
   });
   it('initial sync populates account analytics and schedules post insights before the next cron',async()=>{
+    // モックの投稿は 2026-08-05〜09-01 に固定。「直近30日」に入る日を「いま」にする
+    vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-09-06T00:00:00Z'));
     const u=await registerUser();const accountId=await insertAccount({userId:u.userId});
     const ctx=jobs.makeJobContext(env);
     await jobs.enqueueAccountSync(ctx,accountId);await jobs.runJobs(ctx);

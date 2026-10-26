@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, insertAccount, mockToken, registerUser, testDb } from "./helpers";
 import { ACCOUNT_CHILD_TABLES } from "../src/lib/accounts";
 import { enqueueJob, makeJobContext, runJobs } from "../src/lib/jobs";
@@ -318,6 +318,14 @@ describe("sync / diagnose / patch（SPEC §7.1）", () => {
 });
 
 describe("GET /api/accounts/:id/dashboard（SPEC §7.2）", () => {
+  // 集計の期間は「いま」から数える。同期を走らせた NOW を「いま」にしないと、
+  // 実際の日付が進むにつれて同期したデータが期間の外に出てしまう
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => vi.useRealTimers());
+
   async function seeded(suffix: string) {
     const u = await registerUser();
     const accountId = await insertAccount({ userId: u.userId, token: mockToken(suffix) });
