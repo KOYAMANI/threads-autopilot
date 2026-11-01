@@ -41,7 +41,7 @@ const VOLUMES: Array<{ id: NoteVolume; label: string }> = [
   { id: "same", label: "前回と同じ" },
 ];
 
-const MEMO_PLACEHOLDER = "・ご飯がなんで大切か\nリスク（病気とか）\n・基準\n高ければいい訳ではない\n・選び方（子犬／成犬／老犬）";
+const MEMO_PLACEHOLDER = "・なぜ食事制限だけだと痩せないか\nリバウンドしやすい\n・基準\n体重より体脂肪率を見る\n・やり方（食事／運動／睡眠）";
 
 function historyIdx(): number | undefined {
   const s = window.history.state as { idx?: number } | null;
@@ -204,7 +204,7 @@ export default function NoteWizard() {
       <>
         <h1 className="wizard-title">何について書きますか？</h1>
         <p className="wizard-sub">箇条書きで大丈夫です。順番や言い回しは、あとで整えます。</p>
-        <label className="field" htmlFor="note-title"><span>仮タイトル（任意）</span><input id="note-title" className="input" value={title} maxLength={120} placeholder="例：犬のごはん選び" onChange={(e) => setTitle(e.target.value)} /></label>
+        <label className="field" htmlFor="note-title"><span>仮タイトル（任意）</span><input id="note-title" className="input" value={title} maxLength={120} placeholder="例：リバウンドしないダイエット" onChange={(e) => setTitle(e.target.value)} /></label>
         <label className="field" htmlFor="note-memo"><span>書きたいこと</span><GrowingText id="note-memo" value={memo} placeholder={MEMO_PLACEHOLDER} rows={7} maxLength={20000} onChange={setMemo} /></label>
       </>
     );
