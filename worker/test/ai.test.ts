@@ -229,6 +229,16 @@ describe("callAi（SPEC §10.1 タイムアウト60秒・1回リトライ）", (
     expect(e.raw).toContain("high demand");
   });
 
+  it("429（利用上限）は引き直さず、Google AI Studio の利用枠を案内する", async () => {
+    const fetchImpl = vi.fn().mockImplementation(async () => new Response("quota", { status: 429 }));
+    const e = (await callAi(
+      { ...BASE, provider: "gemini" },
+      { fetchImpl: fetchImpl as unknown as typeof fetch, busyRetryDelayMs: 0 },
+    ).catch((x) => x)) as AiError;
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(e.message).toContain("Google AI Studio");
+  });
+
   it("エラーの原文はキーを伏せてから持つ（redact）", async () => {
     const fetchImpl = vi
       .fn()

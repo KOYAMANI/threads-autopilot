@@ -333,7 +333,7 @@ async function callOnce(
   try {
     const res = await doFetch(plan.url, { ...plan.init, signal: controller.signal });
     const text = await res.text();
-    if (res.status === 429) throw new AiError("AI_FAILED", "AIサービスの利用制限に達しました。時間を置くか、プロバイダーの利用枠をご確認ください", null, false);
+    if (res.status === 429) throw new AiError("AI_FAILED", "GoogleのAIの利用上限に達しました。時間を置くか、Google AI Studio で利用枠をご確認ください", null, false);
     // 503 はキーではなく Google 側の混雑。キーを入れ直させないよう文言を分け、通常の引き直しはしない（callAi が待ってから1回だけ）
     if (res.status === 503) throw new AiBusyError(text.slice(0, 500));
     if (!res.ok) {

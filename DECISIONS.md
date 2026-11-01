@@ -617,3 +617,4 @@ SPEC §5.4・§7.1・§7.8・§8.7・§12.3 Settings・§13 M7・§15 に対し�
 
 - 10/31〜11/1 に投稿作成とキーのテストが Gemini の 503（`This model is currently experiencing high demand` / `UNAVAILABLE`）で落ち続け、「AIの呼び出しに失敗しました（503）」を見た利用者がキーを何度も入れ直していた（Workers Logs の `[ai]` で確認）
 - 503 は `AiBusyError` にして「GoogleのAIが混雑…（APIキーの入れ直しは不要です）」を返す。`callAi` は `retries` とは別枠で 3 秒待って1回だけ引き直す（作成画面の `retries: 0` の呼び出しも含む）。続けて 503 ならそこで止める
+- ついでに 429 の文言を「GoogleのAIの利用上限に達しました。時間を置くか、Google AI Studio で利用枠をご確認ください」にする（「プロバイダー」が通じにくいため）
