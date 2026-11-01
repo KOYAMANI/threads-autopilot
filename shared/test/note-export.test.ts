@@ -3,7 +3,7 @@ import { noteToHtml, noteToMarkdown, notePlaceholders, noteCharCount, type NoteD
 
 function note(): NoteDetail {
   return {
-    id: "n1", accountId: "a1", title: "犬のごはん選び", titleOptions: [], memo: "", style: "general", volume: "standard",
+    id: "n1", accountId: "a1", title: "リバウンドしないダイエット", titleOptions: [], memo: "", style: "general", volume: "standard",
     refNote: "", refProfile: null, sourceIds: [], outline: null, paywallAfter: 0, qa: [], status: "done", engine: "gemini",
     createdAt: "", updatedAt: "",
     sections: [
@@ -17,12 +17,12 @@ describe("note-export", () => {
   it("Markdown: タイトル → 章（ord 順）→ 節は ###、有料ラインは paywallAfter の次の章の前", () => {
     const md = noteToMarkdown(note());
     expect(md).toBe(
-      "# 犬のごはん選び\n\n## はじめに\n\n最初の段落。\n\n（ここから有料）\n\n## 第1章 なぜ\n\n導入。\n\n### 1-1 毎日\n\n本文です。**強調**も。\n\n- 一つ\n- 二つ\n\n【商品名】を入れる。\n",
+      "# リバウンドしないダイエット\n\n## はじめに\n\n最初の段落。\n\n（ここから有料）\n\n## 第1章 なぜ\n\n導入。\n\n### 1-1 毎日\n\n本文です。**強調**も。\n\n- 一つ\n- 二つ\n\n【商品名】を入れる。\n",
     );
   });
   it("HTML: 見出し・段落・箇条書き・太字。エスケープする", () => {
     const html = noteToHtml(note());
-    expect(html).toContain("<h1>犬のごはん選び</h1>");
+    expect(html).toContain("<h1>リバウンドしないダイエット</h1>");
     expect(html).toContain("<p>（ここから有料）</p>\n<h2>第1章 なぜ</h2>");
     expect(html).toContain("<h3>1-1 毎日</h3>");
     expect(html).toContain("<p>本文です。<strong>強調</strong>も。</p>");

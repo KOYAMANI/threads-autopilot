@@ -19,7 +19,7 @@ async function setup(suffix: string) {
 }
 
 async function createNote(cookie: string, accountId: string, memo = "・ご飯がなんで大切か\n・基準\n・選び方") {
-  const res = await api("POST", "/api/notes", { cookie, body: { accountId, title: "犬のごはん選び", memo } });
+  const res = await api("POST", "/api/notes", { cookie, body: { accountId, title: "リバウンドしないダイエット", memo } });
   expect(res.status).toBe(201);
   return res.body.data.note as { id: string };
 }
