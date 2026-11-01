@@ -79,12 +79,12 @@ function mockNoteOutline(volumeChars: unknown): unknown {
   const mid = Math.max(600, Math.round((total - 3_000) / 3));
   return {
     status: "ok",
-    titles: ["「高いフード＝安心」は間違い。失敗しないごはん選びの教科書", "愛犬の寿命はごはんで変わる。値段に振り回されない基準の作り方", "子犬からシニアまで。ごはん選びで最初に決める3つのこと"],
+    titles: ["「食べなければ痩せる」は間違い。リバウンドしないダイエットの教科書", "体重計に振り回されない。体脂肪で見るダイエットの基準の作り方", "忙しくても続く。ダイエットで最初に決める3つのこと"],
     chapters: [
-      { heading: "はじめに：毎日のごはんが、愛犬の一生を左右する", targetChars: 2_400, sections: [] },
-      { heading: "第1章 なぜ「ごはん」にこだわるべきなのか", targetChars: mid, sections: [{ title: "1-1 毎日食べるものが、病気のリスクを左右する" }, { title: "1-2 激安フードが安い理由", caution: "根拠を示しにくい断定は表示の見方として書きます" }] },
-      { heading: "第2章 自分だけの基準をつくる", targetChars: mid, sections: [{ title: "2-1 最低ラインの決め方" }, { title: "2-2 原材料表示の見方" }] },
-      { heading: "第3章 ライフステージ別の選び方", targetChars: mid, sections: [{ title: "3-1 子犬期" }, { title: "3-2 シニア期" }] },
+      { heading: "はじめに：毎日の食事が、体型を左右する", targetChars: 2_400, sections: [] },
+      { heading: "第1章 なぜ食事制限だけでは痩せないのか", targetChars: mid, sections: [{ title: "1-1 食べないほどリバウンドしやすい" }, { title: "1-2 「これだけで痩せる」食品が売れる理由", caution: "根拠を示しにくい断定は表示の見方として書きます" }] },
+      { heading: "第2章 自分だけの基準をつくる", targetChars: mid, sections: [{ title: "2-1 体重より体脂肪率を見る" }, { title: "2-2 栄養成分表示の見方" }] },
+      { heading: "第3章 生活に合わせたやり方", targetChars: mid, sections: [{ title: "3-1 食事編" }, { title: "3-2 運動・睡眠編" }] },
       { heading: "まとめ：今日からできる3ステップ", targetChars: 600, sections: [] },
     ],
     paywallAfter: 1,
@@ -97,7 +97,7 @@ function mockNoteChapter(chapter: { heading?: string; targetChars?: number; sect
   const target = typeof chapter?.targetChars === "number" ? chapter.targetChars : 1_000;
   const sections = Array.isArray(chapter?.sections) && chapter.sections.length ? chapter.sections : [{ title: "" }];
   const per = Math.max(120, Math.round(target / sections.length));
-  const filler = "毎日のごはんは、人の食事と同じで積み重ねです。1回で体が変わることはありませんが、続いたときの差は小さくありません。あなたの犬に合うかどうかは、原材料と量を自分の目で確かめるところから始まります。";
+  const filler = "毎日の食事は積み重ねです。1回で体が変わることはありませんが、続いたときの差は小さくありません。あなたに合うかどうかは、食べる量と中身を自分の目で確かめるところから始まります。";
   const paragraphs = (n: number) => { let out = ""; while (out.length < n) out += (out ? "\n\n" : "") + filler; return out; };
   const body = sections
     .map((s, i) => `${s.title ? `## ${s.title}\n\n` : ""}${paragraphs(per)}${i === 0 ? "\n\n【商品名】を入れると具体的になります。" : ""}`)
