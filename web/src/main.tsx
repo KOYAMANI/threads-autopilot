@@ -29,7 +29,17 @@ installSessionBoundary(() => {
  * これが無いと、デプロイ直後の1回目はキャッシュの古い画面が開き、古い画面が無くなった部品を
  * 探して白紙になっていた（2026-10-20、ステージング）。
  */
-registerSW({ immediate: true });
+registerSW({
+  immediate: true,
+  // 開いたままのタブ・ホーム画面のアプリは、自分では新しい版を見に行かない。
+  // 画面に戻ってきたときと 10 分ごとに確かめ、新しい版があれば入れ替えて読み込み直す（2026-11-02）
+  onRegisteredSW(_url, registration) {
+    if (!registration) return;
+    const check = () => { if (navigator.onLine) void registration.update().catch(() => undefined); };
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") check(); });
+    window.setInterval(check, 10 * 60_000);
+  },
+});
 
 const root = document.getElementById("root");
 if (!root) throw new Error("#root not found");
