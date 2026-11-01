@@ -612,3 +612,8 @@ SPEC §5.4・§7.1・§7.8・§8.7・§12.3 Settings・§13 M7・§15 に対し�
 
 - hiroko_recovery の予約が 10/25 21:00（JST）から8件止まっていた。空き枠で入れた 21:00 の予約の15分後に時刻指定（`slot_managed=0`）の予約があり、DB トリガー `queue_slot_update_guard` の投稿間隔（`minGapMin` 既定30分）の検査が `scheduled → publishing` の切り替えでも走って、21:00 が投稿中に移れなかった。publish は古い順に1件ずつ進むので、後ろの予約も全部止まった（`POSTING_SLOT_OCCUPIED` で毎分失敗）
 - マイグレーション `0013` でトリガーを作り直し、検査は行が枠を取るとき（有効な状態に入る・時刻か `slot_managed` が変わる）だけにする。同じ時刻のまま状態だけ進む更新では検査しない。予約を入れる時点の検査（間隔・同時刻・AP の1日3件）はそのまま
+
+## 2026-11-01 Gemini の 503（混雑）は文言を分け、待ってから1回だけ引き直す
+
+- 10/31〜11/1 に投稿作成とキーのテストが Gemini の 503（`This model is currently experiencing high demand` / `UNAVAILABLE`）で落ち続け、「AIの呼び出しに失敗しました（503）」を見た利用者がキーを何度も入れ直していた（Workers Logs の `[ai]` で確認）
+- 503 は `AiBusyError` にして「GoogleのAIが混雑…（APIキーの入れ直しは不要です）」を返す。`callAi` は `retries` とは別枠で 3 秒待って1回だけ引き直す（作成画面の `retries: 0` の呼び出しも含む）。続けて 503 ならそこで止める

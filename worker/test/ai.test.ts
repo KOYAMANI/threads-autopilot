@@ -5,6 +5,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   AiError,
+  AiBusyError,
   buildContext,
   buildRequest,
   callAi,
@@ -136,6 +137,10 @@ describe("応答の解析（SPEC §10.1）", () => {
 
 /* ── タイムアウトとリトライ（SPEC §10.1） ────────────── */
 
+const BUSY = JSON.stringify({
+  error: { code: 503, message: "This model is currently experiencing high demand.", status: "UNAVAILABLE" },
+});
+
 describe("callAi（SPEC §10.1 タイムアウト60秒・1回リトライ）", () => {
   it("1回目が 500 でも2回目で成功すれば返る", async () => {
     const fetchImpl = vi
@@ -195,6 +200,33 @@ describe("callAi（SPEC §10.1 タイムアウト60秒・1回リトライ）", (
     ).catch((x) => x)) as AiError;
     expect(e.code).toBe("AI_FAILED");
     expect(e.message).toContain("時間内");
+  });
+
+  it("503（混雑）は待ってから1回だけ引き直し、通れば返る", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(BUSY, { status: 503 }))
+      .mockResolvedValueOnce(geminiOk(GOOD));
+    const raw = await callAi(
+      { ...BASE, provider: "gemini" },
+      { fetchImpl: fetchImpl as unknown as typeof fetch, retries: 0, busyRetryDelayMs: 0 },
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(readCandidates(raw, 1)[0]!.body).toBe("本文です。");
+  });
+
+  it("503 が続けば2回で止め、キーを疑わせない文言で返す", async () => {
+    const fetchImpl = vi.fn().mockImplementation(async () => new Response(BUSY, { status: 503 }));
+    const e = (await callAi(
+      { ...BASE, provider: "gemini" },
+      { fetchImpl: fetchImpl as unknown as typeof fetch, busyRetryDelayMs: 0 },
+    ).catch((x) => x)) as AiError;
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(e).toBeInstanceOf(AiBusyError);
+    expect(e.code).toBe("AI_FAILED");
+    expect(e.message).toContain("混雑");
+    expect(e.message).toContain("入れ直しは不要");
+    expect(e.raw).toContain("high demand");
   });
 
   it("エラーの原文はキーを伏せてから持つ（redact）", async () => {

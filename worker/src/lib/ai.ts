@@ -19,6 +19,8 @@ import { redact } from "./redact";
 export const AI_TIMEOUT_MS = 60_000;
 /** 失敗時の再試行は1回だけ（SPEC §10.1）。 */
 export const AI_RETRIES = 1;
+/** Gemini の 503（混雑）は少し待ってから1回だけ引き直す（DECISIONS 2026-11-01）。 */
+export const AI_BUSY_RETRY_DELAY_MS = 3_000;
 
 /** 型の候補（SPEC §10.3 の User プロンプト）。`shared/src/tags.ts` の型名と揃える。 */
 export const HOOK_TYPES = [
@@ -46,6 +48,18 @@ export class AiError extends Error {
     this.code = code;
     this.retryable = retryable;
     this.raw = raw === null ? null : redact(raw).slice(0, 500);
+  }
+}
+
+/** Gemini の 503（high demand / UNAVAILABLE）。 */
+export class AiBusyError extends AiError {
+  constructor(raw: string | null = null) {
+    super(
+      "AI_FAILED",
+      "GoogleのAIが混雑していて応答できませんでした。数分おいてもう一度お試しください（APIキーの入れ直しは不要です）",
+      raw,
+      false,
+    );
   }
 }
 
@@ -302,6 +316,8 @@ export type AiCallOptions = {
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   retries?: number;
+  /** 503 のあと引き直すまでの待ち時間。テストは 0 にする */
+  busyRetryDelayMs?: number;
 };
 
 /** 1回だけ叩く（リトライは `callAi` 側）。 */
@@ -318,6 +334,8 @@ async function callOnce(
     const res = await doFetch(plan.url, { ...plan.init, signal: controller.signal });
     const text = await res.text();
     if (res.status === 429) throw new AiError("AI_FAILED", "AIサービスの利用制限に達しました。時間を置くか、プロバイダーの利用枠をご確認ください", null, false);
+    // 503 はキーではなく Google 側の混雑。キーを入れ直させないよう文言を分け、通常の引き直しはしない（callAi が待ってから1回だけ）
+    if (res.status === 503) throw new AiBusyError(text.slice(0, 500));
     if (!res.ok) {
       throw new AiError(
         "AI_FAILED",
@@ -350,20 +368,32 @@ async function callOnce(
 /**
  * 生の応答テキストを返す。タイムアウト60秒・1回リトライ（SPEC §10.1）。
  * `AI_BAD_OUTPUT`（応答の形が違う）も1回だけ引き直す。
+ * 503（混雑）だけは `retries` と別枠で、少し待ってから1回だけ引き直す。
  */
 export async function callAi(input: AiCallInput, options: AiCallOptions = {}): Promise<string> {
   const retries = options.retries ?? AI_RETRIES;
   let last: AiError | null = null;
+  let busyRetried = false;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       return await callOnce(input, options);
     } catch (e) {
       if (!(e instanceof AiError)) throw e;
       last = e;
+      if (e instanceof AiBusyError && !busyRetried) {
+        busyRetried = true;
+        attempt--;
+        await sleep(options.busyRetryDelayMs ?? AI_BUSY_RETRY_DELAY_MS);
+        continue;
+      }
       if (e.code === "AI_KEY_REQUIRED" || !e.retryable) break;
     }
   }
   throw last ?? new AiError("AI_FAILED", "AIの呼び出しに失敗しました");
+}
+
+function sleep(ms: number): Promise<void> {
+  return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
 }
 
 /* ── 候補の取り出し ─────────────────────────────────── */
