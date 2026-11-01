@@ -89,3 +89,8 @@
 .claude-connected h2 { margin: 0; }
 .claude-connected p { margin: .2rem 0 0; }
 .claude-page > .btn { justify-self: start; }
+
+/* つないだあとの使い方（話しかけ方の例はコピーできる） */
+.claude-sub { margin: 1.25rem 0 .5rem; font-size: .8125rem; font-weight: 650; color: var(--ink2); }
+.claude-examples { list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem; }
+.claude-examples code { white-space: normal; font-family: inherit; }

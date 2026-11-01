@@ -5,7 +5,7 @@ import AccountAvatar from "./AccountAvatar";
  */
 import type { AccountSummary } from "@tap/shared";
 import { useLocation, useNavigate } from "react-router-dom";
-import { GearIcon, HomeIcon, NoteIcon, PenIcon, StackIcon } from "./Icons";
+import { GearIcon, HomeIcon, NoteIcon, PenIcon, SparkIcon, StackIcon } from "./Icons";
 
 /**
  * オートパイロットは開発中のため入口を外している（DECISIONS 2026-10-19）。
@@ -47,7 +47,12 @@ export default function Tabs({ account, onAccount, email, onLogout }: { account:
           </button>
         );
       })}
-      <div className="sidebar-bottom"><div className="sidebar-user"><span className="account-avatar">{email?.slice(0,1).toUpperCase() ?? "U"}</span><span>{email}</span><button className="icon-btn" title="ログアウト" aria-label="ログアウト" onClick={onLogout}>↪</button></div></div>
+      <div className="sidebar-bottom">
+        {/* Claude 連携は設定の奥ではなく、メールの1つ上に置く（DECISIONS 2026-11-01） */}
+        <button type="button" className="tab sidebar-claude" aria-current={pathname === "/app/claude" ? "page" : undefined} onClick={() => navigate("/app/claude")}>
+          <SparkIcon size={17} /><span className="nav-desktop-label">Claude 連携</span>
+        </button>
+        <div className="sidebar-user"><span className="account-avatar">{email?.slice(0,1).toUpperCase() ?? "U"}</span><span>{email}</span><button className="icon-btn" title="ログアウト" aria-label="ログアウト" onClick={onLogout}>↪</button></div></div>
     </nav>
   );
 }
