@@ -18,7 +18,8 @@ not_found_handling = "single-page-application"
 # 注入する cron 手動実行の入口で、静的アセット側に取られると Worker まで届かないため。
 # 本番では `--test-scheduled` の middleware が無く、index.ts が ASSETS にそのまま渡すので
 # 挙動は追加前と変わらない（docs/qa.md M2-2）。
-run_worker_first = ["/api/*", "/a/*", "/__scheduled"]
+# `/mcp` `/oauth/*` `/.well-known/*` は Claude 連携（Remote MCP と、その OAuth。worker/src/mcp/）。
+run_worker_first = ["/api/*", "/a/*", "/__scheduled", "/mcp", "/oauth/*", "/.well-known/*"]
 
 [[d1_databases]]
 binding = "DB"
@@ -27,6 +28,13 @@ binding = "DB"
 database_name = "threads-autopilot-staging2"
 database_id = "f826a56b-58fb-4d0d-a20b-4dd2807d3292"
 migrations_dir = "worker/migrations"
+
+# Claude 連携（MCP）の OAuth の置き場所（@cloudflare/workers-oauth-provider）。
+# TODO: `wrangler kv namespace create OAUTH_KV --config wrangler.staging.toml` の ID に差し替える
+# （本番とは別の namespace にする。scripts/check-staging.py が TODO のままのデプロイを止める）。
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "TODO-OAUTH-KV-ID"
 
 [triggers]
 # 本番と同じ（2026-10-22 ユーザー決定「メール以外は同じ」）。Threads への投稿もする。

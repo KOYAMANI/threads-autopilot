@@ -52,7 +52,9 @@ export default defineConfig({
         globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
         globIgnores: ["push-sw.js", "legal/**"],
         navigateFallback: "/index.html",
-        navigateFallbackDenylist: [/^\/api\//, /^\/a\//, /^\/legal\//],
+        // `/oauth/*` `/mcp` `/.well-known/*` は Claude 連携。許可画面は Worker の HTML なので、
+        // SW に SPA を返されると claude.ai からの接続が `/app/home` に落ちる（DECISIONS 2026-10-19）
+        navigateFallbackDenylist: [/^\/api\//, /^\/a\//, /^\/legal\//, /^\/oauth\//, /^\/mcp$/, /^\/\.well-known\//],
         cleanupOutdatedCaches: true,
         /**
          * Push の受け口（`web/public/push-sw.js`）を生成 SW に足す（M7）。

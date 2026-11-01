@@ -29,6 +29,7 @@ import {
   useTestAi,
 } from "../api/ai";
 import { useNotifications, usePutNotifications } from "../api/autopilot";
+import { useClaudeConnection } from "../api/claude";
 import { ApiError } from "../api/client";
 import { useChangePassword, useMe } from "../api/auth";
 import Sheet from "../components/Sheet";
@@ -48,12 +49,30 @@ export default function Settings() {
       if (next >= 0) { e.preventDefault(); const id = tabs[next]!.id; setTab(id); document.getElementById(`settings-tab-${id}`)?.focus(); }
     }} onClick={() => setTab(t.id)}>{t.label}</button>)}</div>
     <div role="tabpanel" id="settings-panel" aria-labelledby={`settings-tab-${tab}`} className="settings-content" key={tab}>
-      {tab === "connections" && <><AccountsCard /><AiKeyCard /><ExportCard /></>}
+      {tab === "connections" && <><AccountsCard /><AiKeyCard /><ClaudeCard /><ExportCard /></>}
       {tab === "links" && <LinksCard />}
       {tab === "notifications" && <NotificationCard />}
       {tab === "security" && <><PasswordCard /><DangerCard /></>}
     </div>
   </>;
+}
+
+/** Claude 連携の画面（`/app/claude`）への入口。サーバー側が未設定（OAUTH_KV が無い）なら出さない */
+function ClaudeCard() {
+  const navigate = useNavigate();
+  const connection = useClaudeConnection();
+  const data = connection.data;
+  if (data && !data.configured) return null;
+  const status = data?.connected && data.verifiedAt ? "つながっています" : data?.connected ? "あと少し" : "未連携";
+  return (
+    <section className="card section">
+      <div className="section-head"><h2>Claude 連携</h2><span className="muted">{status}</span></div>
+      <p className="muted">自分の Claude（claude.ai）と話しながら、投稿を書いて下書き・予約・投稿できます。AI キーは要りません。</p>
+      <button type="button" className="btn btn-sub btn-fit section" onClick={() => navigate("/app/claude")}>
+        {data?.verifiedAt ? "連携を見る" : "Claude と連携する"}
+      </button>
+    </section>
+  );
 }
 
 function PasswordCard() {

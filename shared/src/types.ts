@@ -445,6 +445,24 @@ export type AiReviseRequest = {
 
 export type AiReviseResponse = { candidate: AiCandidate };
 
+/* ── Claude 連携（MCP。DECISIONS「Claude 連携」） ───── */
+
+export type ClaudeConnectionResponse = {
+  /** サーバー側の準備（OAUTH_KV）ができているか */
+  configured: boolean;
+  /** claude.ai から許可済みの接続があるか */
+  connected: boolean;
+  /** 最後に許可画面で「許可する」が押された時刻（UTC）。接続が無ければ null */
+  authorizedAt: string | null;
+  /**
+   * その許可のあと、claude.ai から最後に呼ばれた時刻（initialize かツール。UTC）。
+   * これが入っていれば接続完了。許可だけで null なら、claude.ai 側のトークン交換がまだか失敗している
+   */
+  verifiedAt: string | null;
+  /** claude.ai の「MCPサーバーURL」に入れる値 */
+  mcpUrl: string;
+};
+
 /* ── オートパイロット（SPEC §7.7 / §9） ─────────────── */
 
 export type ApprovalMode = "manual" | "cancel" | "auto";

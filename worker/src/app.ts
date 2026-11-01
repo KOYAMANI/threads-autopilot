@@ -32,6 +32,7 @@ import { exportRoutes } from "./routes/export";
 import { threadsOAuthRoutes } from "./routes/threads-oauth";
 import { googleRoutes } from "./routes/google";
 import { userRoutes } from "./routes/users";
+import { claudeRoutes } from "./routes/claude";
 
 export type Vars = {
   db: Db;
@@ -135,6 +136,7 @@ export function createApp() {
   app.route("/accounts", autopilotRoutes());
   app.route("/sources", sourceRoutes());
   app.route("/ai", aiRoutes());
+  app.route("/claude", claudeRoutes());
   app.route("/notifications", notificationRoutes());
   app.route("/push", pushRoutes());
   app.route("/export", exportRoutes());
