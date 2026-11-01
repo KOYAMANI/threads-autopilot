@@ -132,6 +132,7 @@ button,input,select,textarea { font-family:inherit; }
   .nav-desktop-label { display:inline; }
   .nav-mobile-label { display:none; }
   .sidebar-bottom { display:block; margin-top:auto; }
+  .app-shell .tabs .sidebar-claude { width:100%; margin-bottom:.35rem; }
   .workspace-note { border:1px solid var(--line); border-radius:9px; background:#ffffff90; padding:.8rem; font-size:.625rem; color:var(--ink2); }
   .workspace-note .status-dot { margin-right:.35rem; }
   .workspace-note p { color:var(--ink3); font-size:.625rem; line-height:1.8; margin-top:.45rem; }

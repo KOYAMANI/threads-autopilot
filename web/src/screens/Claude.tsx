@@ -75,6 +75,14 @@ function ClaudeAddMock({ url }: { url: string }) {
   );
 }
 
+/** つないだあとの「話しかけ方の例」。どれもアカウント名を省けば、Claude が一覧から聞き返す */
+const CLAUDE_EXAMPLES = [
+  "スレメイトで、朝のルーティンについての投稿を3本作って、空いている枠に予約して",
+  "スレメイトで、明日の21時に1本予約したい。テーマは最近読んだ本",
+  "スレメイトで、予約中の投稿を一覧で見せて",
+  "スレメイトで、先週いちばん伸びた投稿と、その理由を教えて",
+];
+
 function CopyRow({ n, label, value, copied, onCopy }: { n: number; label: string; value: string; copied: boolean; onCopy: () => void }) {
   return (
     <li>
@@ -101,10 +109,10 @@ export default function Claude() {
   const conn = useClaudeConnection(true);
   const disconnect = useDisconnectClaude();
   const data = conn.data;
-  const [copied, setCopied] = useState<{ name: boolean; url: boolean }>({ name: false, url: false });
+  const [copied, setCopied] = useState<Record<string, boolean>>({});
   const [confirmOff, setConfirmOff] = useState(false);
 
-  async function copy(kind: "name" | "url", value: string) {
+  async function copy(kind: string, value: string) {
     try {
       await navigator.clipboard.writeText(value);
       setCopied((c) => ({ ...c, [kind]: true }));
@@ -191,8 +199,8 @@ export default function Claude() {
             </p>
             <ClaudeAddMock url={url} />
             <ol className="claude-todo">
-              <CopyRow n={1} label="「名前」に入れる" value={CLAUDE_CONNECTOR_NAME} copied={copied.name} onCopy={() => void copy("name", CLAUDE_CONNECTOR_NAME)} />
-              <CopyRow n={2} label="「MCPサーバーURL」に入れる" value={url} copied={copied.url} onCopy={() => void copy("url", url)} />
+              <CopyRow n={1} label="「名前」に入れる" value={CLAUDE_CONNECTOR_NAME} copied={Boolean(copied.name)} onCopy={() => void copy("name", CLAUDE_CONNECTOR_NAME)} />
+              <CopyRow n={2} label="「MCPサーバーURL」に入れる" value={url} copied={Boolean(copied.url)} onCopy={() => void copy("url", url)} />
               <li>
                 <span className="claude-n" aria-hidden="true">3</span>
                 <div className="claude-todo-what">
@@ -215,6 +223,49 @@ export default function Claude() {
               <br />
               許可画面で「ログインしていません」と出たら、同じブラウザでこのアプリにログインしてから、もう一度「許可する」を押してください。
             </p>
+          </section>
+        )}
+
+        {isVerified && (
+          <section className="card section">
+            <div className="section-head"><h2>使い方</h2></div>
+            <ol className="claude-todo">
+              <li>
+                <span className="claude-n" aria-hidden="true">1</span>
+                <div className="claude-todo-what">
+                  Claude で新しいチャットを開く
+                  <small>PC の claude.ai でも、スマホの Claude アプリでも使えます。アプリを開いておく必要はありません。</small>
+                </div>
+              </li>
+              <li>
+                <span className="claude-n" aria-hidden="true">2</span>
+                <div className="claude-todo-what">
+                  「スレメイトで」から話しかける
+                  <small>入力欄の「＋」→ コネクタで「{CLAUDE_CONNECTOR_NAME}」がオンになっているか確かめてください。</small>
+                </div>
+              </li>
+              <li>
+                <span className="claude-n" aria-hidden="true">3</span>
+                <div className="claude-todo-what">
+                  予約や投稿の前に、Claude が確認してきます
+                  <small>「OK」と返すと、このアプリの下書き・予約に入ります（「Claude」の印が付きます）。</small>
+                </div>
+              </li>
+            </ol>
+            <h3 className="claude-sub">話しかけ方の例</h3>
+            <ul className="claude-examples">
+              {CLAUDE_EXAMPLES.map((text, i) => (
+                <li key={text}>
+                  <div className={copied[`ex${i}`] ? "claude-val is-done" : "claude-val"}>
+                    <code>{text}</code>
+                    <button type="button" className="btn btn-sub btn-fit" onClick={() => void copy(`ex${i}`, text)}>
+                      {copied[`ex${i}`] ? "✓ コピー済み" : "コピー"}
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <a className="btn section" href="https://claude.ai/new" target="_blank" rel="noopener noreferrer">Claude を開く</a>
           </section>
         )}
 

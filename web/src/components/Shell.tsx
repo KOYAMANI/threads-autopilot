@@ -110,6 +110,17 @@ export default function Shell() {
         ))}
 
         <div style={{ marginTop: "auto", paddingTop: "calc(var(--sp) * 2)" }}>
+          <button
+            type="button"
+            className="menu-item"
+            aria-current={pathname === "/app/claude"}
+            onClick={() => {
+              setDrawerOpen(false);
+              navigate("/app/claude");
+            }}
+          >
+            Claude 連携
+          </button>
           <p className="muted" style={{ padding: "0 var(--sp)" }}>
             {data?.user.email}
           </p>
