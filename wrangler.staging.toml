@@ -30,11 +30,10 @@ database_id = "f826a56b-58fb-4d0d-a20b-4dd2807d3292"
 migrations_dir = "worker/migrations"
 
 # Claude 連携（MCP）の OAuth の置き場所（@cloudflare/workers-oauth-provider）。
-# TODO: `wrangler kv namespace create OAUTH_KV --config wrangler.staging.toml` の ID に差し替える
-# （本番とは別の namespace にする。scripts/check-staging.py が TODO のままのデプロイを止める）。
+# namespace `threads-autopilot-oauth-staging`（2026-11-01 作成。本番とステージングで別）。
 [[kv_namespaces]]
 binding = "OAUTH_KV"
-id = "TODO-OAUTH-KV-ID"
+id = "7e18a284d2a645778c3f2358b618a05b"
 
 [triggers]
 # 本番と同じ（2026-10-22 ユーザー決定「メール以外は同じ」）。Threads への投稿もする。
