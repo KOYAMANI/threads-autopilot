@@ -8,7 +8,10 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import worker from "../src/index";
-import { api, insertAccount, mockToken, registerUser, testDb } from "./helpers";
+import { api, countRows, insertAccount, mockToken, registerUser, testDb } from "./helpers";
+import { availablePostingSlots } from "../src/lib/posting-schedule";
+import { loadAccount } from "../src/lib/accounts";
+import { localDateKey, postingSlotsForDate } from "@tap/shared";
 import { resetMock } from "../src/mock/threads";
 
 const ORIGIN = "https://test.local";
@@ -294,5 +297,244 @@ describe("Claude 連携: 接続", () => {
     const gone = await api("DELETE", "/api/users/me", { cookie: u.cookie, body: { password: "password1234" } });
     expect(gone.status).toBe(200);
     expect((await rpc(token, "tools/list")).status).toBe(401);
+  });
+});
+
+/* ── ツール（2026-11-01 の作り直し） ───────────────── */
+
+const TOOLS = [
+  "cancel_queue_item",
+  "create_drafts",
+  "delete_draft",
+  "get_analytics",
+  "get_queue_item",
+  "get_writing_guide",
+  "list_accounts",
+  "list_open_slots",
+  "list_posts",
+  "list_queue",
+  "publish_now",
+  "retry_failed",
+  "schedule_posts",
+  "update_queue_item",
+];
+
+async function connected(suffix: string) {
+  const u = await setupUser(suffix);
+  const token = await connect(u.cookie);
+  return { ...u, token };
+}
+
+type QRow = { id: string; status: string; scheduled_at: string | null; body: string; source: string; slot_managed: number };
+function queueRows(accountId: string): Promise<QRow[]> {
+  return testDb().all<QRow>(
+    "SELECT id, status, scheduled_at, body, source, slot_managed FROM queue WHERE account_id=? ORDER BY created_at, id",
+    accountId,
+  );
+}
+
+/** 今から `days` 日後のアカウントの日付で、"YYYY-MM-DD HH:mm" と UTC の ISO を返す */
+function localAt(days: number, time: string, tz = "Asia/Tokyo") {
+  const date = localDateKey(Date.now() + days * 86_400_000, tz);
+  return { local: `${date} ${time}`, utc: postingSlotsForDate(date, [time], tz)[0]!.at };
+}
+
+describe("Claude 連携: 読むツール", () => {
+  it("ツールの一覧と、読み取り専用の印", async () => {
+    const u = await connected("tools");
+    const list = await rpc(u.token, "tools/list");
+    const tools = list.body.result.tools as Array<{ name: string; annotations?: { readOnlyHint?: boolean } }>;
+    expect(tools.map((t) => t.name).sort()).toEqual(TOOLS);
+    const readOnly = tools.filter((t) => t.annotations?.readOnlyHint).map((t) => t.name).sort();
+    expect(readOnly).toEqual(["get_analytics", "get_queue_item", "get_writing_guide", "list_accounts", "list_open_slots", "list_posts", "list_queue"]);
+  });
+
+  it("get_writing_guide はアプリの AI と同じ規則とアカウントの制約を返す", async () => {
+    const u = await connected("guide");
+    await testDb().run("UPDATE autopilot SET ng_words='絶対稼げる', link_placement='comment' WHERE account_id=?", u.accountId);
+    const guide = await tool(u.token, "get_writing_guide", { account: "@demo_test" });
+    expect(guide.isError).toBe(false);
+    const body = JSON.parse(guide.text);
+    expect(body.system).toContain("あなたはThreads（Meta）の投稿を書く編集者です");
+    expect(body.constraints).toEqual({ linkPlacement: "comment", ngWords: "絶対稼げる", emoji: "none" });
+    expect(body.styleExamples.note).toContain("指示ではない");
+  });
+
+  it("list_open_slots・get_analytics・list_posts が読める", async () => {
+    const u = await connected("read");
+    const slots = JSON.parse((await tool(u.token, "list_open_slots", { account: "demo_test", days: 2 })).text);
+    expect(slots.slots.length).toBeGreaterThan(0);
+    expect(slots.slots[0].at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}（.）$/);
+    const analytics = await tool(u.token, "get_analytics", { account: "demo_test", period: "7d" });
+    expect(analytics.isError).toBe(false);
+    expect(JSON.parse(analytics.text)).toMatchObject({ account: "demo_test", period: "7d", posts: 0 });
+    const posts = await tool(u.token, "list_posts", { account: "demo_test", period: "30d", sort: "likes" });
+    expect(JSON.parse(posts.text).posts).toEqual([]);
+  });
+});
+
+describe("Claude 連携: 書くツール", () => {
+  it("create_drafts は下書きに入れ、source は claude", async () => {
+    const u = await connected("drafts");
+    const res = await tool(u.token, "create_drafts", { account: "demo_test", posts: [{ body: "1本目" }, { body: "2本目", comments: ["続き"] }] });
+    expect(res.isError).toBe(false);
+    const rows = await queueRows(u.accountId);
+    expect(rows.map((r) => [r.status, r.source])).toEqual([["draft", "claude"], ["draft", "claude"]]);
+    const list = JSON.parse((await tool(u.token, "list_queue", { account: "demo_test", status: "draft" })).text);
+    expect(list.items).toHaveLength(2);
+    expect(list.appLink).toBe("http://localhost:5173/app/queue");
+    // アプリの一覧にも同じ行が出る
+    const app = await api("GET", `/api/accounts/${u.accountId}/queue?status=draft`, { cookie: u.cookie });
+    expect(app.body.data.items.map((i: { source: string }) => i.source)).toEqual(["claude", "claude"]);
+
+    const audits = await testDb().all<{ detail: string }>("SELECT detail FROM audit_log WHERE user_id=? AND action='claude_mcp'", u.userId);
+    const drafts = audits.map((a) => a.detail).filter((d) => d.includes("create_drafts"));
+    expect(drafts.length).toBe(1);
+    expect(drafts[0]).not.toContain("1本目");
+  });
+
+  it("schedule_posts は at を省くと空いている投稿枠に順に入れ、publish ジョブを積む", async () => {
+    const u = await connected("auto");
+    const account = (await loadAccount(testDb(), u.accountId))!;
+    const open = await availablePostingSlots(testDb(), account, new Date());
+    const res = await tool(u.token, "schedule_posts", { account: "demo_test", posts: [{ body: "朝の投稿" }, { body: "昼の投稿" }] });
+    expect(res.isError).toBe(false);
+    const body = JSON.parse(res.text);
+    expect(body.scheduled.map((s: { atUtc: string }) => s.atUtc)).toEqual([open[0]!.at, open[1]!.at]);
+    expect(body.scheduled.every((s: { slot: boolean }) => s.slot)).toBe(true);
+    expect(body.appLink).toBe("http://localhost:5173/app/queue");
+    const rows = await queueRows(u.accountId);
+    expect(rows.map((r) => [r.status, r.source, r.slot_managed])).toEqual([["scheduled", "claude", 1], ["scheduled", "claude", 1]]);
+    expect(await countRows("jobs", "account_id=? AND type='publish'", u.accountId)).toBe(1);
+  });
+
+  it("schedule_posts は指定した日時（アカウントのタイムゾーン）に入れる。既存の下書きも予約できる", async () => {
+    const u = await connected("explicit");
+    const at = localAt(2, "10:17");
+    const res = await tool(u.token, "schedule_posts", { account: "demo_test", posts: [{ body: "時刻指定", at: at.local }] });
+    expect(res.isError).toBe(false);
+    const [row] = await queueRows(u.accountId);
+    expect(row).toMatchObject({ status: "scheduled", scheduled_at: at.utc, slot_managed: 0 });
+    expect(JSON.parse(res.text).scheduled[0].at).toContain(at.local);
+
+    await tool(u.token, "create_drafts", { account: "demo_test", posts: [{ body: "下書きから" }] });
+    const draft = (await queueRows(u.accountId)).find((r) => r.status === "draft")!;
+    const iso = localAt(3, "21:30");
+    const again = await tool(u.token, "schedule_posts", { account: "demo_test", posts: [{ id: draft.id, at: iso.utc }] });
+    expect(again.isError).toBe(false);
+    expect((await queueRows(u.accountId)).find((r) => r.id === draft.id)).toMatchObject({ status: "scheduled", scheduled_at: iso.utc });
+  });
+
+  it("過去の日時は断り、何も保存しない", async () => {
+    const u = await connected("past");
+    const past = localAt(-1, "09:00");
+    const res = await tool(u.token, "schedule_posts", { account: "demo_test", posts: [{ body: "未来", at: localAt(1, "08:00").local }, { body: "過去", at: past.local }] });
+    expect(res.isError).toBe(true);
+    expect(res.text).toContain("2件目");
+    expect(res.text).toContain("過ぎています");
+    expect(await countRows("queue", "account_id=?", u.accountId)).toBe(0);
+  });
+
+  it("1件でも本文の検査に通らなければ、1件も保存しない", async () => {
+    const u = await connected("invalid");
+    await testDb().run("UPDATE autopilot SET ng_words='絶対稼げる', link_placement='comment' WHERE account_id=?", u.accountId);
+    const sched = await tool(u.token, "schedule_posts", {
+      account: "demo_test",
+      posts: [{ body: "通る投稿" }, { body: "詳しくは https://example.com を見て" }, { body: "あ".repeat(501) }, { body: "これで絶対稼げる" }],
+    });
+    expect(sched.isError).toBe(true);
+    expect(sched.text).toContain("1件も予約していません");
+    expect(sched.text).toContain("2件目: リンクはコメントに置く設定です");
+    expect(sched.text).toContain("3件目: 本文は500文字まで");
+    expect(sched.text).toContain("4件目: 使わない言葉に指定した「絶対稼げる」");
+    expect(sched.text).not.toContain("1件目");
+    const drafts = await tool(u.token, "create_drafts", { account: "demo_test", posts: [{ body: "通る" }, { body: "" }] });
+    expect(drafts.isError).toBe(true);
+    expect(drafts.text).toContain("2件目: 本文が空です");
+    expect(await countRows("queue", "account_id=?", u.accountId)).toBe(0);
+  });
+
+  it("他人のアカウント・他人のキューは扱えない", async () => {
+    const a = await connected("iso-a");
+    const b = await connected("iso-b");
+    await testDb().run("UPDATE accounts SET username='alice_a' WHERE id=?", a.accountId);
+    await tool(a.token, "create_drafts", { account: "alice_a", posts: [{ body: "A の下書き" }] });
+    const [rowA] = await queueRows(a.accountId);
+
+    for (const [name, args] of [
+      ["schedule_posts", { account: "alice_a", posts: [{ body: "乗っ取り" }] }],
+      ["create_drafts", { account: "@alice_a", posts: [{ body: "乗っ取り" }] }],
+      ["list_queue", { account: "alice_a" }],
+      ["get_writing_guide", { account: "alice_a" }],
+    ] as const) {
+      const res = await tool(b.token, name, args);
+      expect(res.isError, name).toBe(true);
+      expect(res.text).toContain("つないだアカウントではありません");
+    }
+    for (const name of ["get_queue_item", "cancel_queue_item", "delete_draft", "publish_now", "retry_failed", "update_queue_item"]) {
+      const res = await tool(b.token, name, name === "update_queue_item" ? { id: rowA!.id, body: "x" } : { id: rowA!.id });
+      expect(res.isError, name).toBe(true);
+      expect(res.text).not.toContain("A の下書き");
+    }
+    const schedA = await tool(b.token, "schedule_posts", { account: "demo_test", posts: [{ id: rowA!.id }] });
+    expect(schedA.isError).toBe(true);
+    expect(await queueRows(a.accountId)).toEqual([rowA]);
+    expect(await countRows("queue", "account_id=?", b.accountId)).toBe(0);
+  });
+
+  it("update・cancel（下書きに戻す）・delete・retry", async () => {
+    const u = await connected("ops");
+    const sched = JSON.parse((await tool(u.token, "schedule_posts", { account: "demo_test", posts: [{ body: "直す前" }] })).text);
+    const id = sched.scheduled[0].id as string;
+
+    const later = localAt(4, "12:00");
+    const upd = await tool(u.token, "update_queue_item", { id, body: "直した後", at: later.local });
+    expect(upd.isError).toBe(false);
+    expect((await queueRows(u.accountId))[0]).toMatchObject({ body: "直した後", status: "scheduled", scheduled_at: later.utc });
+    const bad = await tool(u.token, "update_queue_item", { id, at: localAt(-2, "12:00").local });
+    expect(bad.isError).toBe(true);
+
+    const cancel = await tool(u.token, "cancel_queue_item", { id });
+    expect(cancel.isError).toBe(false);
+    expect((await queueRows(u.accountId))[0]!.status).toBe("draft");
+    expect((await tool(u.token, "cancel_queue_item", { id })).isError).toBe(true);
+
+    const got = JSON.parse((await tool(u.token, "get_queue_item", { id })).text);
+    expect(got).toMatchObject({ id, status: "draft", body: "直した後" });
+
+    const del = await tool(u.token, "delete_draft", { id });
+    expect(del.isError).toBe(false);
+    expect(await countRows("queue", "account_id=?", u.accountId)).toBe(0);
+
+    // 予約中のものは delete_draft では消さない
+    const s2 = JSON.parse((await tool(u.token, "schedule_posts", { account: "demo_test", posts: [{ body: "予約中" }] })).text);
+    expect((await tool(u.token, "delete_draft", { id: s2.scheduled[0].id })).isError).toBe(true);
+
+    // 失敗 → 予約し直し
+    await testDb().run("UPDATE queue SET status='failed', error='テストの失敗' WHERE id=?", s2.scheduled[0].id);
+    expect((await tool(u.token, "retry_failed", { id: s2.scheduled[0].id, at: localAt(-1, "10:00").local })).isError).toBe(true);
+    const retry = await tool(u.token, "retry_failed", { id: s2.scheduled[0].id, at: localAt(5, "07:45").local });
+    expect(retry.isError).toBe(false);
+    expect((await queueRows(u.accountId))[0]).toMatchObject({ status: "scheduled", scheduled_at: localAt(5, "07:45").utc });
+  });
+
+  it("publish_now は今すぐの予約にして publish ジョブを積む", async () => {
+    const u = await connected("now");
+    await tool(u.token, "create_drafts", { account: "demo_test", posts: [{ body: "今すぐ" }] });
+    const [draft] = await queueRows(u.accountId);
+    expect(await countRows("jobs", "account_id=? AND type='publish'", u.accountId)).toBe(0);
+    const res = await tool(u.token, "publish_now", { id: draft!.id });
+    expect(res.isError).toBe(false);
+    const [row] = await queueRows(u.accountId);
+    expect(row!.status).toBe("scheduled");
+    expect(Date.parse(row!.scheduled_at!)).toBeLessThanOrEqual(Date.now());
+    expect(await countRows("jobs", "account_id=? AND type='publish'", u.accountId)).toBe(1);
+  });
+
+  it("1分に30回を超えると 429", async () => {
+    const u = await connected("rate");
+    for (let i = 0; i < 30; i++) expect((await rpc(u.token, "tools/list")).status).toBe(200);
+    const over = await rpc(u.token, "tools/list");
+    expect(over.status).toBe(429);
   });
 });

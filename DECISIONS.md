@@ -618,3 +618,21 @@ SPEC §5.4・§7.1・§7.8・§8.7・§12.3 Settings・§13 M7・§15 に対し�
 - 10/31〜11/1 に投稿作成とキーのテストが Gemini の 503（`This model is currently experiencing high demand` / `UNAVAILABLE`）で落ち続け、「AIの呼び出しに失敗しました（503）」を見た利用者がキーを何度も入れ直していた（Workers Logs の `[ai]` で確認）
 - 503 は `AiBusyError` にして「GoogleのAIが混雑…（APIキーの入れ直しは不要です）」を返す。`callAi` は `retries` とは別枠で 3 秒待って1回だけ引き直す（作成画面の `retries: 0` の呼び出しも含む）。続けて 503 ならそこで止める
 - ついでに 429 の文言を「GoogleのAIの利用上限に達しました。時間を置くか、Google AI Studio で利用枠をご確認ください」にする（「プロバイダー」が通じにくいため）
+
+## 2026-11-01 Claude 連携 v2（ブランチ feat/claude-mcp-v2）
+
+claude.ai のカスタムコネクタ（Remote MCP）から、投稿の作成・下書き・予約・編集・取り消し・今すぐ投稿と分析の読み取りをする。土台（OAuth・許可画面・接続状態）は `origin/feat/claude-mcp-integrated`（2026-10-19/20）から MCP と OAuth の部分だけを移した。2026-10-19 の決定（stateless `createMcpHandler`・トークンの props は `userId` だけ・毎リクエストでユーザー行とライセンス `active` を確認・`mcp:<user_id>` 1分30回・公開 URL は非 DEV で `APP_ORIGIN` 固定・DCR 有効/CIMD 無効・許可画面は GET で表示し POST で `sid` を読む・`Referrer-Policy: same-origin`・SW の denylist）はそのまま引き継ぐ。
+
+| 日付 | 決定 | 理由 |
+|---|---|---|
+| 2026-11-01 | ツールを Claude 中心の流れで作り直す。読む: `list_accounts` `get_writing_guide` `list_queue` `get_queue_item` `list_open_slots` `list_posts` `get_analytics`。書く: `create_drafts` `schedule_posts` `update_queue_item` `cancel_queue_item` `delete_draft` `retry_failed` `publish_now`。アカウントは Threads のユーザー名（`@` 有無どちらでも）で指定し、本人のもの以外は断る | 「作る」画面から claude.ai に渡す方式ではなく、claude.ai の会話だけで書いて予約まで進められるようにする |
+| 2026-11-01 | **予約と今すぐ投稿の確認は Claude が会話の中でする**（ユーザー決定）。アプリ側に承認の手順は挟まない。書くツールの説明に「呼ぶ前に利用者に確認」、予約・投稿のツールには「その日時に／今すぐ実際に Threads に公開される」「publish_now は取り消せない」と書く | 会話で「これで予約して」と言えば終わる流れにする |
+| 2026-11-01 | 書き込みはアプリのルートと同じ処理を通す。`routes/queue.ts` の作成・編集・取消・今すぐ投稿・削除の中身を `lib/queue-ops.ts` に、ダッシュボードの集計を `lib/dashboard.ts` に出し、ルートと MCP の両方から呼ぶ（ルートの応答は変えない） | 検査・投稿枠の予約（トリガー）・publish ジョブの前倒しを二重に持たない |
+| 2026-11-01 | MCP から作った行は `queue.source='claude'`。キュー画面では「Claude」のタグを出す。CHECK 制約は無いのでマイグレーションは要らない | アプリで、どれが Claude から入ったかが分かるように |
+| 2026-11-01 | Claude の本文はアカウントの制約（`autopilot.link_placement`・`ng_words`）で `validatePost()` に通す（手動の予約はリンクを本文に置いてよい規則のまま）。複数件の書き込みは**先に全件を検査し、1件でも通らなければ何も保存しない**。理由は件ごとに返す。検査のあとに枠の取り合いなどで失敗したら、その呼び出しで作った行と予約を元に戻す | アプリの AI 生成と同じ規則で書かせる。一部だけ予約されると、Claude と利用者の認識がずれる |
+| 2026-11-01 | `schedule_posts` は `at` を省くと「次の空き枠」（`next_slot`、アプリと同じ7日以内）に順に入れ、`at` があればその日時。`at` が投稿枠の時刻で空いていればカレンダーから入れたときと同じく枠として予約（`reserveSlot`）、それ以外は時刻指定の予約。`at` は ISO 8601 か `YYYY-MM-DD HH:mm`（オフセットの無い書き方はアカウントのタイムゾーン）で、未来だけ。時刻指定の件を先に入れ、自動の件はそれを避けて枠を取る | アプリの予約シートと同じ扱いにする |
+| 2026-11-01 | `cancel_queue_item` は予約を**下書きに戻す**（`PATCH` と同じ処理で `status=draft`）。アプリの「取り消す」（`status=cancelled`）とは別。枠の予約（`posting_slot_reservations`）はアプリと同じく残るので、その枠にはほかの投稿は入らない（その下書きを予約し直すときは使える）。`delete_draft` は下書きと取消済みだけを消す。`retry_failed` は `at` が無ければ次の空き枠 | 会話の中で「取り消して、あとで入れ直す」ができるように。予約の残し方はアプリと揃える |
+| 2026-11-01 | バズ診断（`get_buzz_guide`）と作成セッション（`get_create_session` / `save_candidates` / `create_sessions` のマイグレーション）は移さない | バズのブランチは取りやめた。作成セッションは、会話だけで書いて保存できるようになったので要らない |
+| 2026-11-01 | ステージングは `staging-preview` ブランチ（`origin/main` ＋ `feat/note-staging` ＋ `feat/claude-mcp-v2`）からデプロイする | note のステージングと Claude 連携を同時に確かめるため |
+| 2026-11-01 | `OAUTH_KV` はステージング・本番とも `id = "TODO-OAUTH-KV-ID"` で置き、`check-staging.py` / `check-production.py` は**束縛があるのに ID が32桁の16進でないとき**（とステージングが本番と同じ ID のとき）デプロイを止める。束縛を外せば今までどおり通る（2026-10-19 の「必須にしない」は保つ） | KV を作る前にデプロイすると wrangler の途中で失敗するので、手前で分かりやすく止める |
+| 2026-11-01 | Claude 連携の画面（`/app/claude`、設定の「接続とAI」のカードから開く）は1画面にする: claude.ai の「カスタムコネクタを追加」の絵に ①名前 ②MCPサーバーURL ③「続ける」を番号で示し、値はコピーできる。下に接続の状態、つながったら「連携を解除」。作る画面の「Claude で作る」ボタンは置かない | 作成セッションをやめたので、作る画面から claude.ai へ渡すものが無い |

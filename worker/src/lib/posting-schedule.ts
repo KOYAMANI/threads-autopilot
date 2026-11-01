@@ -22,10 +22,10 @@ export function isSlotConflict(error: unknown): boolean {
 
 export async function availablePostingSlots(
   db: Db, account: AccountRow, now: Date,
-  options: { autopilotLimit?: number; quietHours?: boolean; untilMs?: number; excludeQueueId?: string } = {},
+  options: { autopilotLimit?: number; quietHours?: boolean; untilMs?: number; excludeQueueId?: string; horizonDays?: number } = {},
 ): Promise<Array<{ at: string; time: string }>> {
   const schedule = await loadPostingSchedule(db, account);
-  const candidates = upcomingPostingSlots(now.getTime(), schedule.times, account.timezone)
+  const candidates = upcomingPostingSlots(now.getTime(), schedule.times, account.timezone, options.horizonDays)
     .filter((s) => options.untilMs === undefined || Date.parse(s.at) <= options.untilMs);
   if (!candidates.length) return [];
   const settings = publishSettings(account);

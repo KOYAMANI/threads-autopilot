@@ -223,7 +223,8 @@ export type QueueStatus =
   | "failed"
   | "cancelled";
 
-export type QueueSource = "manual" | "autopilot" | "recycle";
+/** `claude` は Claude 連携（MCP）から作った行（DECISIONS 2026-11-01） */
+export type QueueSource = "manual" | "autopilot" | "recycle" | "claude";
 export type ReplyControl = "everyone" | "accounts_you_follow" | "mentioned_only";
 
 /** `done` のときだけ付く、実際に出た投稿の数字（SPEC §7.4「`done` は `posts` の数字を結合」）。 */
