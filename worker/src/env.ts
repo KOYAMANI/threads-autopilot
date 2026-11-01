@@ -26,6 +26,8 @@ export type Env = {
   AI_MOCK?: string;
   /** [vars]。`1` のときだけオートパイロットを動かす（`lib/autopilot-pause.ts`）。本番とステージングでは設定しない */
   AUTOPILOT_RUNNING?: string;
+  /** [vars]（開発だけ）。Queue が無いとき、note の章ジョブをリクエストの裏で続けて動かす */
+  NOTE_JOBS_INLINE?: string;
 
   // secrets（SPEC §3.2）。開発は .dev.vars
   ENC_KEY: string;

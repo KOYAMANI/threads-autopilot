@@ -62,6 +62,13 @@ export const PlaneIcon = (p: Props) => (
   </Svg>
 );
 
+export const NoteIcon = (p: Props) => (
+  <Svg {...p}>
+    <path d="M6 3h9l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" />
+    <path d="M14 3v5h5M8 12h8M8 16h5" />
+  </Svg>
+);
+
 export const GearIcon = (p: Props) => (
   <Svg {...p}>
     <circle cx="12" cy="12" r="3.2" />
