@@ -220,7 +220,7 @@ export async function pickedPosts(db: Db, accountId: string, ids: string[]): Pro
 }
 
 /** 制約（SPEC §10.2）。`autopilot` 行が無ければ既定（リンクはコメント）。 */
-async function constraintsFor(db: Db, account: AccountRow): Promise<PromptConstraints> {
+export async function constraintsFor(db: Db, account: AccountRow): Promise<PromptConstraints> {
   const ap = await db.first<{ ng_words: string; link_placement: string }>(
     "SELECT ng_words, link_placement FROM autopilot WHERE account_id=?",
     account.id,

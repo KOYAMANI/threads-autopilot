@@ -16,6 +16,8 @@ export default defineConfig(async () => {
           compatibilityDate: "2026-08-01",
           compatibilityFlags: ["nodejs_compat"],
           d1Databases: { DB: "test-db" },
+          // Claude 連携（MCP）の OAuth の置き場所。`@cloudflare/workers-oauth-provider` が使う
+          kvNamespaces: ["OAUTH_KV"],
           bindings: {
             TEST_MIGRATIONS: migrations,
             APP_ORIGIN: "http://localhost:5173",

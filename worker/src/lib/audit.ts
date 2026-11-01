@@ -34,7 +34,9 @@ export type AuditAction =
   | "export"
   | "license_issue"
   | "license_revoke"
-  | "note_write";
+  | "note_write"
+  /** Claude 連携（MCP）。許可・接続・解除と、ツールの呼び出し（本文は入れない） */
+  | "claude_mcp";
 
 /**
  * 1件記録する。**失敗しても呼び出し元の処理は止めない** — 監査の書き込みが

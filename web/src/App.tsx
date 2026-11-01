@@ -24,6 +24,7 @@ const Settings = lazy(() => import("./screens/Settings"));
 const NoteList = lazy(() => import("./screens/NoteList"));
 const NoteWizard = lazy(() => import("./screens/NoteWizard"));
 const NoteDraft = lazy(() => import("./screens/NoteDraft"));
+const Claude = lazy(() => import("./screens/Claude"));
 
 function Loading() {
   return (
@@ -94,6 +95,7 @@ export default function App() {
           {/* オートパイロットは開発中。画面（screens/Autopilot.tsx）は残し、入口だけ閉じる */}
           <Route path="autopilot" element={<Navigate to="/app/home" replace />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="claude" element={<Claude />} />
           <Route path="*" element={<Navigate to="/app/home" replace />} />
         </Route>
 

@@ -18,6 +18,8 @@ import { ACCOUNT_CHILD_TABLES } from "../lib/accounts";
 import { sha256Hex, verifyPassword } from "../lib/crypto";
 import type { Db } from "../lib/db";
 import { sendEmail } from "../lib/email";
+import { redact } from "../lib/redact";
+import { revokeClaudeGrants } from "../mcp";
 import { forgotKey, loginKey } from "../lib/rate";
 
 /** `user_id` を持つテーブル（SPEC §7.8 の表）。`users` は最後に消すのでここには入れない。 */
@@ -116,6 +118,14 @@ export function userRoutes() {
       { sql: "INSERT INTO audit_log(id,user_id,at,action,detail) VALUES (?,NULL,?,'user_delete',?)",
         params: [crypto.randomUUID(), nowIso, JSON.stringify({emailHash, accounts: accounts.length, licenseId: user.license_id})] },
     ]);
+
+    // Claude 連携のトークン（KV）も取り消す。失敗しても退会は止めない — 残ったトークンは
+    // `mcp/index.ts` がユーザー行の無さで弾く
+    try {
+      await revokeClaudeGrants(c.env, c.req.raw, userId);
+    } catch (e) {
+      console.error(`[users] claude grant revoke failed: ${redact(String(e))}`);
+    }
 
     // 8. 完了の通知（`notifications` はもう消えているので直接送る）
     await sendEmail(c.env, email, "account_deleted", { appOrigin: c.env.APP_ORIGIN });

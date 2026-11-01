@@ -1,0 +1,91 @@
+/* Claude 連携（screens/Claude.tsx）。既存のトークンだけを使う */
+
+.claude-page { display: grid; }
+
+/* つながるのを待っている1行（影なし・薄い地） */
+.claude-wait {
+  display: flex;
+  align-items: baseline;
+  gap: .6rem;
+  margin: 1rem 0 0;
+  padding: .75rem .9rem;
+  border-radius: 10px;
+  background: var(--paper2);
+  font-size: .8125rem;
+  line-height: 1.55;
+  color: var(--ink2);
+}
+.claude-wait p { margin: 0; }
+.claude-wait strong { color: var(--ink); font-weight: 600; }
+.claude-wait .msg { margin: 0; }
+
+/* 待っている印。opacity だけを動かす（reduced-motion では tokens.css の全体規則で止まる） */
+.claude-wait-dot {
+  flex: none;
+  width: .5rem;
+  height: .5rem;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: claude-wait 1.4s ease-in-out infinite;
+}
+@keyframes claude-wait {
+  0%, 100% { opacity: .25; }
+  50% { opacity: 1; }
+}
+
+/* ── Claude 連携の画面（screens/Claude.tsx） ───────────────── */
+
+.claude-note { margin: 1rem 0 0; font-size: .75rem; line-height: 1.65; color: var(--ink3); }
+
+/* できること */
+.claude-can { display: grid; gap: 1rem; }
+.claude-can-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .75rem; }
+.claude-can-list li { display: grid; gap: .2rem; padding: .9rem 1rem; border: 1px solid var(--line); border-radius: 12px; }
+.claude-can-list strong { font-size: .9375rem; font-weight: 650; }
+.claude-can-list span { font-size: .8125rem; line-height: 1.6; color: var(--ink2); }
+.claude-can-not { margin: 0; font-size: .75rem; line-height: 1.65; color: var(--ink3); }
+
+/* 絵（claude.ai の画面・このアプリの許可画面）。本物と見分けられるよう、薄い地の上に置いて「イメージ」と添える */
+.claude-figure { margin: 0; padding: 1rem; border-radius: 14px; background: var(--paper2); }
+.claude-figure figcaption { margin-top: .6rem; font-size: .75rem; color: var(--ink3); text-align: center; }
+
+.claude-mock { padding: 1rem 1.1rem .9rem; border-radius: 12px; border: 1px solid var(--line); background: #fff; font-size: .75rem; color: #3d3929; }
+.claude-mock-bar { display: flex; align-items: center; gap: 5px; margin: -.35rem -.4rem .8rem; padding: .35rem .5rem; border-radius: 7px; background: #f0eee6; font-size: .6875rem; color: #7a776c; }
+.claude-mock-bar i { width: 7px; height: 7px; border-radius: 50%; background: #d6d3c8; }
+.claude-mock-bar span { margin-left: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.claude-mock-title { display: block; margin-bottom: .3rem; font-size: .9375rem; font-weight: 600; color: #1f1e1d; }
+.claude-mock-desc { margin: 0 0 .75rem; color: #5e5d59; }
+.claude-mock-field { position: relative; padding: .55rem .65rem; border: 1px solid #dedcd1; border-radius: 8px; color: #a6a39a; overflow-wrap: anywhere; }
+.claude-mock-field.is-filled { color: #1f1e1d; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.claude-mock-help { margin: .25rem 0 .75rem; font-size: .6875rem; color: #8a877c; }
+.claude-mock-actions { display: flex; justify-content: flex-end; gap: .5rem; }
+.claude-mock-actions > span { position: relative; padding: .4rem .75rem; border: 1px solid #dedcd1; border-radius: 8px; }
+.claude-mock-actions > .claude-mock-go { background: #1f1e1d; border-color: #1f1e1d; color: #fff; font-weight: 600; }
+.claude-mock .is-marked { outline: 2.5px solid var(--accent); outline-offset: 2px; }
+
+/* ①②③ の印。絵の上と、下の「何を入れるか」で同じ見た目 */
+.claude-badge, .claude-n {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--accent); color: #fff;
+  font-size: .75rem; font-weight: 700; line-height: 22px; font-style: normal; text-align: center;
+}
+.claude-badge { position: absolute; top: -10px; left: -10px; box-shadow: 0 0 0 3px #fff; }
+.claude-n { flex: none; margin-top: 1px; }
+
+.claude-todo { list-style: none; margin: 1.25rem 0 0; padding: 0; display: grid; gap: .9rem; }
+.claude-todo li { display: flex; gap: .65rem; align-items: flex-start; }
+.claude-todo-what { flex: 1; min-width: 0; font-size: .875rem; line-height: 1.5; }
+.claude-todo-what small { display: block; font-size: .75rem; color: var(--ink3); }
+.claude-val { display: flex; align-items: center; gap: .5rem; margin-top: .4rem; padding: .45rem .45rem .45rem .75rem; border: 1px solid var(--line2); border-radius: 10px; }
+.claude-val code { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8125rem; overflow-wrap: anywhere; }
+.claude-val .btn { flex: none; min-height: 36px; padding-inline: .75rem; font-size: .8125rem; }
+.claude-val.is-done { border-color: var(--ok); }
+.claude-val.is-done .btn { color: var(--ok); }
+
+/* つながった印 */
+.claude-check { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--ok-soft); }
+.claude-check svg { width: 24px; height: 24px; fill: none; stroke: var(--ok); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.claude-connected { display: flex; align-items: center; gap: .9rem; }
+.claude-connected h2 { margin: 0; }
+.claude-connected p { margin: .2rem 0 0; }
+.claude-page > .btn { justify-self: start; }

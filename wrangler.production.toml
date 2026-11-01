@@ -18,7 +18,8 @@ not_found_handling = "single-page-application"
 # 注入する cron 手動実行の入口で、静的アセット側に取られると Worker まで届かないため。
 # 本番では `--test-scheduled` の middleware が無く、index.ts が ASSETS にそのまま渡すので
 # 挙動は追加前と変わらない（docs/qa.md M2-2）。
-run_worker_first = ["/api/*", "/a/*", "/__scheduled"]
+# `/mcp` `/oauth/*` `/.well-known/*` は Claude 連携（Remote MCP と、その OAuth。worker/src/mcp/）。
+run_worker_first = ["/api/*", "/a/*", "/__scheduled", "/mcp", "/oauth/*", "/.well-known/*"]
 
 [[d1_databases]]
 binding = "DB"
@@ -28,6 +29,12 @@ binding = "DB"
 database_name = "threads-autopilot-staging"
 database_id = "dcce5294-b2de-4c72-9a81-5dc6f6d2e00a"
 migrations_dir = "worker/migrations"
+
+# Claude 連携（MCP）の OAuth の置き場所（@cloudflare/workers-oauth-provider）。
+# namespace `threads-autopilot-oauth-production`（2026-11-01 作成。本番とステージングで別）。
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "9bec3cc8b95a48228ede0c0a9e89cab5"
 
 [triggers]
 crons = ["* * * * *", "0 * * * *", "0 18 * * *"]   # UTC。18:00 UTC = 03:00 JST

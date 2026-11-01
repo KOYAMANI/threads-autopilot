@@ -25,6 +25,10 @@ def validate(config):
         errors.append("DB: set the actual production D1 database ID")
     if config.get("define", {}).get("__DEV__") != "false" or any(variables.get(key) != "0" for key in ("THREADS_MOCK", "AI_MOCK")):
         errors.append("Build: disable development and API mocks")
+    # Claude connector (OAuth tokens in KV). Optional, but a bound namespace needs its real ID.
+    oauth_kv = [k for k in config.get("kv_namespaces", []) if k.get("binding") == "OAUTH_KV"]
+    if oauth_kv and not re.fullmatch(r"[0-9a-f]{32}", oauth_kv[0].get("id", "")):
+        errors.append("OAUTH_KV: set the KV namespace ID from `wrangler kv namespace create OAUTH_KV`")
     if variables.get("MAINTENANCE_MODE") != "0":
         errors.append("Maintenance mode is enabled; use the documented recovery workflow")
     sender = variables.get("MAIL_FROM", "")

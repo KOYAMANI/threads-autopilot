@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fail closed when staging is pointed at any production resource."""
 from pathlib import Path
+import re
 import tomllib
 ROOT=Path(__file__).resolve().parent.parent
 stage=tomllib.loads((ROOT/"wrangler.staging.toml").read_text())
@@ -17,6 +18,12 @@ checks={
  # Minutely dispatch + the 03:00 JST daily sweep only; the hourly cron stays production-only (DECISIONS 2026-10-21).
  "staging-crons":stage.get("triggers",{}).get("crons",[])==prod.get("triggers",{}).get("crons",[]),
 }
+# Claude connector (OAuth tokens in KV). Optional, but once bound it must be a real, staging-only namespace.
+def oauth_kv(config):
+    return [k for k in config.get("kv_namespaces",[]) if k.get("binding")=="OAUTH_KV"]
+if oauth_kv(stage):
+    stage_kv=oauth_kv(stage)[0].get("id","")
+    checks["oauth-kv"]=bool(re.fullmatch(r"[0-9a-f]{32}",stage_kv)) and all(k.get("id")!=stage_kv for k in oauth_kv(prod))
 failed=[name for name,ok in checks.items() if not ok]
 if failed: raise SystemExit("Blocked staging deploy: "+", ".join(failed))
 print("Staging targets isolated; same crons and publishing as production; email disabled.")

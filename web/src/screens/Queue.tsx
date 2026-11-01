@@ -617,6 +617,7 @@ function QueueRow({
             {item.comments.length > 0 && <span className="tag">ツリー {item.comments.length + 1}段</span>}
             {item.imageUrl && <span className="tag">画像</span>}
             {item.source === "autopilot" && <span className="tag tag-link">自動</span>}
+            {item.source === "claude" && <span className="tag">Claude</span>}
           </div>
           <div className="row-text">{item.body || "（本文なし）"}</div>
 
@@ -699,6 +700,7 @@ function QueueViewer({
           </span>
           {item.imageUrl && <span className="tag">画像</span>}
           {item.source === "autopilot" && <span className="tag tag-link">自動</span>}
+          {item.source === "claude" && <span className="tag">Claude</span>}
         </>
       }
       segments={[
