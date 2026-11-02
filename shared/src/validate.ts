@@ -6,6 +6,7 @@
  * - link_placement='comment' のとき本文に URL を置かない
  */
 import { extractUrls } from "./url";
+import { MAX_ALT_LENGTH, MAX_MEDIA_PER_POST, type MediaItem } from "./media";
 
 export const MAX_BODY_LENGTH = 500;
 export const MAX_LINKS_PER_POST = 5;
@@ -19,6 +20,8 @@ export type ValidateOptions = {
   ngWords?: string | string[];
   /** ツリーのコメント本文。本数・長さは本文と同じ基準で見る */
   comments?: string[];
+  /** セグメントごとの画像（`media[0]` が本文）。画像があるセグメントは文字が空でもよい */
+  media?: MediaItem[][];
 };
 
 export type ValidationIssue = { code: string; message: string; field: string };
@@ -45,13 +48,41 @@ export function parseNgWords(ngWords: string | string[] | undefined): string[] {
 }
 
 export function validatePost(body: string, options: ValidateOptions = {}): ValidationResult {
-  const { linkPlacement = "comment", ngWords, comments = [] } = options;
+  const { linkPlacement = "comment", ngWords, comments = [], media = [] } = options;
   const issues: ValidationIssue[] = [];
   const text = body ?? "";
 
-  if (text.trim() === "") {
+  if (text.trim() === "" && (media[0]?.length ?? 0) === 0) {
     issues.push({ code: "BODY_EMPTY", message: "本文が空です", field: "body" });
   }
+  comments.forEach((c, i) => {
+    if ((c ?? "").trim() === "" && (media[i + 1]?.length ?? 0) === 0) {
+      issues.push({ code: "COMMENT_EMPTY", message: `コメント${i + 1}が空です`, field: `comments.${i}` });
+    }
+  });
+  if (media.length > comments.length + 1) {
+    issues.push({ code: "MEDIA_ORPHAN", message: "投稿の無いところに画像があります", field: "media" });
+  }
+  media.forEach((seg, i) => {
+    const where = i === 0 ? "1投稿目" : `コメント${i}`;
+    if (seg.length > MAX_MEDIA_PER_POST) {
+      issues.push({
+        code: "MEDIA_TOO_MANY",
+        message: `1投稿に付けられる画像は${MAX_MEDIA_PER_POST}枚までです（${where}は${seg.length}枚）`,
+        field: `media.${i}`,
+      });
+    }
+    for (const m of seg) {
+      if (!/^https:\/\//.test(m.url) && !/^http:\/\/localhost[:/]/.test(m.url)) {
+        issues.push({ code: "MEDIA_URL", message: `${where}の画像の場所が正しくありません`, field: `media.${i}` });
+        break;
+      }
+      if ([...(m.alt ?? "")].length > MAX_ALT_LENGTH) {
+        issues.push({ code: "ALT_TOO_LONG", message: `画像の説明は${MAX_ALT_LENGTH}文字までです`, field: `media.${i}` });
+        break;
+      }
+    }
+  });
 
   const len = bodyLength(text);
   if (len > MAX_BODY_LENGTH) {

@@ -6,7 +6,7 @@
  * 失敗は例外ではなく `{ ok: false, code, message, status }` で返し、ルートはそのまま `fail()` に渡す。
  * 予約が入った・早まったときは `enqueuePublish` で publish ジョブを前倒しで積む。
  */
-import { localDateKey, validatePost, type CreateQueueRequest, type PatchQueueRequest, type QueueSource } from "@tap/shared";
+import { alignSegments, localDateKey, validatePost, type CreateQueueRequest, type MediaItem, type PatchQueueRequest, type QueueSource } from "@tap/shared";
 import type { Env } from "../env";
 import { enqueuePublish } from "../jobs/publish";
 import { canPublishAccount, type AccountRow } from "./accounts";
@@ -15,7 +15,7 @@ import type { Budget } from "./budget";
 import type { Db } from "./db";
 import { jobContextFrom } from "./jobs";
 import { canReservePostingSlot, isSlotConflict, nextPostingSlot } from "./posting-schedule";
-import { parseJsonArray, QUEUE_SELECT, type QueueRow } from "./queue";
+import { parseJsonArray, QUEUE_SELECT, rowMedia, type QueueRow } from "./queue";
 
 export type QueueOpsContext = { env: Env; db: Db; budget: Budget };
 export type QueueOpError = { ok: false; code: string; message: string; status: 400 | 404 | 409 };
@@ -41,9 +41,16 @@ export function parseAt(value: string | null | undefined): string | null | undef
  * `link_placement` は M6 のオートパイロット設定なので、手動のキューでは本文にリンクを
  * 置くこと自体は許す（`body`）。見るのは空・500文字・リンク5本・NGワード。
  */
-export function checkManualPost(body: string, comments: string[]): { message: string } | null {
-  const res = validatePost(body, { comments, linkPlacement: "body" });
+export function checkManualPost(body: string, comments: string[], media: MediaItem[][] = []): { message: string } | null {
+  const res = validatePost(body, { comments, media, linkPlacement: "body" });
   return res.ok ? null : { message: res.issues[0]!.message };
+}
+
+/** 入力の画像。`media` が無ければ旧形式の `imageUrl` を1投稿目の1枚として読む。どちらも無ければ undefined。 */
+function inputMedia(input: { media?: MediaItem[][]; imageUrl?: string | null }): MediaItem[][] | undefined {
+  if (input.media) return input.media.map((seg) => seg.map((m) => ({ url: m.url, ...(m.alt?.trim() ? { alt: m.alt.trim() } : {}) })));
+  if (input.imageUrl !== undefined) return input.imageUrl ? [[{ url: input.imageUrl }]] : [];
+  return undefined;
 }
 
 export async function loadQueueRow(db: Db, accountId: string, qid: string): Promise<QueueRow | null> {
@@ -83,8 +90,8 @@ export async function createQueueItem(
     if (previous) return { ok: true, value: { row: previous, existing: true } };
   }
   if (input.status !== "draft" && !canPublishAccount(account)) return err("CONFLICT", "Threads APIを設定で連携してから予約してください", 409);
-  const comments = (input.comments ?? []).filter((t) => t.trim() !== "");
-  const bad = checkManualPost(input.body, comments);
+  const { comments, media } = alignSegments(input.comments ?? [], inputMedia(input) ?? []);
+  const bad = checkManualPost(input.body, comments, media);
   if (bad) return err("VALIDATION", bad.message, 400);
 
   const nowIso = new Date().toISOString();
@@ -115,7 +122,7 @@ export async function createQueueItem(
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       await db.run(
-        `INSERT INTO queue (id, account_id, status, scheduled_at, body, comments_json, image_url, reply_control,
+        `INSERT INTO queue (id, account_id, status, scheduled_at, body, comments_json, media_json, reply_control,
             source, approval_mode, approve_deadline, notified_at, action_token_used_at, step, next_step_at,
             container_id, container_polls, result_ids_json, error, error_raw, attempts, tags_json,
             origin_post_id, source_ids_json, created_at, updated_at, slot_managed, slot_day, request_id)
@@ -126,7 +133,7 @@ export async function createQueueItem(
         scheduledAt,
         input.body,
         JSON.stringify(comments),
-        input.imageUrl ?? null,
+        JSON.stringify(media),
         input.replyControl ?? "everyone",
         input.source ?? "manual",
         input.originPostId ?? null,
@@ -174,10 +181,11 @@ export async function updateQueueItem(
   }
 
   const body = input.body ?? row.body;
-  const comments = (input.comments ?? parseJsonArray(row.comments_json)).filter(
-    (t) => t.trim() !== "",
+  const { comments, media } = alignSegments(
+    input.comments ?? parseJsonArray(row.comments_json),
+    inputMedia(input) ?? rowMedia(row),
   );
-  const bad = checkManualPost(body, comments);
+  const bad = checkManualPost(body, comments, media);
   if (bad) return err("VALIDATION", bad.message, 400);
 
   const at = parseAt(input.scheduledAt);
@@ -212,15 +220,15 @@ export async function updateQueueItem(
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const updated = await db.run(
-        `UPDATE queue SET body=?, comments_json=?, image_url=?, reply_control=?, scheduled_at=?, status=?,
+        `UPDATE queue SET body=?, comments_json=?, media_json=?, image_url=NULL, reply_control=?, scheduled_at=?, status=?,
            slot_managed=CASE WHEN ? THEN 1 ELSE slot_managed END, slot_day=?,
            error=NULL, error_raw=NULL,
            step=CASE WHEN ? THEN 0 ELSE step END,
-           next_step_at=NULL, container_id=NULL, container_polls=0,
+           next_step_at=NULL, container_id=NULL, container_polls=0, media_state_json=NULL,
            updated_at=? WHERE id=? AND account_id=? AND status=? AND updated_at=? AND status NOT IN ('publishing','done')`,
         body,
         JSON.stringify(comments),
-        input.imageUrl === undefined ? row.image_url : input.imageUrl,
+        JSON.stringify(media),
         input.replyControl ?? row.reply_control,
         scheduledAt,
         status,
@@ -298,7 +306,7 @@ export async function publishQueueItemNow(
   if (!canPublishAccount(account)) return err("CONFLICT", "Threads APIを設定で連携し直してから予約してください", 409);
   if (row.status === "publishing" || row.status === "done") return err("CONFLICT", "すでに投稿中または投稿済みです", 409);
 
-  const bad = checkManualPost(row.body, parseJsonArray(row.comments_json));
+  const bad = checkManualPost(row.body, parseJsonArray(row.comments_json), rowMedia(row));
   if (bad) return err("VALIDATION", bad.message, 400);
 
   const nowIso = new Date().toISOString();

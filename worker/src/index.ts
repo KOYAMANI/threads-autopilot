@@ -3,6 +3,7 @@
  * - fetch:     /api/* を Hono、それ以外は Workers Static Assets（SPA）
  * - /a/*:     メールからの承認/取消（SPEC §7.9。Cookie 非依存）
  * - /mcp, /oauth/*, /.well-known/oauth-*: Claude 連携（Remote MCP。`mcp/index.ts`）
+ * - /m/*:     投稿に付ける画像の配信（Threads が取りに来る。routes/media.ts）
  * - scheduled: Cron Triggers（SPEC §8.2）
  */
 import type { Env } from "./env";
@@ -12,6 +13,7 @@ import { createSchedulerHealthDb, recordSchedulerStart, recordSchedulerFinish } 
 import { enqueueSheetSyncs } from "./jobs/sheets";
 import { handleAction } from "./routes/action";
 import { handleMcp, isMcpPath } from "./mcp";
+import { serveMedia } from "./routes/media";
 
 const app = createApp();
 
@@ -35,6 +37,7 @@ export default {
       if (env.MAINTENANCE_MODE === "1") return new Response("メンテナンス中です", {status:503,headers:{"Cache-Control":"no-store"}});
       return handleMcp(request, env, ctx);
     }
+    if (url.pathname.startsWith("/m/")) return serveMedia(request, env, url.pathname.slice(3));
 
     if (env.ASSETS) return env.ASSETS.fetch(request);
     return new Response("Not Found", { status: 404 });

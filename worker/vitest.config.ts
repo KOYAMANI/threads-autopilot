@@ -18,6 +18,7 @@ export default defineConfig(async () => {
           d1Databases: { DB: "test-db" },
           // Claude 連携（MCP）の OAuth の置き場所。`@cloudflare/workers-oauth-provider` が使う
           kvNamespaces: ["OAUTH_KV"],
+          r2Buckets: ["MEDIA"],
           bindings: {
             TEST_MIGRATIONS: migrations,
             APP_ORIGIN: "http://localhost:5173",

@@ -2,6 +2,7 @@
  * API のリクエスト / レスポンス型（SPEC §2.4 / §7）。web と worker で共有する。
  * M1 の範囲（auth / admin / health）は確定。それ以外は後続マイルストーンで埋める。
  */
+import type { MediaItem } from "./media";
 
 /* ── 応答の包み（SPEC §2.4） ─────────────────────────── */
 
@@ -248,6 +249,9 @@ export type QueueItem = {
   scheduledAt: string | null;
   body: string;
   comments: string[];
+  /** セグメントごとの画像（`media[0]` が本文、`media[i]` が `comments[i-1]`） */
+  media: MediaItem[][];
+  /** `media[0][0]` の URL。互換のため残す */
   imageUrl: string | null;
   replyControl: ReplyControl;
   source: QueueSource;
@@ -282,6 +286,8 @@ export type CreateQueueRequest = {
   scheduledAt?: string;
   body: string;
   comments?: string[];
+  media?: MediaItem[][];
+  /** 旧形式。`media` が無いときだけ `media[0]` として扱う */
   imageUrl?: string | null;
   replyControl?: ReplyControl;
   originPostId?: string | null;
@@ -293,6 +299,8 @@ export type PatchQueueRequest = {
   body?: string;
   comments?: string[];
   scheduledAt?: string | null;
+  media?: MediaItem[][];
+  /** 旧形式。`media` が無いときだけ `media[0]` として扱う */
   imageUrl?: string | null;
   replyControl?: ReplyControl;
   status?: "draft" | "scheduled" | "next_slot";

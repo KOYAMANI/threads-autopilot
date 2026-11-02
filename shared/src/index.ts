@@ -4,6 +4,7 @@ export * from "./similarity";
 export * from "./url";
 export * from "./clicks";
 export * from "./validate";
+export * from "./media";
 export * from "./slot";
 export * from "./autopilot";
 export * from "./note-export";

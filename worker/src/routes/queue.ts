@@ -40,6 +40,11 @@ import {
 
 const REPLY_CONTROLS = ["everyone", "accounts_you_follow", "mentioned_only"] as const;
 
+// 枚数・説明の長さは validatePost で日本語の理由つきで弾く。ここは形と大きさの上限だけ
+const mediaSchema = z
+  .array(z.array(z.object({ url: z.string().trim().min(1).max(2000), alt: z.string().max(4000).optional() })).max(20))
+  .max(11);
+
 const createSchema = z.object({
   status: z.enum(["draft", "scheduled", "now", "next_slot"]),
   idempotencyKey: z.string().min(8).max(80).optional(),
@@ -47,6 +52,7 @@ const createSchema = z.object({
   scheduledAt: z.string().min(1).optional(),
   body: z.string().max(4000),
   comments: z.array(z.string().max(4000)).max(10).optional(),
+  media: mediaSchema.optional(),
   imageUrl: z.string().trim().url().max(2000).nullable().optional(),
   replyControl: z.enum(REPLY_CONTROLS).optional(),
   originPostId: z.string().max(64).nullable().optional(),
@@ -58,6 +64,7 @@ const patchSchema = z.object({
   body: z.string().max(4000).optional(),
   comments: z.array(z.string().max(4000)).max(10).optional(),
   scheduledAt: z.string().min(1).nullable().optional(),
+  media: mediaSchema.optional(),
   imageUrl: z.string().trim().url().max(2000).nullable().optional(),
   replyControl: z.enum(REPLY_CONTROLS).optional(),
   status: z.enum(["draft", "scheduled", "next_slot"]).optional(),
@@ -264,16 +271,17 @@ export function queueRoutes() {
     const id = crypto.randomUUID();
     const nowIso = new Date().toISOString();
     await db.run(
-      `INSERT INTO queue (id, account_id, status, scheduled_at, body, comments_json, image_url, reply_control,
+      `INSERT INTO queue (id, account_id, status, scheduled_at, body, comments_json, image_url, media_json, reply_control,
           source, approval_mode, approve_deadline, notified_at, action_token_used_at, step, next_step_at,
           container_id, container_polls, result_ids_json, error, error_raw, attempts, tags_json,
           origin_post_id, source_ids_json, created_at, updated_at)
-        VALUES (?,?, 'draft', NULL, ?,?,?,?, 'manual', NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, '[]', NULL, NULL, 0, '{}', ?,?,?,?)`,
+        VALUES (?,?, 'draft', NULL, ?,?,?,?,?, 'manual', NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, '[]', NULL, NULL, 0, '{}', ?,?,?,?)`,
       id,
       account.id,
       row.body,
       row.comments_json,
       row.image_url,
+      row.media_json,
       row.reply_control,
       row.origin_post_id,
       row.source_ids_json,

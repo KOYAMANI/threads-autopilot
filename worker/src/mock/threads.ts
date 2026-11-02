@@ -30,6 +30,11 @@ type MockContainer = {
   polls: number;
   /** [[SLOW]] を含むコンテナは FINISHED にならない（container_polls の上限を試すため） */
   slow: boolean;
+  mediaType?: string;
+  imageUrl?: string | null;
+  /** カルーセルの子（`is_carousel_item=true`）。単体では公開できない */
+  carouselItem?: boolean;
+  children?: string[];
 };
 
 type MockStore = {
@@ -304,18 +309,52 @@ export function mockCall(req: MockRequest): unknown {
       publish(store, id, stripMarkers(text), replyToId, now);
       return { id };
     }
-    // コンテナ作成（画像、または3ステップ方式のコメント）
+    // コンテナ作成（画像・カルーセル、または3ステップ方式のコメント）
+    const mediaType = p.media_type ?? "TEXT";
+    if (mediaType === "IMAGE" && !p.image_url) throw mockError(100, "Invalid parameter: image_url is required");
+    if (mediaType === "IMAGE" && p.image_url?.includes("broken")) {
+      store.containers.set(id, { id, text: "", replyToId: null, createdAt: now, polls: 0, slow: false, mediaType: "ERROR" });
+      return { id };
+    }
+    let children: string[] | undefined;
+    if (mediaType === "CAROUSEL") {
+      children = (p.children ?? "").split(",").filter(Boolean);
+      if (children.length < 2 || children.length > 20) throw mockError(100, "Invalid parameter: children must have 2-20 items");
+      for (const c of children) {
+        if (!store.containers.get(c)?.carouselItem) throw mockError(100, `Invalid parameter: child ${c} not found`);
+      }
+    }
     const slow = text.includes(MOCK_SLOW_MARKER) || (p.image_url ?? "").includes("slow");
-    store.containers.set(id, { id, text: stripMarkers(text), replyToId, createdAt: now, polls: 0, slow });
+    store.containers.set(id, {
+      id,
+      text: stripMarkers(text),
+      replyToId,
+      createdAt: now,
+      polls: 0,
+      slow,
+      mediaType,
+      imageUrl: p.image_url ?? null,
+      carouselItem: p.is_carousel_item === "true",
+      ...(children ? { children } : {}),
+    });
     return { id };
   }
   if (path === "/me/threads_publish" && req.method === "POST") {
     const creationId = p.creation_id ?? "";
     const container = store.containers.get(creationId);
     if (!container) throw mockError(100, "Invalid parameter: creation_id not found");
+    if (container.carouselItem) throw mockError(100, "Invalid parameter: carousel items cannot be published alone");
     store.containers.delete(creationId);
+    const firstChild = container.children?.[0] ? store.containers.get(container.children[0]) : undefined;
+    for (const c of container.children ?? []) store.containers.delete(c);
     const id = `${store.user.id}${String(9000 + store.seq++)}`;
-    publish(store, id, container.text, container.replyToId, now);
+    const media =
+      container.mediaType === "IMAGE"
+        ? { type: "IMAGE", url: container.imageUrl ?? null }
+        : container.mediaType === "CAROUSEL"
+          ? { type: "CAROUSEL_ALBUM", url: firstChild?.imageUrl ?? null }
+          : undefined;
+    publish(store, id, container.text, container.replyToId, now, media);
     return { id };
   }
 
@@ -427,6 +466,7 @@ export function mockCall(req: MockRequest): unknown {
       const container = store.containers.get(id);
       if (container) {
         container.polls += 1;
+        if (container.mediaType === "ERROR") return { id, status: "ERROR", error_message: "Media download has failed." };
         if (container.slow) return { id, status: "IN_PROGRESS" };
         return container.polls >= 2
           ? { id, status: "FINISHED" }
@@ -447,6 +487,7 @@ function publish(
   text: string,
   replyToId: string | null,
   now: number,
+  media?: { type: string; url: string | null },
 ): void {
   const parent = replyToId ? store.posts.find((x) => x.id === replyToId) : undefined;
   store.posts.push({
@@ -457,8 +498,8 @@ function publish(
     is_reply: Boolean(replyToId),
     root_id: parent ? parent.root_id : id,
     replied_to_id: replyToId,
-    media_type: "TEXT_POST",
-    media_url: null,
+    media_type: media?.type ?? "TEXT_POST",
+    media_url: media?.url ?? null,
     link_attachment_url: null,
   });
 }
