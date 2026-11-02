@@ -8,12 +8,15 @@ export default function StepHeader({
   title,
   onBack,
   progress,
+  actions,
 }: {
   title: string;
   /** なければ戻るボタンを出さない */
   onBack?: () => void;
   /** 例: "2/4" */
   progress?: string;
+  /** 右端の操作（note の「コピー」など）。progress と同時には使わない */
+  actions?: React.ReactNode;
 }) {
   return (
     <header className="step-header">
@@ -26,6 +29,7 @@ export default function StepHeader({
       )}
       <strong>{title}</strong>
       {progress && <span className="step-progress num">{progress}</span>}
+      {actions && <span className="step-actions">{actions}</span>}
     </header>
   );
 }

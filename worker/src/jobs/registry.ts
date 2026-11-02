@@ -15,6 +15,7 @@ import { apNotifyJob } from "./notify";
 import { apScoreJob } from "./score";
 import { sheetsSyncJob } from "./sheets";
 import { dailyDigestJob } from "./digest";
+import { noteWriteJob } from "./note-write";
 import { autopilotRunning } from "../lib/autopilot-pause";
 
 /** オートパイロットを止めている間は、残っていたジョブが動いても何もしない */
@@ -38,4 +39,5 @@ export const HANDLERS: Partial<Record<JobType, JobHandler>> = {
   ap_notify: unlessPaused(apNotifyJob),
   ap_score: unlessPaused(apScoreJob),
   daily_digest: dailyDigestJob,
+  note_write: noteWriteJob,
 };
