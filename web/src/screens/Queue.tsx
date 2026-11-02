@@ -27,7 +27,7 @@ import {
 import { useRepost } from "../api/accounts";
 import { ApiError } from "../api/client";
 import { useShell } from "../components/Shell";
-import PostFields, { draftIssue, trimComments, type PostDraft } from "../components/PostFields";
+import PostFields, { draftIssue, draftPayload, type PostDraft } from "../components/PostFields";
 import ScheduleSheet, { type SchedulePick } from "../components/ScheduleSheet";
 import Sheet from "../components/Sheet";
 import PostingScheduleEditor from "../components/PostingScheduleEditor";
@@ -92,7 +92,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 function draftOf(item: QueueItem): PostDraft {
   const comments = [...item.comments, "", "", ""].slice(0, 3);
-  return { body: item.body, comments };
+  return { body: item.body, comments, media: item.media };
 }
 
 /* ── 画面 ──────────────────────────────────────────── */
@@ -194,7 +194,7 @@ export default function Queue() {
       return;
     }
     patch.mutate(
-      { id: selected.id, patch: { body: editDraft.body, comments: trimComments(editDraft.comments) } },
+      { id: selected.id, patch: draftPayload(editDraft) },
       {
         onSuccess: () => {
           setSheet(null);
@@ -536,7 +536,7 @@ export default function Queue() {
 
       {/* ── 編集シート ───────────────────────────────── */}
       <Sheet open={sheet === "edit" && selected !== null} onClose={() => setSheet(null)} title="編集">
-        <PostFields draft={editDraft} onChange={setEditDraft} idPrefix="queue-edit" />
+        <PostFields draft={editDraft} onChange={setEditDraft} idPrefix="queue-edit" accountId={accountId} />
         <button aria-busy={patch.isPending}
           type="button"
           className="btn"
@@ -615,10 +615,12 @@ function QueueRow({
             <span>{mdhm(when, tz)}</span>
             <span className={`tag tag-${item.status}`}>{STATUS_LABEL[item.status] ?? item.status}</span>
             {item.comments.length > 0 && <span className="tag">ツリー {item.comments.length + 1}段</span>}
-            {item.imageUrl && <span className="tag">画像</span>}
             {item.source === "autopilot" && <span className="tag tag-link">自動</span>}
           </div>
-          <div className="row-text">{item.body || "（本文なし）"}</div>
+          <div className="row-with-media">
+            <div className="row-text">{item.body || "（本文なし）"}</div>
+            <MediaStack media={item.media} />
+          </div>
 
           {item.status === "done" && m && (
             <div className="row-stats num">
@@ -645,6 +647,18 @@ function QueueRow({
         </button>
       </div>
     </article>
+  );
+}
+
+/** 一覧の行の右に置く、付けた画像の重なり（2枚まで見せ、全部の枚数を添える）。 */
+function MediaStack({ media }: { media: QueueItem["media"] }) {
+  const all = media.flat();
+  if (all.length === 0) return null;
+  return (
+    <span className="row-media" aria-label={`画像 ${all.length}枚`}>
+      {all.slice(0, 2).map((m) => <img key={m.url} src={m.url} alt="" loading="lazy" />)}
+      {all.length > 1 && <span className="row-media-n num">{all.length}</span>}
+    </span>
   );
 }
 
@@ -697,13 +711,12 @@ function QueueViewer({
                 ? `${mdhm(item.scheduledAt, tz)} に予約`
                 : `${mdhm(when, tz)} に作成`}
           </span>
-          {item.imageUrl && <span className="tag">画像</span>}
           {item.source === "autopilot" && <span className="tag tag-link">自動</span>}
         </>
       }
       segments={[
-        { text: item.body, ...(m ? { views: m.views } : {}) },
-        ...item.comments.map((c) => ({ text: c })),
+        { text: item.body, media: item.media[0] ?? [], ...(m ? { views: m.views } : {}) },
+        ...item.comments.map((c, i) => ({ text: c, media: item.media[i + 1] ?? [] })),
       ]}
       stats={
         item.status === "done" && m

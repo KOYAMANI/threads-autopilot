@@ -16,6 +16,7 @@ export default defineConfig(async () => {
           compatibilityDate: "2026-08-01",
           compatibilityFlags: ["nodejs_compat"],
           d1Databases: { DB: "test-db" },
+          r2Buckets: ["MEDIA"],
           bindings: {
             TEST_MIGRATIONS: migrations,
             APP_ORIGIN: "http://localhost:5173",

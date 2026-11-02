@@ -17,7 +17,7 @@ not_found_handling = "single-page-application"
 # 注入する cron 手動実行の入口で、静的アセット側に取られると Worker まで届かないため。
 # 本番では `--test-scheduled` の middleware が無く、index.ts が ASSETS にそのまま渡すので
 # 挙動は追加前と変わらない（docs/qa.md M2-2）。
-run_worker_first = ["/api/*", "/a/*", "/__scheduled"]
+run_worker_first = ["/api/*", "/a/*", "/m/*", "/__scheduled"]
 
 [[d1_databases]]
 binding = "DB"
@@ -26,6 +26,11 @@ database_name = "threads-autopilot"
 # ローカル（--local / wrangler dev）は Miniflare のファイルを使うので、この値は参照されない。
 database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "worker/migrations"
+
+# 投稿に付ける画像（DECISIONS 2026-10-30）。`/m/:key` で配り、Threads が取りに来る
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "threads-autopilot-media"
 
 [triggers]
 crons = ["* * * * *", "0 * * * *", "0 18 * * *"]   # UTC。18:00 UTC = 03:00 JST

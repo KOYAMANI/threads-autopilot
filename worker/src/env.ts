@@ -7,6 +7,8 @@ export type Env = {
   /** Free pilot: bounded work per invocation. Does not change Cloudflare billing. */
   WORKERS_PLAN?: "free" | "paid";
   DB: D1Database;
+  /** 投稿に付ける画像（R2）。`/m/:key` で配る */
+  MEDIA?: R2Bucket;
   JOB_QUEUE?: Queue<{ jobId: string }>;
   THREADS_APP_ID?: string;
   THREADS_APP_SECRET?: string;

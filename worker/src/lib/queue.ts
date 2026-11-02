@@ -2,7 +2,7 @@
  * `queue` テーブルの共通処理（SPEC §4 / §7.4 / §8.3）。
  * ルート（routes/queue.ts）と publish ジョブ（jobs/publish.ts）の両方から使う。
  */
-import { similarity, type QueueItem, type QueueMetrics, type QueueStatus } from "@tap/shared";
+import { parseMedia, similarity, type MediaItem, type QueueItem, type QueueMetrics, type QueueStatus } from "@tap/shared";
 import type { Db } from "./db";
 import { parseSettings, type AccountRow } from "./accounts";
 
@@ -14,6 +14,8 @@ export type QueueRow = {
   body: string;
   comments_json: string;
   image_url: string | null;
+  media_json: string;
+  media_state_json: string | null;
   reply_control: string;
   source: string;
   approval_mode: string | null;
@@ -37,7 +39,7 @@ export type QueueRow = {
 };
 
 export const QUEUE_SELECT =
-  "id, account_id, status, scheduled_at, body, comments_json, image_url, reply_control, source, " +
+  "id, account_id, status, scheduled_at, body, comments_json, image_url, media_json, media_state_json, reply_control, source, " +
   "approval_mode, approve_deadline, notified_at, action_token_used_at, step, next_step_at, container_id, " +
   "container_polls, result_ids_json, root_published_at, error, error_raw, attempts, tags_json, origin_post_id, source_ids_json, " +
   "created_at, updated_at";
@@ -62,6 +64,15 @@ export function parseJsonArray(json: string): string[] {
   }
 }
 
+/**
+ * 行の画像（セグメントごと）。`media_json` が空で旧列 `image_url` だけあるときは、それを1投稿目の1枚にする。
+ */
+export function rowMedia(row: Pick<QueueRow, "media_json" | "image_url">): MediaItem[][] {
+  const media = parseMedia(row.media_json ?? "[]");
+  if (media.some((m) => m.length > 0)) return media;
+  return row.image_url ? [[{ url: row.image_url }]] : [];
+}
+
 export function toQueueItem(row: QueueRow, metrics: QueueMetrics | null = null): QueueItem {
   return {
     id: row.id,
@@ -70,7 +81,8 @@ export function toQueueItem(row: QueueRow, metrics: QueueMetrics | null = null):
     scheduledAt: row.scheduled_at,
     body: row.body,
     comments: parseJsonArray(row.comments_json),
-    imageUrl: row.image_url,
+    media: rowMedia(row),
+    imageUrl: rowMedia(row)[0]?.[0]?.url ?? null,
     replyControl: (row.reply_control as QueueItem["replyControl"]) ?? "everyone",
     source: (row.source as QueueItem["source"]) ?? "manual",
     approvalMode: (row.approval_mode as QueueItem["approvalMode"]) ?? null,

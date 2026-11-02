@@ -6,8 +6,10 @@
  *
  * ステップの意味（`REPLY_TWO_STEP` は**毎回 env を読んで**解釈する。SPEC §8.3）:
  *
- *   step 0   本文を投稿（画像ありならコンテナ作成）
- *   step 1   コンテナ状態確認 → FINISHED なら threads_publish
+ *   step 0   本文を投稿（画像ありなら step 1 へ）
+ *   step 1   画像の下ごしらえ（`advanceMedia`）→ FINISHED なら threads_publish
+ *            1枚は IMAGE コンテナ、2枚以上はカルーセル（子を作る → 全部 FINISHED → 親を作る）
+ *            画像つきのコメントも、同じ下ごしらえをコメントの step の中で行う
  *   step 2.. コメントを reply_to_id で投稿する
  *            1ステップ方式（既定）: i = step-2
  *            3ステップ方式:        i = floor((step-2)/3), phase = (step-2)%3
@@ -15,7 +17,7 @@
  * 二重投稿の防止: Threads への publish が1回成功するたびに、**次に進む前に**
  * `result_ids_json` を保存する。途中で落ちても、再開時は保存済みの step から続く。
  */
-import { buildTags, startOfTzDay, validatePost, type PostTags } from "@tap/shared";
+import { buildTags, segmentMediaType, startOfTzDay, validatePost, type MediaItem, type PostTags } from "@tap/shared";
 import { accountToken, loadAccount, type AccountRow } from "../lib/accounts";
 import { apLog, loadAutopilot } from "../lib/autopilot";
 import { sendEmail } from "../lib/email";
@@ -29,9 +31,12 @@ import {
   parseJsonArray,
   publishSettings,
   QUEUE_SELECT,
+  rowMedia,
   type QueueRow,
 } from "../lib/queue";
 import {
+  createCarouselContainer,
+  createCarouselItem,
   createImageContainer,
   createTextPost,
   getContainerStatus,
@@ -77,6 +82,8 @@ type QueuePatch = {
   nextStepAt?: string | null;
   containerId?: string | null;
   containerPolls?: number;
+  /** カルーセルの子コンテナ（下ごしらえ中のセグメントのぶん） */
+  mediaChildren?: string[] | null;
   resultIds?: string[];
   rootPublishedAt?: string;
   error?: string | null;
@@ -101,6 +108,9 @@ async function patchQueue(
   if (patch.nextStepAt !== undefined) put("next_step_at=?", patch.nextStepAt);
   if (patch.containerId !== undefined) put("container_id=?", patch.containerId);
   if (patch.containerPolls !== undefined) put("container_polls=?", patch.containerPolls);
+  if (patch.mediaChildren !== undefined) {
+    put("media_state_json=?", patch.mediaChildren ? JSON.stringify({ children: patch.mediaChildren }) : null);
+  }
   if (patch.resultIds !== undefined) put("result_ids_json=?", JSON.stringify(patch.resultIds));
   if (patch.rootPublishedAt !== undefined) put("root_published_at=COALESCE(root_published_at,?)", patch.rootPublishedAt);
   if (patch.error !== undefined) put("error=?", patch.error);
@@ -293,6 +303,7 @@ export async function finishQueue(
 ): Promise<void> {
   const nowIso = ctx.now.toISOString();
   const comments = parseJsonArray(row.comments_json);
+  const media = rowMedia(row);
   const rootId = resultIds[0];
 
   if (rootId) {
@@ -309,8 +320,8 @@ export async function finishQueue(
       i === 0 ? 0 : 1,
       i === 0 ? row.body : (comments[i - 1] ?? ""),
       null, // permalink は応答に無い。次の full_sync で入る
-      i === 0 && row.image_url ? "IMAGE" : "TEXT_POST",
-      i === 0 ? row.image_url : null,
+      segmentMediaType(media[i]),
+      media[i]?.[0]?.url ?? null,
       null,
       i === 0 ? (row.root_published_at ?? nowIso) : nowIso,
       i === 0 ? tags : "{}",
@@ -342,10 +353,93 @@ export async function finishQueue(
     nextStepAt: null,
     containerId: null,
     containerPolls: 0,
+    mediaChildren: null,
     resultIds,
     error: null,
     errorRaw: null,
   });
+}
+
+/* ── 画像の下ごしらえ ─────────────────────────────── */
+
+function mediaChildren(row: QueueRow): string[] {
+  try {
+    const v = JSON.parse(row.media_state_json ?? "null") as { children?: unknown } | null;
+    return Array.isArray(v?.children) ? v.children.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 画像つきセグメントを1段進める（DECISIONS 2026-10-30）。
+ * - 1枚: IMAGE コンテナを作る → FINISHED を待つ
+ * - 2枚以上: 子（`is_carousel_item`）を全部作る → 全部 FINISHED → CAROUSEL を作る → FINISHED を待つ
+ * `ready` のとき `row.container_id` が公開できるコンテナ。`wait` は行を更新済みで、続きは `next_step_at`。
+ */
+async function advanceMedia(
+  ctx: JobContext,
+  row: QueueRow,
+  token: string,
+  call: CallOptions,
+  seg: { text: string; media: MediaItem[]; replyToId?: string; replyControl?: ReplyControl; label: string },
+): Promise<"ready" | "wait" | "failed"> {
+  const later = (sec: number) => new Date(ctx.now.getTime() + sec * 1000).toISOString();
+  const create = { replyToId: seg.replyToId ?? null, replyControl: seg.replyControl ?? null };
+
+  // 状態確認の回数を数え、上限で失敗にする。ERROR/EXPIRED はその場で失敗
+  const waitOrFail = async (status: string | undefined, raw: string | null | undefined, id: string): Promise<"wait" | "failed"> => {
+    if (status === "ERROR" || status === "EXPIRED") {
+      await failQueue(ctx, row, `${seg.label}の画像を Threads が読み込めませんでした`, redact(raw ?? String(status)));
+      return "failed";
+    }
+    const polls = row.container_polls + 1;
+    if (polls >= MAX_CONTAINER_POLLS) {
+      await failQueue(
+        ctx,
+        row,
+        "画像の下ごしらえが終わりませんでした。時間をおいてもう一度お試しください",
+        `container ${id} still IN_PROGRESS after ${polls} polls`,
+        { containerPolls: polls },
+      );
+      return "failed";
+    }
+    await patchQueue(ctx.db, ctx, row.id, { containerPolls: polls, nextStepAt: later(CONTAINER_POLL_SEC) });
+    return "wait";
+  };
+
+  if (row.container_id) {
+    const status = await getContainerStatus(token, row.container_id, call);
+    if (status.status === "FINISHED") return "ready";
+    return waitOrFail(status.status, status.error_message, row.container_id);
+  }
+
+  if (seg.media.length === 1) {
+    const container = await createImageContainer(
+      token,
+      seg.media[0]!.url,
+      seg.text,
+      { ...create, altText: seg.media[0]!.alt ?? null },
+      call,
+    );
+    await patchQueue(ctx.db, ctx, row.id, { containerId: container.id, containerPolls: 0, nextStepAt: later(CONTAINER_POLL_SEC) });
+    return "wait";
+  }
+
+  const children = mediaChildren(row);
+  if (children.length !== seg.media.length) {
+    const ids: string[] = [];
+    for (const m of seg.media) ids.push((await createCarouselItem(token, m.url, m.alt ?? null, call)).id);
+    await patchQueue(ctx.db, ctx, row.id, { mediaChildren: ids, containerPolls: 0, nextStepAt: later(CONTAINER_POLL_SEC) });
+    return "wait";
+  }
+  for (const id of children) {
+    const status = await getContainerStatus(token, id, call);
+    if (status.status !== "FINISHED") return waitOrFail(status.status, status.error_message, id);
+  }
+  const carousel = await createCarouselContainer(token, children, seg.text, create, call);
+  await patchQueue(ctx.db, ctx, row.id, { containerId: carousel.id, containerPolls: 0, nextStepAt: later(CONTAINER_POLL_SEC) });
+  return "wait";
 }
 
 /* ── 1ステップ進める ───────────────────────────────── */
@@ -355,13 +449,15 @@ type StepOutcome = "continue" | "stop";
 async function runStep(
   ctx: JobContext,
   account: AccountRow,
-  row: QueueRow,
+  claimed: QueueRow,
   token: string,
   call: CallOptions,
   clock: () => Date,
 ): Promise<StepOutcome> {
+  let row = claimed;
   const nowMs = ctx.now.getTime();
   const comments = parseJsonArray(row.comments_json);
+  const media = rowMedia(row);
   const resultIds = parseJsonArray(row.result_ids_json);
   const settings = publishSettings(account);
   const delayMs = settings.commentDelaySec * 1000;
@@ -381,6 +477,7 @@ async function runStep(
       step: 2 + doneComments * (twoStep ? 3 : 1),
       containerId: null,
       containerPolls: 0,
+      mediaChildren: null,
       nextStepAt: ctx.now.toISOString(),
     });
     return "continue";
@@ -398,6 +495,7 @@ async function runStep(
     const ap = row.source === "autopilot" ? await loadAutopilot(ctx.db, account.id) : null;
     const check = validatePost(row.body, {
       comments,
+      media,
       linkPlacement: ap ? (ap.link_placement as "comment" | "body" | "none") : "body",
       ...(ap ? { ngWords: ap.ng_words } : {}),
     });
@@ -412,110 +510,80 @@ async function runStep(
       return "continue";
     }
 
-    if (row.image_url) {
-      const container = await createImageContainer(
+    if ((media[0]?.length ?? 0) > 0) {
+      // 下ごしらえは step 1 が受け持つ。同じ実行の中でそのまま続ける
+      await patchQueue(ctx.db, ctx, row.id, { step: 1, containerId: null, containerPolls: 0, mediaChildren: null });
+      row = { ...row, step: 1, container_id: null, container_polls: 0, media_state_json: null };
+    } else {
+      const created = await createTextPost(
         token,
-        row.image_url,
         row.body,
-        { replyControl },
+        { autoPublish: true, replyControl },
         call,
       );
-      await patchQueue(ctx.db, ctx, row.id, {
-        containerId: container.id,
-        containerPolls: 0,
-        step: 1,
-        nextStepAt: later(CONTAINER_POLL_SEC),
-      });
-      return "stop";
-    }
-
-    const created = await createTextPost(
-      token,
-      row.body,
-      { autoPublish: true, replyControl },
-      call,
-    );
-    // 成功した result_ids は「次へ進む前に」保存する（二重投稿防止。SPEC §8.3）
-    const ids = [created.id];
-    const rootPublishedAt = clock().toISOString();
-    if (comments.length > 0) {
-      await patchQueue(ctx.db, ctx, row.id, {
-        resultIds: ids,
-        rootPublishedAt,
-        step: 2,
-        nextStepAt: new Date(nowMs + delayMs).toISOString(),
-      });
-      return "stop";
-    }
-    await patchQueue(ctx.db, ctx, row.id, { resultIds: ids, rootPublishedAt });
-    await finishQueue(ctx, account, { ...row, result_ids_json: JSON.stringify(ids), root_published_at: rootPublishedAt }, ids);
-    return "continue";
-  }
-
-  /* step 1: 画像コンテナの状態確認 */
-  if (row.step === 1) {
-    if (!row.container_id) {
-      await failQueue(ctx, row, "画像の下ごしらえが見つかりませんでした", null);
-      return "continue";
-    }
-    const status = await getContainerStatus(token, row.container_id, call);
-    if (status.status === "FINISHED") {
-      // Containers can resume hours/days after creation; recheck the current
-      // publication day and gap immediately before the irreversible root publish.
-      const pre = await preflight({ ...ctx, now: clock() }, account, row);
-      if (!pre.ok) {
-        await failQueue(ctx, row, pre.message, null);
-        return "continue";
-      }
-      const published = await publishContainer(token, row.container_id, call);
-      const ids = [...resultIds, published.id];
+      // 成功した result_ids は「次へ進む前に」保存する（二重投稿防止。SPEC §8.3）
+      const ids = [created.id];
       const rootPublishedAt = clock().toISOString();
       if (comments.length > 0) {
         await patchQueue(ctx.db, ctx, row.id, {
           resultIds: ids,
           rootPublishedAt,
-          containerId: null,
-          containerPolls: 0,
           step: 2,
           nextStepAt: new Date(nowMs + delayMs).toISOString(),
         });
         return "stop";
       }
+      await patchQueue(ctx.db, ctx, row.id, { resultIds: ids, rootPublishedAt });
+      await finishQueue(ctx, account, { ...row, result_ids_json: JSON.stringify(ids), root_published_at: rootPublishedAt }, ids);
+      return "continue";
+    }
+  }
+
+  /* step 1: 画像の下ごしらえ → 公開 */
+  if (row.step === 1) {
+    if (!row.container_id && (media[0]?.length ?? 0) === 0) {
+      await failQueue(ctx, row, "画像の下ごしらえが見つかりませんでした", null);
+      return "continue";
+    }
+    const prepared = await advanceMedia(ctx, row, token, call, {
+      text: row.body,
+      media: media[0] ?? [],
+      replyControl,
+      label: "1投稿目",
+    });
+    if (prepared === "failed") return "continue";
+    if (prepared === "wait") return "stop";
+    // Containers can resume hours/days after creation; recheck the current
+    // publication day and gap immediately before the irreversible root publish.
+    const pre = await preflight({ ...ctx, now: clock() }, account, row);
+    if (!pre.ok) {
+      await failQueue(ctx, row, pre.message, null);
+      return "continue";
+    }
+    const published = await publishContainer(token, row.container_id!, call);
+    const ids = [...resultIds, published.id];
+    const rootPublishedAt = clock().toISOString();
+    if (comments.length > 0) {
       await patchQueue(ctx.db, ctx, row.id, {
         resultIds: ids,
         rootPublishedAt,
         containerId: null,
         containerPolls: 0,
+        mediaChildren: null,
+        step: 2,
+        nextStepAt: new Date(nowMs + delayMs).toISOString(),
       });
-      await finishQueue(ctx, account, { ...row, result_ids_json: JSON.stringify(ids), root_published_at: rootPublishedAt }, ids);
-      return "continue";
-    }
-    if (status.status === "ERROR" || status.status === "EXPIRED") {
-      await failQueue(
-        ctx,
-        row,
-        "画像の下ごしらえに失敗しました",
-        redact(status.error_message ?? String(status.status)),
-      );
-      return "continue";
-    }
-    // IN_PROGRESS
-    const polls = row.container_polls + 1;
-    if (polls >= MAX_CONTAINER_POLLS) {
-      await failQueue(
-        ctx,
-        row,
-        "画像の下ごしらえが終わりませんでした。時間をおいてもう一度お試しください",
-        `container ${row.container_id} still IN_PROGRESS after ${polls} polls`,
-        { containerPolls: polls },
-      );
-      return "continue";
+      return "stop";
     }
     await patchQueue(ctx.db, ctx, row.id, {
-      containerPolls: polls,
-      nextStepAt: later(CONTAINER_POLL_SEC),
+      resultIds: ids,
+      rootPublishedAt,
+      containerId: null,
+      containerPolls: 0,
+      mediaChildren: null,
     });
-    return "stop";
+    await finishQueue(ctx, account, { ...row, result_ids_json: JSON.stringify(ids), root_published_at: rootPublishedAt }, ids);
+    return "continue";
   }
 
   /* step 2..: コメント */
@@ -533,6 +601,34 @@ async function runStep(
   }
 
   const hasNext = index + 1 < comments.length;
+  const segMedia = media[index + 1] ?? [];
+
+  if (segMedia.length > 0) {
+    // 画像つきのコメントは、1ステップ方式でも3ステップ方式でもコンテナで出す
+    const prepared = await advanceMedia(ctx, row, token, call, {
+      text,
+      media: segMedia,
+      replyToId: parent,
+      label: `コメント${index + 1}`,
+    });
+    if (prepared === "failed") return "continue";
+    if (prepared === "wait") return "stop";
+    const published = await publishContainer(token, row.container_id!, call);
+    const ids = [...resultIds, published.id];
+    const cleared = { containerId: null, containerPolls: 0, mediaChildren: null } as const;
+    if (hasNext) {
+      await patchQueue(ctx.db, ctx, row.id, {
+        resultIds: ids,
+        ...cleared,
+        step: 2 + (index + 1) * (twoStep ? 3 : 1),
+        nextStepAt: new Date(nowMs + delayMs).toISOString(),
+      });
+      return "stop";
+    }
+    await patchQueue(ctx.db, ctx, row.id, { resultIds: ids, ...cleared });
+    await finishQueue(ctx, account, { ...row, result_ids_json: JSON.stringify(ids) }, ids);
+    return "continue";
+  }
 
   if (!twoStep) {
     const created = await createTextPost(
@@ -715,11 +811,11 @@ export async function publishJob(ctx: JobContext, job: RunningJob): Promise<void
     if (row.status === "scheduled") {
       const claim = await ctx.db.run(
         `UPDATE queue SET status='publishing', updated_at=? WHERE id=? AND status='scheduled'
-           AND updated_at=? AND scheduled_at=? AND body=? AND comments_json=? AND image_url IS ?
+           AND updated_at=? AND scheduled_at=? AND body=? AND comments_json=? AND image_url IS ? AND media_json=?
            AND reply_control=? AND next_step_at IS ? AND step=?
            AND (source<>'autopilot' OR (? AND EXISTS (
              SELECT 1 FROM autopilot ap WHERE ap.account_id=queue.account_id AND ap.enabled=1)))`,
-        nowIso, row.id, row.updated_at, row.scheduled_at, row.body, row.comments_json, row.image_url,
+        nowIso, row.id, row.updated_at, row.scheduled_at, row.body, row.comments_json, row.image_url, row.media_json,
         row.reply_control, row.next_step_at, row.step, autopilotRunning(ctx.env) ? 1 : 0,
       );
       if (claim.changes === 0) continue;

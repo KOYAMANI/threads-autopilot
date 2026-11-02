@@ -52,7 +52,7 @@ export default defineConfig({
         globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
         globIgnores: ["push-sw.js", "legal/**"],
         navigateFallback: "/index.html",
-        navigateFallbackDenylist: [/^\/api\//, /^\/a\//, /^\/legal\//],
+        navigateFallbackDenylist: [/^\/api\//, /^\/a\//, /^\/m\//, /^\/legal\//],
         cleanupOutdatedCaches: true,
         /**
          * Push の受け口（`web/public/push-sw.js`）を生成 SW に足す（M7）。
@@ -80,6 +80,7 @@ export default defineConfig({
     proxy: {
       "^/api(/|$)": { target: `http://127.0.0.1:${workerPort}`, changeOrigin: true },
       "^/a/": { target: `http://127.0.0.1:${workerPort}`, changeOrigin: true },
+      "^/m/": { target: `http://127.0.0.1:${workerPort}`, changeOrigin: true },
     },
   },
   build: {

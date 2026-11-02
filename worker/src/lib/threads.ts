@@ -468,10 +468,37 @@ export async function createImageContainer(
   token: string,
   imageUrl: string,
   text: string,
-  create: Omit<CreateTextOptions, "autoPublish">,
+  create: Omit<CreateTextOptions, "autoPublish"> & { altText?: string | null },
   options: CallOptions,
 ): Promise<{ id: string }> {
   const params: ThreadsParams = { media_type: "IMAGE", image_url: imageUrl, text };
+  if (create.altText) params.alt_text = create.altText;
+  if (create.replyToId) params.reply_to_id = create.replyToId;
+  if (create.replyControl) params.reply_control = create.replyControl;
+  return (await call(token, "POST", "/me/threads", params, options)) as { id: string };
+}
+
+/** カルーセルの1枚分のコンテナ（`is_carousel_item=true`）。単体では公開できない。 */
+export async function createCarouselItem(
+  token: string,
+  imageUrl: string,
+  altText: string | null | undefined,
+  options: CallOptions,
+): Promise<{ id: string }> {
+  const params: ThreadsParams = { media_type: "IMAGE", image_url: imageUrl, is_carousel_item: true };
+  if (altText) params.alt_text = altText;
+  return (await call(token, "POST", "/me/threads", params, options)) as { id: string };
+}
+
+/** カルーセル本体のコンテナ。`children` は FINISHED になった子コンテナの ID（2〜20件）。 */
+export async function createCarouselContainer(
+  token: string,
+  children: string[],
+  text: string,
+  create: Omit<CreateTextOptions, "autoPublish">,
+  options: CallOptions,
+): Promise<{ id: string }> {
+  const params: ThreadsParams = { media_type: "CAROUSEL", children: children.join(","), text };
   if (create.replyToId) params.reply_to_id = create.replyToId;
   if (create.replyControl) params.reply_control = create.replyControl;
   return (await call(token, "POST", "/me/threads", params, options)) as { id: string };

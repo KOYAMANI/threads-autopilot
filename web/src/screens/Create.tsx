@@ -19,7 +19,7 @@ import type { AiCandidate, AiGenerationContext, AiHistoryTurn, AiPickMode, PostS
 import { useCreateQueue } from "../api/queue";
 import { ApiError } from "../api/client";
 import { useAiSettings, useGenerate, useRevise, withClientKey } from "../api/ai";
-import { draftIssue, emptyDraft, trimComments, type PostDraft } from "../components/PostFields";
+import { draftIssue, draftPayload, emptyDraft, hasMedia, trimComments, type PostDraft } from "../components/PostFields";
 import PostPicker from "../components/PostPicker";
 import PostViewer from "../components/PostViewer";
 import ScheduleSheet, { type SchedulePick } from "../components/ScheduleSheet";
@@ -219,6 +219,8 @@ export default function Create() {
   const tz = account.timezone ?? "Asia/Tokyo";
   const busy = generate.isPending || revise.isPending || create.isPending;
   const bodyEmpty = draft.body.trim() === "";
+  /** 本文が空でも、1投稿目に画像があれば出せる */
+  const nothingToPost = bodyEmpty && !hasMedia(draft);
 
   function go(next: Step, nextMode: Mode = mode, replace = false) {
     setParams(urlFor(next, nextMode), { replace });
@@ -352,7 +354,7 @@ export default function Create() {
     }
     setSheet(null);
     setActive(index);
-    setDraft(draftOf(c));
+    setDraft((d) => ({ ...draftOf(c), media: d.media ?? [] }));
     appliedBody.current = c.body;
     setReviseText("");
     toast.show(`投稿${c.key}を入れました`, "ok");
@@ -393,7 +395,8 @@ export default function Create() {
           if (!mounted.current) return;
           const next = r.candidate;
           if (current) setCandidates((list) => list.map((c, i) => (i === active ? next : c)));
-          setDraft(draftOf(next));
+          // 画像は AI に渡していないので、付けたものをそのまま残す
+          setDraft((d) => ({ ...draftOf(next), media: d.media ?? [] }));
           appliedBody.current = next.body;
           setHistory((h) => ({
             ...h,
@@ -435,8 +438,7 @@ export default function Create() {
     create.mutate(
       {
         status: "draft",
-        body: draft.body,
-        comments: trimComments(draft.comments),
+        ...draftPayload(draft),
         ...provenance(),
       },
       {
@@ -481,8 +483,7 @@ export default function Create() {
     if (!account?.canPublish) { setSheet("publish"); return; }
     if (!guard()) return;
     const common = {
-      body: draft.body,
-      comments: trimComments(draft.comments),
+      ...draftPayload(draft),
       ...provenance(),
     };
     create.mutate(
@@ -685,10 +686,10 @@ export default function Create() {
         <button aria-busy={create.isPending} type="button" className="btn btn-sub" disabled={busy} onClick={saveDraft}>
           {create.isPending ? "保存しています…" : "下書きに保存"}
         </button>
-        <button type="button" className="btn" disabled={busy || bodyEmpty} onClick={openPublish}>
+        <button type="button" className="btn" disabled={busy || nothingToPost} onClick={openPublish}>
           予約・投稿する
         </button>
-        {bodyEmpty && <p className="btn-hint">本文を書くと予約・投稿できます。</p>}
+        {nothingToPost && <p className="btn-hint">本文を書くか画像を付けると予約・投稿できます。</p>}
       </>
     );
   }

@@ -6,11 +6,11 @@
  * 入れ物（閉じる・Esc・フォーカス・動き）は FullScreen。
  */
 import { useEffect, useState, type ReactNode } from "react";
-import type { AccountSummary } from "@tap/shared";
+import type { AccountSummary, MediaItem } from "@tap/shared";
 import AccountAvatar from "./AccountAvatar";
 import FullScreen from "./FullScreen";
 
-export type ViewerSegment = { text: string; views?: number; note?: string };
+export type ViewerSegment = { text: string; views?: number; note?: string; media?: MediaItem[] };
 export type ViewerStat = { label: string; value: string };
 
 export default function PostViewer({
@@ -89,7 +89,16 @@ export default function PostViewer({
                   <strong>@{account.username}</strong>
                   {segments.length > 1 && <span className="muted">{i + 1}/{segments.length}</span>}
                 </div>
-                <p className="viewer-text">{s.text || "（本文なし）"}</p>
+                {(s.text || !s.media?.length) && <p className="viewer-text">{s.text || "（本文なし）"}</p>}
+                {s.media && s.media.length > 0 && (
+                  <ul className={`media-strip media-${s.media.length === 1 ? "one" : s.media.length === 2 ? "two" : "many"}`} aria-label={`画像 ${s.media.length}枚`}>
+                    {s.media.map((m) => (
+                      <li key={m.url} className="media-thumb">
+                        <img src={m.url} alt={m.alt ?? ""} loading="lazy" />
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 {(s.views !== undefined || s.note || showCount) && (
                   <div className="viewer-foot num">
                     {s.views !== undefined && <span>{s.views.toLocaleString("ja-JP")} 表示</span>}

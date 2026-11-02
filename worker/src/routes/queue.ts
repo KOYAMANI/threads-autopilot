@@ -8,11 +8,13 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
 import {
+  alignSegments,
   ok,
   localDateKey,
   normalizePostingTimes,
   postingSlotsForDate,
   validatePost,
+  type MediaItem,
   type QueueItem,
   type QueueSlotsResponse,
 } from "@tap/shared";
@@ -26,11 +28,24 @@ import {
   attachMetrics,
   parseJsonArray,
   QUEUE_SELECT,
+  rowMedia,
   toQueueItem,
   type QueueRow,
 } from "../lib/queue";
 
 const REPLY_CONTROLS = ["everyone", "accounts_you_follow", "mentioned_only"] as const;
+
+// 枚数・説明の長さは validatePost で日本語の理由つきで弾く。ここは形と大きさの上限だけ
+const mediaSchema = z
+  .array(z.array(z.object({ url: z.string().trim().min(1).max(2000), alt: z.string().max(4000).optional() })).max(20))
+  .max(11);
+
+/** 入力の画像。`media` が無ければ旧形式の `imageUrl` を1投稿目の1枚として読む。どちらも無ければ undefined。 */
+function inputMedia(input: { media?: MediaItem[][]; imageUrl?: string | null }): MediaItem[][] | undefined {
+  if (input.media) return input.media.map((seg) => seg.map((m) => ({ url: m.url, ...(m.alt?.trim() ? { alt: m.alt.trim() } : {}) })));
+  if (input.imageUrl !== undefined) return input.imageUrl ? [[{ url: input.imageUrl }]] : [];
+  return undefined;
+}
 
 const createSchema = z.object({
   status: z.enum(["draft", "scheduled", "now", "next_slot"]),
@@ -39,6 +54,7 @@ const createSchema = z.object({
   scheduledAt: z.string().min(1).optional(),
   body: z.string().max(4000),
   comments: z.array(z.string().max(4000)).max(10).optional(),
+  media: mediaSchema.optional(),
   imageUrl: z.string().trim().url().max(2000).nullable().optional(),
   replyControl: z.enum(REPLY_CONTROLS).optional(),
   originPostId: z.string().max(64).nullable().optional(),
@@ -50,6 +66,7 @@ const patchSchema = z.object({
   body: z.string().max(4000).optional(),
   comments: z.array(z.string().max(4000)).max(10).optional(),
   scheduledAt: z.string().min(1).nullable().optional(),
+  media: mediaSchema.optional(),
   imageUrl: z.string().trim().url().max(2000).nullable().optional(),
   replyControl: z.enum(REPLY_CONTROLS).optional(),
   status: z.enum(["draft", "scheduled", "next_slot"]).optional(),
@@ -77,8 +94,8 @@ function parseAt(value: string | null | undefined): string | null | undefined {
  * `link_placement` は M6 のオートパイロット設定なので、手動のキューでは本文にリンクを
  * 置くこと自体は許す（`body`）。見るのは空・500文字・リンク5本・NGワード。
  */
-function check(body: string, comments: string[]): { message: string } | null {
-  const res = validatePost(body, { comments, linkPlacement: "body" });
+function check(body: string, comments: string[], media: MediaItem[][] = []): { message: string } | null {
+  const res = validatePost(body, { comments, media, linkPlacement: "body" });
   return res.ok ? null : { message: res.issues[0]!.message };
 }
 
@@ -211,8 +228,8 @@ export function queueRoutes() {
       if (previous) return c.json(ok({ item: await itemOf(db, account.id, previous) }));
     }
     if (input.status !== "draft" && !canPublishAccount(account)) return fail("CONFLICT", "Threads APIを設定で連携してから予約してください", 409);
-    const comments = (input.comments ?? []).filter((t) => t.trim() !== "");
-    const bad = check(input.body, comments);
+    const { comments, media } = alignSegments(input.comments ?? [], inputMedia(input) ?? []);
+    const bad = check(input.body, comments, media);
     if (bad) return fail("VALIDATION", bad.message, 400);
 
     const nowIso = new Date().toISOString();
@@ -243,7 +260,7 @@ export function queueRoutes() {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         await db.run(
-          `INSERT INTO queue (id, account_id, status, scheduled_at, body, comments_json, image_url, reply_control,
+          `INSERT INTO queue (id, account_id, status, scheduled_at, body, comments_json, media_json, reply_control,
               source, approval_mode, approve_deadline, notified_at, action_token_used_at, step, next_step_at,
               container_id, container_polls, result_ids_json, error, error_raw, attempts, tags_json,
               origin_post_id, source_ids_json, created_at, updated_at, slot_managed, slot_day, request_id)
@@ -254,7 +271,7 @@ export function queueRoutes() {
           scheduledAt,
           input.body,
           JSON.stringify(comments),
-          input.imageUrl ?? null,
+          JSON.stringify(media),
           input.replyControl ?? "everyone",
           input.originPostId ?? null,
           JSON.stringify(input.sourceIds ?? []),
@@ -301,10 +318,11 @@ export function queueRoutes() {
 
     const input = parsed.data;
     const body = input.body ?? row.body;
-    const comments = (input.comments ?? parseJsonArray(row.comments_json)).filter(
-      (t) => t.trim() !== "",
+    const { comments, media } = alignSegments(
+      input.comments ?? parseJsonArray(row.comments_json),
+      inputMedia(input) ?? rowMedia(row),
     );
-    const bad = check(body, comments);
+    const bad = check(body, comments, media);
     if (bad) return fail("VALIDATION", bad.message, 400);
 
     const at = parseAt(input.scheduledAt);
@@ -339,15 +357,15 @@ export function queueRoutes() {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const updated = await db.run(
-          `UPDATE queue SET body=?, comments_json=?, image_url=?, reply_control=?, scheduled_at=?, status=?,
+          `UPDATE queue SET body=?, comments_json=?, media_json=?, image_url=NULL, reply_control=?, scheduled_at=?, status=?,
              slot_managed=CASE WHEN ? THEN 1 ELSE slot_managed END, slot_day=?,
              error=NULL, error_raw=NULL,
              step=CASE WHEN ? THEN 0 ELSE step END,
-             next_step_at=NULL, container_id=NULL, container_polls=0,
+             next_step_at=NULL, container_id=NULL, container_polls=0, media_state_json=NULL,
              updated_at=? WHERE id=? AND account_id=? AND status=? AND updated_at=? AND status NOT IN ('publishing','done')`,
           body,
           JSON.stringify(comments),
-          input.imageUrl === undefined ? row.image_url : input.imageUrl,
+          JSON.stringify(media),
           input.replyControl ?? row.reply_control,
           scheduledAt,
           status,
@@ -444,7 +462,7 @@ export function queueRoutes() {
     if (!canPublishAccount(account)) return fail("CONFLICT", "Threads APIを設定で連携し直してから予約してください", 409);
     if (row.status === "publishing" || row.status === "done") return fail("CONFLICT", "すでに投稿中または投稿済みです", 409);
 
-    const bad = check(row.body, parseJsonArray(row.comments_json));
+    const bad = check(row.body, parseJsonArray(row.comments_json), rowMedia(row));
     if (bad) return fail("VALIDATION", bad.message, 400);
 
     const nowIso = new Date().toISOString();
@@ -471,16 +489,17 @@ export function queueRoutes() {
     const id = crypto.randomUUID();
     const nowIso = new Date().toISOString();
     await db.run(
-      `INSERT INTO queue (id, account_id, status, scheduled_at, body, comments_json, image_url, reply_control,
+      `INSERT INTO queue (id, account_id, status, scheduled_at, body, comments_json, image_url, media_json, reply_control,
           source, approval_mode, approve_deadline, notified_at, action_token_used_at, step, next_step_at,
           container_id, container_polls, result_ids_json, error, error_raw, attempts, tags_json,
           origin_post_id, source_ids_json, created_at, updated_at)
-        VALUES (?,?, 'draft', NULL, ?,?,?,?, 'manual', NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, '[]', NULL, NULL, 0, '{}', ?,?,?,?)`,
+        VALUES (?,?, 'draft', NULL, ?,?,?,?,?, 'manual', NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, '[]', NULL, NULL, 0, '{}', ?,?,?,?)`,
       id,
       account.id,
       row.body,
       row.comments_json,
       row.image_url,
+      row.media_json,
       row.reply_control,
       row.origin_post_id,
       row.source_ids_json,

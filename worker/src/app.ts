@@ -7,7 +7,7 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { rateHit } from "./lib/rate";
-import type { ApiErr } from "@tap/shared";
+import { MAX_MEDIA_BYTES, type ApiErr } from "@tap/shared";
 import { APP_VERSION, type Env } from "./env";
 import { budgetFromEnv, type Budget } from "./lib/budget";
 import { BudgetExceeded } from "./lib/budget";
@@ -22,6 +22,7 @@ import { accountRoutes } from "./routes/accounts";
 import { dashboardRoutes } from "./routes/dashboard";
 import { postRoutes } from "./routes/posts";
 import { queueRoutes } from "./routes/queue";
+import { mediaRoutes } from "./routes/media";
 import { linkRoutes } from "./routes/links";
 import { healthRoutes } from "./routes/health";
 import { sourceRoutes } from "./routes/sources";
@@ -72,7 +73,10 @@ export function createApp() {
     c.header("Referrer-Policy", "no-referrer");
     await next();
   });
-  app.use("*", bodyLimit({ maxSize: 1_000_000, onError: () => fail("BAD_REQUEST", "送信データが大きすぎます", 413) }));
+  // 画像のアップロード（`/accounts/:id/media`）だけ 8MB と少しまで受ける。上限そのものは routes/media.ts が見る
+  const smallBody = bodyLimit({ maxSize: 1_000_000, onError: () => fail("BAD_REQUEST", "送信データが大きすぎます", 413) });
+  const mediaBody = bodyLimit({ maxSize: MAX_MEDIA_BYTES + 1, onError: () => fail("BAD_REQUEST", "画像は8MBまでです", 413) });
+  app.use("*", (c, next) => (/^\/api\/accounts\/[^/]+\/media$/.test(c.req.path) ? mediaBody : smallBody)(c, next));
 
   // 1リクエスト＝1予算。D1 クエリ数は lib/db.ts が自動で数える（SPEC §8.1）
   app.use("*", async (c, next) => {
@@ -131,6 +135,7 @@ export function createApp() {
   app.route("/accounts", dashboardRoutes());
   app.route("/accounts", postRoutes());
   app.route("/accounts", queueRoutes());
+  app.route("/accounts", mediaRoutes());
   app.route("/accounts", linkRoutes());
   app.route("/accounts", autopilotRoutes());
   app.route("/sources", sourceRoutes());
