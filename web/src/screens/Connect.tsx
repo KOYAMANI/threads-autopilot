@@ -14,6 +14,7 @@ import { ApiError, api } from "../api/client";
 import { useMutation } from "@tanstack/react-query";
 import { activeAccountStorageKey } from "../lib/active-account";
 import { useToast } from "../components/Toast";
+import { ACCOUNT_LIMIT } from "@tap/shared";
 import { CROSSFADE, SPRING, useReducedMotion } from "../lib/motion";
 
 const STEPS = [
@@ -22,6 +23,13 @@ const STEPS = [
   "「Threads API」のツールでご自身のアカウントを選び、アクセストークンを発行します",
   "発行されたトークン（THAA… で始まる長い文字列）をコピーして、下に貼り付けます",
 ];
+
+/** かんたん接続の戻り（`/connect?threads=failed&reason=…`）。reason はサーバーのエラーコード */
+function oauthFailureMessage(reason: string | null): string {
+  if (reason === "ACCOUNT_LIMIT") return `つなげるアカウントは${ACCOUNT_LIMIT}個までです。設定から1つ外してから、もう一度接続してください。`;
+  if (reason === "OAUTH_INVALID") return "接続の途中で時間が切れたか、別のブラウザで開かれました。この画面からもう一度接続してください。";
+  return "Threads に接続できませんでした。許可する権限とアプリ設定を確かめて、もう一度接続してください。";
+}
 
 export default function Connect() {
   const [params] = useSearchParams();
@@ -138,7 +146,7 @@ export default function Connect() {
         <h2>Threads でかんたん接続</h2>
         <p className="muted" style={{ margin: "0.5rem 0 1rem" }}>トークンの取得と更新はアプリが行います。</p>
         <button aria-busy={startOAuth.isPending} className="btn" disabled={startOAuth.isPending} onClick={() => startOAuth.mutate()}>{startOAuth.isPending ? "Threads へ移動しています…" : "Threads で接続する"}</button>
-        {params.get("threads") === "failed" && <p className="msg msg-bad" role="alert">Threads に接続できませんでした。許可する権限とアプリ設定を確かめて、もう一度接続してください。</p>}
+        {params.get("threads") === "failed" && <p className="msg msg-bad" role="alert">{oauthFailureMessage(params.get("reason"))}</p>}
       </div>
       <h2 style={{marginBottom:"1rem"}}>トークンを貼り付けて接続（上級者向け）</h2>
       <div className="card">

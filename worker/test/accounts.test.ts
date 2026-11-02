@@ -67,9 +67,9 @@ describe("POST /api/accounts（SPEC §7.1）", () => {
     expect(JSON.stringify(res.body)).not.toContain("secret-value");
   });
 
-  it("同じユーザーで3件まで（4件目は ACCOUNT_LIMIT）", async () => {
+  it("同じユーザーで10件まで（11件目は ACCOUNT_LIMIT）", async () => {
     const u = await registerUser();
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 10; i++) {
       const res = await api("POST", "/api/accounts", {
         cookie: u.cookie,
         body: { token: mockToken(`limit${i}`) },
@@ -78,11 +78,11 @@ describe("POST /api/accounts（SPEC §7.1）", () => {
     }
     const over = await api("POST", "/api/accounts", {
       cookie: u.cookie,
-      body: { token: mockToken("limit3") },
+      body: { token: mockToken("limit10") },
     });
     expect(over.status).toBe(400);
     expect(over.body.error.code).toBe("ACCOUNT_LIMIT");
-    expect(over.body.error.message).toContain("3つまで");
+    expect(over.body.error.message).toContain("10個まで");
   });
 
   it("同じ Threads アカウントの再接続は上限に数えず、つなぎ直しになる", async () => {

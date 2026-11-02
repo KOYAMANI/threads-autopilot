@@ -11,7 +11,7 @@ import AccountAvatar from "../components/AccountAvatar";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { AccountSummary, DiagnoseStep, LinkSummary } from "@tap/shared";
-import { AI_DEFAULT_MODEL, AI_MODELS, normalizeAiModel } from "@tap/shared";
+import { ACCOUNT_LIMIT, AI_DEFAULT_MODEL, AI_MODELS, normalizeAiModel } from "@tap/shared";
 import {
   downloadCsv,
   useUpdateLink,
@@ -109,7 +109,7 @@ function AccountsCard() {
     <section className="card section">
       <div className="section-head">
         <h2>アカウント</h2>
-        <span className="muted">{list.length} / 3</span>
+        <span className="muted">{list.length} / {ACCOUNT_LIMIT}</span>
       </div>
 
       {accounts.isPending && <p className="muted">読み込んでいます…</p>}
@@ -126,10 +126,10 @@ function AccountsCard() {
       <button
         type="button"
         className="btn btn-sub section"
-        disabled={list.length >= 3}
+        disabled={list.length >= ACCOUNT_LIMIT}
         onClick={() => navigate("/connect?add=1")}
       >
-        {list.length >= 3 ? "つなげるのは3つまでです" : "＋ アカウントを追加"}
+        {list.length >= ACCOUNT_LIMIT ? `つなげるのは${ACCOUNT_LIMIT}個までです` : "＋ アカウントを追加"}
       </button>
 
       {diagFor && (

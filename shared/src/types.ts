@@ -67,6 +67,9 @@ export type AccountSummary = {
   autopilotEnabled: boolean;
 };
 
+/** 同一ユーザーでつなげるアカウントの上限（SPEC §7.1 の3件から引き上げた。DECISIONS.md 2026-11-02）。 */
+export const ACCOUNT_LIMIT = 10;
+
 /** `PUT /accounts/order`。本人のアカウント ID を、見せたい順に過不足なく並べる。 */
 export type PutAccountOrderRequest = { ids: string[] };
 

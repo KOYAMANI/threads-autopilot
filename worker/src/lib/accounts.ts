@@ -38,8 +38,7 @@ export const ACCOUNT_COLUMNS =
  */
 export const ACCOUNT_ORDER_BY = "a.sort_order IS NULL, a.sort_order ASC, a.created_at ASC";
 
-/** SPEC §7.1: 同一ユーザーで3件まで。 */
-export const ACCOUNT_LIMIT = 3;
+export { ACCOUNT_LIMIT } from "@tap/shared";
 
 /**
  * アカウントの色。接続順に「まだ使っていない色」を割り当てる（下の `POST /accounts`）。

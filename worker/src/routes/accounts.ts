@@ -366,7 +366,7 @@ export async function connectThreadsAccount(c: Context<AppEnv>, token: string, a
       if ((countRow?.n ?? 0) >= ACCOUNT_LIMIT) {
         return fail(
           "ACCOUNT_LIMIT",
-          `つなげるアカウントは${ACCOUNT_LIMIT}つまでです。設定から1つ外してください`,
+          `つなげるアカウントは${ACCOUNT_LIMIT}個までです。設定から1つ外してください`,
           400,
         );
       }

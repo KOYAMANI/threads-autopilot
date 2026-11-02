@@ -6,6 +6,7 @@ import { sha256Hex } from "../lib/crypto";
 import { randomToken } from "../lib/google";
 import { readCookie } from "../lib/session";
 import { rateHit } from "../lib/rate";
+import { redact } from "../lib/redact";
 import { exchangeToken } from "../lib/threads";
 import { connectThreadsAccount } from "./accounts";
 import type { Env } from "../env";
@@ -43,7 +44,7 @@ export function threadsOAuthRoutes() {
     return c.html(`<!doctype html><html lang="ja"><meta charset="utf-8"><title>Threads連携</title><p id="message">Threadsとの連携を確認しています…</p><script nonce="${nonce}">
       const payload=${payload}; history.replaceState(null,'','/api/threads/oauth/callback');
       fetch('/api/threads/oauth/complete',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Requested-With':'fetch'},body:JSON.stringify(payload)})
-      .then(async r=>{const data=await r.json(); if(r.ok && data.data?.account?.id) {location.replace('/connect?connected='+encodeURIComponent(data.data.account.id));} else {location.replace('/connect?threads=failed');}})
+      .then(async r=>{const data=await r.json(); if(r.ok && data.data?.account?.id) {location.replace('/connect?connected='+encodeURIComponent(data.data.account.id));} else {location.replace('/connect?threads=failed&reason='+encodeURIComponent(data.error?.code ?? ''));}})
       .catch(()=>{document.getElementById('message').textContent='連携できませんでした。接続画面からやり直してください。';});
       </script><noscript>JavaScriptを有効にし、接続画面からやり直してください。</noscript></html>`);
   });
@@ -61,11 +62,15 @@ export function threadsOAuthRoutes() {
       c.get("budget").subrequests.use();
       const response=await fetch("https://graph.threads.net/oauth/access_token",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams({client_id:c.env.THREADS_APP_ID!,client_secret:c.env.THREADS_APP_SECRET!,redirect_uri:redirect(c.env),code:input.data.code,grant_type:"authorization_code"}),signal:AbortSignal.timeout(15000)});
       const short=await response.json() as {access_token?:string};
-      if (!response.ok || !short.access_token) return fail("OAUTH_EXCHANGE","Threadsの認証をやり直してください",400);
+      if (!response.ok || !short.access_token) {
+        console.error(`[threads-oauth] code exchange failed status=${response.status} body=${redact(JSON.stringify(short)).slice(0,500)}`);
+        return fail("OAUTH_EXCHANGE","Threadsの認証をやり直してください",400);
+      }
       const long=await exchangeToken(short.access_token,c.env.THREADS_APP_SECRET!,{env:c.env,budget:c.get("budget")});
       if (!long.access_token) return fail("OAUTH_EXCHANGE","長期トークンに交換できませんでした",400);
       return await connectThreadsAccount(c,long.access_token,undefined,true);
-    } catch {
+    } catch (e) {
+      console.error(`[threads-oauth] complete failed: ${redact(String(e instanceof Error ? e.message : e))}`);
       return fail("OAUTH_EXCHANGE","Threadsに接続できませんでした。権限を確認してやり直してください",502);
     }
   });

@@ -142,10 +142,10 @@ describe("複数アカウント（SPEC §7.1 / §13 M7）", () => {
     expect(a0.body.data.settings.perWeek).toBe(7);
   });
 
-  it("4件目のアカウントは断られる（ACCOUNT_LIMIT=3）", async () => {
+  it("11件目のアカウントは断られる（ACCOUNT_LIMIT=10）", async () => {
     const user = await registerUser();
-    for (let i = 0; i < 3; i++) {
-      await insertAccount({ userId: user.userId, threadsUserId: `1790000000000${i}` });
+    for (let i = 0; i < 10; i++) {
+      await insertAccount({ userId: user.userId, threadsUserId: `179000000000${String(i).padStart(2, "0")}` });
     }
     const res = await api("POST", "/api/accounts", {
       cookie: user.cookie,
