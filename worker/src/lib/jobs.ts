@@ -502,7 +502,12 @@ export async function wakeAccountSync(ctx: JobContext, accountId: string): Promi
 }
 export async function enqueueAccountSync(ctx: JobContext, accountId: string): Promise<boolean> {
   let queued = false;
-  for (const type of ["full_sync", "followers", "daily_views", "clicks"] as const) {
+  // 最後が失敗のままの種類も積み直す。残すと GET /sync が「同期できませんでした」を出し続ける
+  const failed = await ctx.sys.all<{type:JobType}>(`SELECT j.type FROM jobs j WHERE j.account_id=? AND j.status='failed'
+    AND j.type IN (${SYNC_JOB_TYPES.map(()=>"?").join(",")})
+    AND j.created_at=(SELECT MAX(created_at) FROM jobs WHERE account_id=j.account_id AND type=j.type)`, accountId, ...SYNC_JOB_TYPES);
+  const types = new Set<JobType>(["full_sync", "followers", "daily_views", "clicks", ...failed.map((r) => r.type)]);
+  for (const type of types) {
     if (await enqueueJob(ctx, type, {accountId})) queued = true;
   }
   await wakeAccountSync(ctx, accountId);

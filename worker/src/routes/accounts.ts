@@ -265,10 +265,13 @@ export function accountRoutes() {
   });
 
   /* ── 同期の投入と進捗（SPEC §7.1） ────────────────── */
+  const REAUTH_SYNC_MESSAGE = "Threads との接続が切れています。つなぎ直すと、また取り込めます。";
   r.post("/:id/sync", async (c) => {
     const db = c.get("db");
     const account = await loadOwnedAccount(db, c.req.param("id"), c.get("userId")!);
     if (!account) return fail("NOT_FOUND", "見つかりませんでした", 404);
+    // 接続が切れていると各ジョブは何もせず終わる。押しても進まないので、ここで止めて理由を返す
+    if (account.status === "needs_reauth") return fail("NEEDS_REAUTH", REAUTH_SYNC_MESSAGE, 409);
 
     const jobCtx = jobContextFrom(c.env, db, c.get("budget"));
     const queued = await enqueueAccountSync(jobCtx, account.id);
@@ -297,13 +300,15 @@ export function accountRoutes() {
       progress = 0;
     }
 
+    const needsReauth = account.status === "needs_reauth";
     return c.json(
       ok({
+        needsReauth,
         running,
         progress: job?.status === "done" ? SYNC_TOTAL_PAGES : progress,
-        status: failed ? "failed" : running ? "syncing" : job?.status === "done" ? "done" : "idle",
+        status: failed || needsReauth ? "failed" : running ? "syncing" : job?.status === "done" ? "done" : "idle",
         posts: count?.n ?? 0,
-        message: failed ? "一部の取り込みに失敗しました。診断で権限を確認して、もう一度同期してください。" : null,
+        message: needsReauth ? REAUTH_SYNC_MESSAGE : failed ? "一部の取り込みに失敗しました。診断で権限を確認して、もう一度同期してください。" : null,
         lastSyncedAt: account.last_full_sync_at,
         total: SYNC_TOTAL_PAGES,
       }),

@@ -137,7 +137,7 @@ export type DiagnoseStep = { name: string; ok: boolean; detail: string };
 export type DiagnoseResponse = { steps: DiagnoseStep[] };
 
 /** `GET /accounts/:id/sync`。progress / total はページ数（SPEC §7.1） */
-export type SyncStatus = { running: boolean; progress: number; total: number; status: "idle" | "syncing" | "done" | "failed"; posts: number; message: string | null; lastSyncedAt: string | null };
+export type SyncStatus = { needsReauth: boolean; running: boolean; progress: number; total: number; status: "idle" | "syncing" | "done" | "failed"; posts: number; message: string | null; lastSyncedAt: string | null };
 
 export type RefreshTokenResponse = {
   refreshed: boolean;

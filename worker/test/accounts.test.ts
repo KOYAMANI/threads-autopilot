@@ -231,6 +231,42 @@ describe("DELETE /api/accounts/:id（SPEC §7.1）", () => {
 });
 
 describe("sync / diagnose / patch（SPEC §7.1）", () => {
+  it("接続が切れたアカウントは同期を積まず、つなぎ直すよう返す", async () => {
+    const u = await registerUser();
+    const accountId = await insertAccount({ userId: u.userId, token: mockToken("syr") });
+    await testDb().run("UPDATE accounts SET status='needs_reauth' WHERE id=?", accountId);
+
+    const post = await api("POST", `/api/accounts/${accountId}/sync`, { cookie: u.cookie });
+    expect(post.status).toBe(409);
+    expect(post.body.error.code).toBe("NEEDS_REAUTH");
+    const jobs = await testDb().first<{ n: number }>("SELECT COUNT(*) AS n FROM jobs WHERE account_id=?", accountId);
+    expect(jobs!.n).toBe(0);
+
+    const got = await api("GET", `/api/accounts/${accountId}/sync`, { cookie: u.cookie });
+    expect(got.body.data).toMatchObject({ needsReauth: true, status: "failed" });
+    expect(got.body.data.message).toContain("つなぎ直す");
+  });
+
+  it("最後が失敗のままの種類も、もう一度同期で積み直す", async () => {
+    const u = await registerUser();
+    const accountId = await insertAccount({ userId: u.userId, token: mockToken("syf") });
+    await testDb().run(
+      `INSERT INTO jobs(id,type,account_id,state_json,status,priority,next_run_at,attempts,last_error,created_at,updated_at)
+       VALUES ('old-fail','insights_recent',?,'{}','failed',5,?,0,'boom',?,?)`,
+      accountId, NOW.toISOString(), NOW.toISOString(), NOW.toISOString(),
+    );
+    expect((await api("GET", `/api/accounts/${accountId}/sync`, { cookie: u.cookie })).body.data.status).toBe("failed");
+
+    await api("POST", `/api/accounts/${accountId}/sync`, { cookie: u.cookie });
+    const retried = await testDb().first<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM jobs WHERE account_id=? AND type='insights_recent' AND status='pending'", accountId,
+    );
+    expect(retried!.n).toBe(1);
+    expect((await api("GET", `/api/accounts/${accountId}/sync`, { cookie: u.cookie })).body.data.status).toBe("syncing");
+    // 積んだジョブを残すと、後のテストの runJobs がまとめて回して予算を超える
+    await testDb().run("DELETE FROM jobs WHERE account_id=?", accountId);
+  });
+
   it("POST /sync は重複投入せず、GET /sync が進捗を返す", async () => {
     const u = await registerUser();
     const accountId = await insertAccount({ userId: u.userId, token: mockToken("sy1") });

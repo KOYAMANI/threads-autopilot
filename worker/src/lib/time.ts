@@ -13,6 +13,8 @@ export const WEEK_MS = 7 * DAY_MS;
  */
 export const CLICK_FLOOR_SEC = 1_712_991_600;
 export const CLICK_FLOOR_MS = CLICK_FLOOR_SEC * 1000;
+/** クリックの数字を Threads が返す範囲。これより古い since は #100 で丸ごと失敗する。1日ぶん余裕を見る */
+export const CLICK_LOOKBACK_MS = 729 * DAY_MS;
 
 export function iso(ms: number): string {
   return new Date(ms).toISOString();
@@ -78,12 +80,13 @@ export function weekAt(index: number): ClickWeek {
 /**
  * 取得対象の週を、新しい順に並べて返す（SPEC §8.5）。
  * - 上限は now が入る週
- * - 下限は「いちばん古い投稿の1週間前」が入る週
+ * - 下限は「いちばん古い投稿の1週間前」が入る週。ただし週の始まりが過去2年より前の週は取らない
  */
 export function clickWeeks(nowMs: number, oldestPostMs: number | null): ClickWeek[] {
   const last = weekIndexOf(nowMs);
   const floor = oldestPostMs === null ? last : weekIndexOf(oldestPostMs - WEEK_MS);
-  const first = Math.max(0, Math.min(floor, last));
+  const oldestAllowed = nowMs - CLICK_LOOKBACK_MS < CLICK_FLOOR_MS ? 0 : weekIndexOf(nowMs - CLICK_LOOKBACK_MS) + 1;
+  const first = Math.max(0, oldestAllowed, Math.min(floor, last));
   const out: ClickWeek[] = [];
   for (let i = last; i >= first; i--) out.push(weekAt(i));
   return out;

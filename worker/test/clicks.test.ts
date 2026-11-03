@@ -4,6 +4,7 @@ import { enqueueJob, makeJobContext, runJobs } from "../src/lib/jobs";
 import { HOT_WEEKS, loadUrlTotals } from "../src/jobs/clicks";
 import {
   CLICK_FLOOR_MS,
+  CLICK_LOOKBACK_MS,
   clickWeeks,
   DAY_MS,
   weekAt,
@@ -53,6 +54,14 @@ describe("クリックの週グリッド（SPEC §8.5）", () => {
     for (let i = 1; i < weeks.length; i++) {
       expect(weeks[i - 1]!.index - weeks[i]!.index).toBe(1);
     }
+  });
+
+  it("2年より前の週は取らない（Threads が #100 で丸ごと失敗させる）", () => {
+    const now = Date.parse("2026-11-03T00:00:00.000Z");
+    const weeks = clickWeeks(now, Date.parse("2024-04-20T00:00:00.000Z"));
+    expect(weeks.at(-1)!.sinceSec * 1000).toBeGreaterThanOrEqual(now - CLICK_LOOKBACK_MS);
+    // ひとつ前の週は範囲の外にかかる
+    expect(weekAt(weeks.at(-1)!.index - 1).sinceSec * 1000).toBeLessThan(now - CLICK_LOOKBACK_MS);
   });
 
   it("投稿が無ければ今週だけ", () => {

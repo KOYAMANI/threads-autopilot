@@ -102,12 +102,14 @@ export default function Home() {
   const syncNotice = syncDone ? null : (
     <div className={`notice home-sync${sync.data?.status === "failed" ? " notice-warn" : ""}`} role="status">
       <div>
-        <strong>{sync.data?.status === "failed" ? "同期できませんでした" : sync.data?.running ? "データを取り込んでいます" : "最初の同期をしましょう"}</strong>
+        <strong>{sync.data?.needsReauth ? "Threads との接続が切れています" : sync.data?.status === "failed" ? "同期できませんでした" : sync.data?.running ? "データを取り込んでいます" : "最初の同期をしましょう"}</strong>
         <p>{sync.data?.status === "failed" ? sync.data.message : sync.data?.running ? `${sync.data.posts}件の投稿を保存しました。数字は順に反映されます。` : "Threads から投稿と数字を取り込みます。数分かかることがあります。"}</p>
       </div>
       {/* 失敗は、ほかの取り込みが動いている最中でも出る（GET /sync は failed と running を別々に見る）ので、
           失敗したら常にやり直せるようにする */}
-      {sync.data?.status === "failed" ? (
+      {sync.data?.needsReauth ? (
+        <button className="btn btn-fit" onClick={() => navigate("/connect?add=1")}>つなぎ直す</button>
+      ) : sync.data?.status === "failed" ? (
         <div className="notice-actions">
           <button className="btn btn-fit" aria-busy={startSync.isPending} disabled={startSync.isPending} onClick={runSync}>
             {startSync.isPending ? "開始しています…" : "もう一度同期する"}
